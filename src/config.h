@@ -6,7 +6,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "0.1.0"
+#define APP_VERSION "0.2.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---
@@ -49,22 +49,42 @@
 #define TOUCH_MAX_Y  3800
 
 // ============================================================
-// WiFi / API configuration (placeholders)
+// WiFi / Network Configuration
 // ============================================================
-struct WiFiConfig {
-    char ssid[32]     = "";
-    char password[64] = "";
-};
+#define WIFI_AP_NAME             "AI-Monitor-Setup"
+#define WIFIMANAGER_TIMEOUT_SEC  180
+#define MDNS_HOSTNAME            "ai-monitor"
 
-struct ApiConfig {
-    char endpoint[128] = "";
-    char api_key[128]  = "";
-};
+// ============================================================
+// NVS (Non-Volatile Storage) Configuration
+// ============================================================
+#define NVS_NAMESPACE      "aim_config"    // Max 15 chars
+#define NVS_VAL_MAX_LEN    256             // Max length for API keys
 
+// ============================================================
+// Defaults
+// ============================================================
+#define DEFAULT_POLL_INTERVAL_SEC  300     // 5 minutes
+
+// ============================================================
+// Application Configuration Struct
+// ============================================================
 struct AppConfig {
-    WiFiConfig wifi;
-    ApiConfig  api;
-    uint32_t   poll_interval_ms = 300000;  // 5 minutes
+    char     anthropic_key[NVS_VAL_MAX_LEN] = "";
+    char     anthropic_org[NVS_VAL_MAX_LEN] = "";
+    char     openai_key[NVS_VAL_MAX_LEN]    = "";
+    char     openai_org[NVS_VAL_MAX_LEN]    = "";
+    uint32_t poll_interval_sec               = DEFAULT_POLL_INTERVAL_SEC;
 };
+
+// ============================================================
+// UI Colors (matching web UI)
+// ============================================================
+#define COLOR_BG         0x1A1A2E
+#define COLOR_PANEL      0x16213E
+#define COLOR_ACCENT     0xE94560
+#define COLOR_TEXT        0xE0E0E0
+#define COLOR_TEXT_DIM    0x888888
+#define COLOR_HIGHLIGHT  0x0F3460
 
 #endif // CONFIG_H

@@ -1,9 +1,15 @@
 /**
  * AI Usage Monitor - ESP32-2432S028R (CYD 2.8")
- * Hello World: Display + Touch + LVGL v9
+ * Phase 2: WiFi Setup + Web Config + NTP + QR Code
  *
- * Initializes TFT_eSPI, LVGL v9, and XPT2046 touch input,
- * then shows a simple startup screen.
+ * Boot sequence:
+ * 1. Init display + touch + LVGL
+ * 2. Show "Connecting..." screen
+ * 3. WiFi setup (stored creds or AP portal)
+ * 4. NTP time sync
+ * 5. Start AsyncWebServer
+ * 6. Show QR code for config URL (5 seconds)
+ * 7. Switch to main dashboard
  */
 
 #include <Arduino.h>
@@ -12,6 +18,10 @@
 #include <XPT2046_Touchscreen.h>
 #include <lvgl.h>
 #include "config.h"
+#include "wifi_setup.h"
+#include "ntp_time.h"
+#include "web_server.h"
+#include "qr_display.h"
 
 // ============================================================
 // Globals
@@ -31,6 +41,16 @@ static lv_color_t lv_buf2[LV_BUF_SIZE];
 // LVGL display and input device
 static lv_display_t  *lv_disp = nullptr;
 static lv_indev_t    *lv_touch = nullptr;
+
+// Status label for boot progress
+static lv_obj_t *boot_status_label = nullptr;
+
+// Timing for QR display
+static unsigned long qr_show_time = 0;
+static const unsigned long QR_DISPLAY_DURATION = 8000;  // 8 seconds
+
+// Heap monitoring
+static unsigned long lastHeapLog = 0;
 
 // ============================================================
 // LVGL flush callback - sends pixels to TFT_eSPI
@@ -57,11 +77,9 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         TS_Point p = ts.getPoint();
 
         // Map raw touch coordinates to screen coordinates
-        // CYD in landscape: swap and invert as needed
         int16_t x = map(p.x, TOUCH_MIN_X, TOUCH_MAX_X, 0, SCREEN_WIDTH - 1);
         int16_t y = map(p.y, TOUCH_MIN_Y, TOUCH_MAX_Y, 0, SCREEN_HEIGHT - 1);
 
-        // Constrain to screen bounds
         x = constrain(x, 0, SCREEN_WIDTH - 1);
         y = constrain(y, 0, SCREEN_HEIGHT - 1);
 
@@ -74,37 +92,92 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 }
 
 // ============================================================
-// Build the startup UI
+// Boot screen with progress info
 // ============================================================
-static void create_startup_screen(void)
+static void create_boot_screen(void)
 {
-    // Get the active screen
     lv_obj_t *scr = lv_screen_active();
 
-    // Dark background
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x1A1A2E), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(COLOR_BG), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
-    // Title label
+    // Title
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text(title, APP_NAME);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, -20);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -30);
 
-    // Status label
-    lv_obj_t *status = lv_label_create(scr);
-    lv_label_set_text(status, "Initializing...");
-    lv_obj_set_style_text_color(status, lv_color_hex(0x888888), LV_PART_MAIN);
-    lv_obj_set_style_text_font(status, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(status, LV_ALIGN_CENTER, 0, 20);
+    // Status label (updated during boot)
+    boot_status_label = lv_label_create(scr);
+    lv_label_set_text(boot_status_label, "Initializing...");
+    lv_obj_set_style_text_color(boot_status_label, lv_color_hex(COLOR_TEXT_DIM), LV_PART_MAIN);
+    lv_obj_set_style_text_font(boot_status_label, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(boot_status_label, LV_ALIGN_CENTER, 0, 10);
 
-    // Version label (bottom right)
+    // Version
     lv_obj_t *ver = lv_label_create(scr);
     lv_label_set_text_fmt(ver, "v%s", APP_VERSION);
     lv_obj_set_style_text_color(ver, lv_color_hex(0x444444), LV_PART_MAIN);
     lv_obj_set_style_text_font(ver, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+}
+
+// ============================================================
+// Update boot status text on display
+// ============================================================
+static void update_boot_status(const char *msg) {
+    if (boot_status_label != nullptr) {
+        lv_label_set_text(boot_status_label, msg);
+        lv_timer_handler();  // Force display update
+        delay(5);
+    }
+    Serial.printf("[Boot] %s\n", msg);
+}
+
+// ============================================================
+// Create the main dashboard screen (placeholder for Phase 3)
+// ============================================================
+static void create_dashboard_screen(void) {
+    lv_obj_t *scr = lv_obj_create(nullptr);
+
+    lv_obj_set_style_bg_color(scr, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+    // Title
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, APP_NAME);
+    lv_obj_set_style_text_color(title, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    // Connection info
+    lv_obj_t *info = lv_label_create(scr);
+    String infoText = "WiFi: " + wifi_get_ssid() + "\n";
+    infoText += "IP: " + wifi_get_ip() + "\n";
+    infoText += "Web: http://" MDNS_HOSTNAME ".local/\n";
+    infoText += "Time: " + ntp_get_datetime();
+    lv_label_set_text(info, infoText.c_str());
+    lv_obj_set_style_text_color(info, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(info, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(info, LV_ALIGN_CENTER, 0, 0);
+
+    // Placeholder text
+    lv_obj_t *placeholder = lv_label_create(scr);
+    lv_label_set_text(placeholder, "Dashboard coming in Phase 3");
+    lv_obj_set_style_text_color(placeholder, lv_color_hex(COLOR_TEXT_DIM), LV_PART_MAIN);
+    lv_obj_set_style_text_font(placeholder, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(placeholder, LV_ALIGN_BOTTOM_MID, 0, -20);
+
+    // Version
+    lv_obj_t *ver = lv_label_create(scr);
+    lv_label_set_text_fmt(ver, "v%s", APP_VERSION);
+    lv_obj_set_style_text_color(ver, lv_color_hex(0x444444), LV_PART_MAIN);
+    lv_obj_set_style_text_font(ver, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(ver, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+
+    lv_screen_load(scr);
+    Serial.println("[UI] Dashboard screen loaded");
 }
 
 // ============================================================
@@ -151,9 +224,39 @@ void setup()
     lv_indev_set_read_cb(lv_touch, touch_read_cb);
     Serial.println("[LVGL] Touch input registered");
 
-    // --- Build UI ---
-    create_startup_screen();
-    Serial.println("[UI] Startup screen created");
+    // --- Boot screen ---
+    create_boot_screen();
+    lv_timer_handler();
+    delay(10);
+
+    // --- WiFi Setup ---
+    update_boot_status("Connecting to WiFi...");
+    bool wifiOk = wifi_setup_init();
+
+    if (wifiOk) {
+        // --- NTP Time Sync ---
+        update_boot_status("Syncing time...");
+        ntp_init();
+
+        // --- Start Web Server ---
+        update_boot_status("Starting web server...");
+        webserver_init();
+
+        // --- Show QR Code ---
+        String url = webserver_get_url();
+        update_boot_status("Ready!");
+        delay(500);
+
+        qr_display_show(url);
+        qr_show_time = millis();
+
+        Serial.printf("[System] Config URL: %s\n", url.c_str());
+        Serial.printf("[System] mDNS: http://%s.local/\n", MDNS_HOSTNAME);
+    } else {
+        update_boot_status("WiFi failed! Rebooting...");
+        delay(3000);
+        ESP.restart();
+    }
 
     // --- Heap info ---
     Serial.printf("[System] Free heap: %u bytes\n", ESP.getFreeHeap());
@@ -168,5 +271,22 @@ void setup()
 void loop()
 {
     lv_timer_handler();  // Let LVGL do its work
-    delay(5);            // Short yield
+
+    // Switch from QR code to dashboard after timeout
+    if (qr_display_is_visible() && (millis() - qr_show_time > QR_DISPLAY_DURATION)) {
+        qr_display_hide();
+        create_dashboard_screen();
+    }
+
+    // WiFi reconnect check (every 10 seconds internally)
+    wifi_check_connection();
+
+    // Periodic heap monitoring (every 60 seconds)
+    if (millis() - lastHeapLog > 60000) {
+        lastHeapLog = millis();
+        Serial.printf("[Heap] Free: %u  Min: %u\n",
+                      ESP.getFreeHeap(), ESP.getMinFreeHeap());
+    }
+
+    delay(5);  // Short yield
 }
