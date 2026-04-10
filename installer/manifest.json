@@ -1,0 +1,13 @@
+{
+  "name": "AI Usage Monitor",
+  "version": "0.4.0",
+  "home_assistant_domain": "",
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "bin/ai-monitor.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

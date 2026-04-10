@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Usage Monitor — Installer</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1A1A2E;
+      color: #E0E0E0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      max-width: 680px;
+      width: 100%;
+      padding: 2rem 1.5rem;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      color: #FFFFFF;
+      text-align: center;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #9090B0;
+      font-size: 0.95rem;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: #16213E;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      border: 1px solid #2A2A4A;
+    }
+
+    .card h2 {
+      font-size: 1.1rem;
+      color: #FFFFFF;
+      margin-bottom: 0.75rem;
+    }
+
+    .card p, .card li {
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: #C0C0D8;
+    }
+
+    .hardware-badge {
+      display: inline-block;
+      background: #0F3460;
+      color: #7EC8E3;
+      padding: 0.3rem 0.8rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-bottom: 1rem;
+    }
+
+    .features {
+      list-style: none;
+      padding: 0;
+    }
+
+    .features li {
+      padding: 0.3rem 0;
+      padding-left: 1.5rem;
+      position: relative;
+    }
+
+    .features li::before {
+      content: "\2713";
+      position: absolute;
+      left: 0;
+      color: #53E88B;
+      font-weight: bold;
+    }
+
+    .steps {
+      list-style: none;
+      padding: 0;
+      counter-reset: step;
+    }
+
+    .steps li {
+      padding: 0.5rem 0;
+      padding-left: 2.2rem;
+      position: relative;
+      counter-increment: step;
+    }
+
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      width: 1.6rem;
+      height: 1.6rem;
+      background: #0F3460;
+      color: #7EC8E3;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      top: 0.45rem;
+    }
+
+    .install-section {
+      text-align: center;
+      padding: 2rem 1.5rem;
+    }
+
+    esp-web-install-button {
+      display: inline-block;
+    }
+
+    esp-web-install-button button {
+      background: #E94560;
+      color: #FFFFFF;
+      border: none;
+      padding: 0.9rem 2.5rem;
+      font-size: 1.1rem;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    esp-web-install-button button:hover {
+      background: #D63050;
+    }
+
+    .browser-note {
+      font-size: 0.8rem;
+      color: #7070A0;
+      margin-top: 0.75rem;
+    }
+
+    .troubleshooting dt {
+      font-weight: 600;
+      color: #E0C060;
+      margin-top: 0.75rem;
+      font-size: 0.9rem;
+    }
+
+    .troubleshooting dd {
+      font-size: 0.85rem;
+      color: #C0C0D8;
+      margin-left: 0;
+      padding-left: 1rem;
+      line-height: 1.6;
+    }
+
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      font-size: 0.8rem;
+      color: #606080;
+      margin-top: auto;
+    }
+
+    footer a {
+      color: #7EC8E3;
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+
+    .unsupported {
+      display: none;
+      background: #3E1620;
+      border: 1px solid #E94560;
+      border-radius: 8px;
+      padding: 1rem;
+      text-align: center;
+      color: #F0A0A0;
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 500px) {
+      .container { padding: 1.2rem 1rem; }
+      h1 { font-size: 1.4rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>AI Usage Monitor</h1>
+    <p class="subtitle">ESP32 Dashboard fuer AI Token-Verbrauch und Kosten</p>
+
+    <div class="unsupported" id="unsupported">
+      Dein Browser unterstuetzt Web Serial nicht. Bitte verwende <strong>Google Chrome</strong> oder <strong>Microsoft Edge</strong> auf einem Desktop-Computer.
+    </div>
+
+    <div class="card">
+      <h2>Was ist das?</h2>
+      <p>Ein kompaktes Hardware-Dashboard, das deinen AI-Token-Verbrauch in Echtzeit anzeigt. Kosten, Nutzung und Verlauf von Anthropic und OpenAI auf einen Blick.</p>
+      <br>
+      <span class="hardware-badge">ESP32-2432S028R (CYD 2.8")</span>
+      <ul class="features">
+        <li>Token-Verbrauch pro Provider (Anthropic, OpenAI)</li>
+        <li>Echtzeit-Kostentracking</li>
+        <li>Nutzungsverlauf und Charts</li>
+        <li>WiFi-Konfiguration per Captive Portal</li>
+        <li>OTA-Updates</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Installation</h2>
+      <ol class="steps">
+        <li>ESP32 per USB-Kabel an den Computer anschliessen</li>
+        <li>Google Chrome oder Microsoft Edge oeffnen</li>
+        <li>Unten auf <strong>"Installieren"</strong> klicken und den USB Serial Port waehlen</li>
+        <li>Warten bis die Installation abgeschlossen ist</li>
+      </ol>
+    </div>
+
+    <div class="card install-section">
+      <esp-web-install-button manifest="manifest.json">
+        <button slot="activate">Installieren</button>
+      </esp-web-install-button>
+      <p class="browser-note">Erfordert Chrome oder Edge mit Web Serial Unterstuetzung</p>
+    </div>
+
+    <div class="card">
+      <h2>Troubleshooting</h2>
+      <dl class="troubleshooting">
+        <dt>Kein Port sichtbar?</dt>
+        <dd>Stelle sicher, dass du ein USB-Datenkabel verwendest (nicht nur Ladekabel). Installiere ggf. den <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">CP2102-Treiber</a> oder <a href="https://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank" rel="noopener">CH340-Treiber</a>.</dd>
+
+        <dt>Installation schlaegt fehl?</dt>
+        <dd>Druecke den Reset-Button auf dem Board und versuche es erneut. Stelle sicher, dass keine andere Anwendung (Arduino IDE, PlatformIO) den Port belegt.</dd>
+
+        <dt>Display bleibt schwarz nach Installation?</dt>
+        <dd>Trenne das USB-Kabel und schliesse es erneut an. Das Board startet automatisch neu und zeigt das WiFi-Setup an.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <footer>
+    <span id="version-tag">v0.4.0</span> &middot;
+    <a href="https://github.com/tobiasmarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a>
+  </footer>
+
+  <script>
+    if (!('serial' in navigator)) {
+      document.getElementById('unsupported').style.display = 'block';
+    }
+  </script>
+</body>
+</html>

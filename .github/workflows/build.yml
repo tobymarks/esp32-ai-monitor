@@ -1,0 +1,82 @@
+name: Build & Deploy Installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'platformio.ini'
+      - 'installer/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio esptool
+
+      - name: Build firmware
+        run: pio run
+
+      - name: Merge binary
+        run: |
+          mkdir -p installer/bin
+          FIRMWARE_DIR=".pio/build/esp32dev"
+          BOOT_APP0="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+
+          esptool.py --chip esp32 merge_bin \
+            -o installer/bin/ai-monitor.bin \
+            --flash_mode dio \
+            --flash_freq 40m \
+            --flash_size 4MB \
+            0x1000  "$FIRMWARE_DIR/bootloader.bin" \
+            0x8000  "$FIRMWARE_DIR/partitions.bin" \
+            0xe000  "$BOOT_APP0" \
+            0x10000 "$FIRMWARE_DIR/firmware.bin"
+
+      - name: Update manifest version
+        run: |
+          VERSION=$(grep '#define APP_VERSION' src/config.h | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          python3 -c "
+          import json
+          with open('installer/manifest.json', 'r') as f:
+              m = json.load(f)
+          m['version'] = '$VERSION'
+          with open('installer/manifest.json', 'w') as f:
+              json.dump(m, f, indent=2)
+              f.write('\n')
+          "
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: installer
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
