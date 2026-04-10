@@ -1,0 +1,37 @@
+# ESP32 AI Usage Monitor
+
+Dashboard for AI token usage metrics on an ESP32-2432S028R (CYD 2.8").
+
+## Hardware
+
+- **Board:** ESP32-2432S028R (Cheap Yellow Display)
+- **Display:** 2.8" ILI9341 (320x240, SPI)
+- **Touch:** XPT2046 resistive (HSPI)
+- **MCU:** ESP32-WROOM-32
+
+## Setup
+
+1. Install [PlatformIO](https://platformio.org/)
+2. Clone this repo
+3. Build and flash:
+
+```bash
+pio run -t upload
+pio device monitor
+```
+
+## Features (planned)
+
+- AI token usage dashboard (Anthropic, OpenAI)
+- Real-time cost tracking
+- Usage charts and history
+- WiFi config via captive portal (WiFiManager)
+- OTA updates
+
+## Stack
+
+- PlatformIO + Arduino framework
+- TFT_eSPI (display driver)
+- LVGL v9 (UI toolkit)
+- ArduinoJson (API parsing)
+- WiFiManager (WiFi provisioning)
