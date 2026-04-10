@@ -1,6 +1,6 @@
 /**
  * AI Usage Monitor - ESP32-2432S028R (CYD 2.8")
- * Phase 3: WiFi Setup + Web Config + NTP + QR Code + API Clients
+ * Phase 4: LVGL Dashboard UI (v0.4.0)
  *
  * Boot sequence:
  * 1. Init display + touch + LVGL
@@ -9,8 +9,13 @@
  * 4. NTP time sync
  * 5. Start AsyncWebServer
  * 6. Show QR code for config URL (8 seconds)
- * 7. Init API manager + first fetch
- * 8. Switch to main dashboard
+ * 7. Check API keys: if none -> Setup screen, else -> Dashboard + fetch
+ * 8. Main loop: periodic fetch + UI update
+ *
+ * Navigation:
+ *   Dashboard (default) -> tap provider card -> Detail screen
+ *   Dashboard -> long press (>1s) -> Settings screen
+ *   Detail / Settings -> tap back arrow -> Dashboard
  */
 
 #include <Arduino.h>
@@ -24,6 +29,11 @@
 #include "web_server.h"
 #include "qr_display.h"
 #include "api_manager.h"
+#include "ui_common.h"
+#include "ui_dashboard.h"
+#include "ui_detail.h"
+#include "ui_settings.h"
+#include "ui_setup.h"
 
 // ============================================================
 // Globals
@@ -35,7 +45,7 @@ TFT_eSPI tft = TFT_eSPI();
 SPIClass hspi(HSPI);
 XPT2046_Touchscreen ts(PIN_TOUCH_CS);
 
-// LVGL display buffer (one 10-line strip)
+// LVGL display buffer (one 10-line strip, double-buffered)
 static const uint32_t LV_BUF_SIZE = SCREEN_WIDTH * 10;
 static lv_color_t lv_buf1[LV_BUF_SIZE];
 static lv_color_t lv_buf2[LV_BUF_SIZE];
@@ -51,8 +61,16 @@ static lv_obj_t *boot_status_label = nullptr;
 static unsigned long qr_show_time = 0;
 static const unsigned long QR_DISPLAY_DURATION = 8000;  // 8 seconds
 
+// Dashboard state
+static bool dashboard_active = false;
+static unsigned long last_ui_update = 0;
+static const unsigned long UI_UPDATE_INTERVAL = 5000;  // Update display every 5s (time-ago, clock)
+
 // Heap monitoring
 static unsigned long lastHeapLog = 0;
+
+// External config (defined in web_server.cpp)
+extern AppConfig g_config;
 
 // ============================================================
 // LVGL flush callback - sends pixels to TFT_eSPI
@@ -113,7 +131,7 @@ static void create_boot_screen(void)
     // Status label (updated during boot)
     boot_status_label = lv_label_create(scr);
     lv_label_set_text(boot_status_label, "Initializing...");
-    lv_obj_set_style_text_color(boot_status_label, lv_color_hex(COLOR_TEXT_DIM), LV_PART_MAIN);
+    lv_obj_set_style_text_color(boot_status_label, lv_color_hex(0x666666), LV_PART_MAIN);
     lv_obj_set_style_text_font(boot_status_label, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(boot_status_label, LV_ALIGN_CENTER, 0, 10);
 
@@ -138,48 +156,34 @@ static void update_boot_status(const char *msg) {
 }
 
 // ============================================================
-// Create the main dashboard screen (placeholder for Phase 3)
+// Check if any API keys are configured
 // ============================================================
-static void create_dashboard_screen(void) {
-    lv_obj_t *scr = lv_obj_create(nullptr);
+static bool has_api_keys(void) {
+    return (strlen(g_config.anthropic_key) > 0 || strlen(g_config.openai_key) > 0);
+}
 
-    lv_obj_set_style_bg_color(scr, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+// ============================================================
+// Transition from QR to main UI (dashboard or setup)
+// ============================================================
+static void enter_main_ui(void) {
+    if (has_api_keys()) {
+        // Create and show dashboard
+        ui_dashboard_create();
+        ui_dashboard_load();
+        dashboard_active = true;
 
-    // Title
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, APP_NAME);
-    lv_obj_set_style_text_color(title, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+        // Trigger immediate first update with current state
+        const MonitorState &state = api_manager_get_state();
+        ui_dashboard_update(state);
 
-    // Connection info
-    lv_obj_t *info = lv_label_create(scr);
-    String infoText = "WiFi: " + wifi_get_ssid() + "\n";
-    infoText += "IP: " + wifi_get_ip() + "\n";
-    infoText += "Web: http://" MDNS_HOSTNAME ".local/\n";
-    infoText += "Time: " + ntp_get_datetime();
-    lv_label_set_text(info, infoText.c_str());
-    lv_obj_set_style_text_color(info, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(info, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(info, LV_ALIGN_CENTER, 0, 0);
+        Serial.println("[UI] Dashboard active");
+    } else {
+        // Show setup hint screen
+        ui_setup_create();
+        dashboard_active = false;
 
-    // Placeholder text
-    lv_obj_t *placeholder = lv_label_create(scr);
-    lv_label_set_text(placeholder, "API clients active — UI in Phase 4");
-    lv_obj_set_style_text_color(placeholder, lv_color_hex(COLOR_TEXT_DIM), LV_PART_MAIN);
-    lv_obj_set_style_text_font(placeholder, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(placeholder, LV_ALIGN_BOTTOM_MID, 0, -20);
-
-    // Version
-    lv_obj_t *ver = lv_label_create(scr);
-    lv_label_set_text_fmt(ver, "v%s", APP_VERSION);
-    lv_obj_set_style_text_color(ver, lv_color_hex(0x444444), LV_PART_MAIN);
-    lv_obj_set_style_text_font(ver, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(ver, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
-
-    lv_screen_load(scr);
-    Serial.println("[UI] Dashboard screen loaded");
+        Serial.println("[UI] Setup screen — no API keys");
+    }
 }
 
 // ============================================================
@@ -253,7 +257,6 @@ void setup()
         qr_show_time = millis();
 
         // --- Init API Manager ---
-        update_boot_status("Init API manager...");
         api_manager_init();
 
         Serial.printf("[System] Config URL: %s\n", url.c_str());
@@ -278,10 +281,10 @@ void loop()
 {
     lv_timer_handler();  // Let LVGL do its work
 
-    // Switch from QR code to dashboard after timeout
+    // Switch from QR code to main UI after timeout
     if (qr_display_is_visible() && (millis() - qr_show_time > QR_DISPLAY_DURATION)) {
         qr_display_hide();
-        create_dashboard_screen();
+        enter_main_ui();
     }
 
     // WiFi reconnect check (every 10 seconds internally)
@@ -289,6 +292,25 @@ void loop()
 
     // API polling (checks interval internally)
     api_manager_tick();
+
+    // Update dashboard UI
+    if (dashboard_active) {
+        const MonitorState &state = api_manager_get_state();
+
+        // Update UI when fetch just completed (state changed from fetching to idle)
+        static bool was_fetching = false;
+        if (was_fetching && !state.is_fetching) {
+            ui_dashboard_update(state);
+        }
+        was_fetching = state.is_fetching;
+
+        // Periodic UI refresh (time-ago counter, clock, status dot)
+        unsigned long now = millis();
+        if (now - last_ui_update >= UI_UPDATE_INTERVAL) {
+            last_ui_update = now;
+            ui_dashboard_update(state);
+        }
+    }
 
     // Periodic heap monitoring (every 60 seconds)
     if (millis() - lastHeapLog > 60000) {

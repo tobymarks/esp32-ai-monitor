@@ -6,7 +6,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "0.3.0"
+#define APP_VERSION "0.4.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---
@@ -80,11 +80,18 @@ struct AppConfig {
 // ============================================================
 // UI Colors (matching web UI)
 // ============================================================
-#define COLOR_BG         0x1A1A2E
-#define COLOR_PANEL      0x16213E
-#define COLOR_ACCENT     0xE94560
-#define COLOR_TEXT        0xE0E0E0
-#define COLOR_TEXT_DIM    0x888888
-#define COLOR_HIGHLIGHT  0x0F3460
+#define COLOR_BG           0x1A1A2E
+#define COLOR_PANEL        0x16213E
+#define COLOR_ACCENT       0xE94560
+#define COLOR_TEXT         0xE0E0E0
+#define COLOR_TEXT_SEC     0xAAAAAA
+#define COLOR_TEXT_DIM     0x666666
+#define COLOR_HIGHLIGHT    0x0F3460
+#define COLOR_ANTHROPIC    0xE94560
+#define COLOR_OPENAI       0x0ACF83
+#define COLOR_BAR_BG       0x0F3460
+#define COLOR_STATUS_OK    0x27AE60
+#define COLOR_STATUS_ERR   0xE74C3C
+#define COLOR_STATUS_FETCH 0xF1C40F
 
 #endif // CONFIG_H
