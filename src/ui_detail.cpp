@@ -1,11 +1,9 @@
 /**
  * UI Detail - Provider detail screen with per-model breakdown
  *
- * Layout (320x240):
- *   Header: 32px   (back arrow + provider name + time)
- *   Summary: ~40px (Today + This Month rows)
- *   Models: ~130px (scrollable list with bars)
- *   Footer: 32px   (Input / Output / Cached token counts)
+ * Adapts to both orientations:
+ *   Portrait  (240x320): More vertical space for model list
+ *   Landscape (320x240): Compact layout
  */
 
 #include "ui_detail.h"
@@ -37,6 +35,10 @@ static void on_back_tap(lv_event_t *e) {
 void ui_detail_create(const char *provider, const UsageData &data, lv_color_t brand_color) {
     ui_styles_init();
 
+    int16_t sw = SCREEN_WIDTH;
+    int16_t sh = SCREEN_HEIGHT;
+    bool is_portrait = (sw < sh);
+
     lv_obj_t *scr = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(scr, UI_COLOR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
@@ -44,7 +46,7 @@ void ui_detail_create(const char *provider, const UsageData &data, lv_color_t br
 
     // ---- Header (32px) ----
     lv_obj_t *header = lv_obj_create(scr);
-    lv_obj_set_size(header, 320, 32);
+    lv_obj_set_size(header, sw, 32);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(header, 0, LV_PART_MAIN);
@@ -88,6 +90,8 @@ void ui_detail_create(const char *provider, const UsageData &data, lv_color_t br
     char tok_buf[16];
     char line_buf[48];
 
+    int16_t cost_col_x = is_portrait ? 90 : 120;  // Narrower screen needs tighter layout
+
     // Today row
     lv_obj_t *lbl_today_label = lv_label_create(scr);
     lv_label_set_text(lbl_today_label, "Today");
@@ -100,7 +104,7 @@ void ui_detail_create(const char *provider, const UsageData &data, lv_color_t br
     lv_label_set_text(lbl_today_cost, cost_buf);
     lv_obj_set_style_text_color(lbl_today_cost, UI_COLOR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_today_cost, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(lbl_today_cost, 120, 38);
+    lv_obj_set_pos(lbl_today_cost, cost_col_x, 38);
 
     uint32_t today_total = data.today_input_tokens + data.today_output_tokens;
     format_tokens(today_total, tok_buf, sizeof(tok_buf));
@@ -123,7 +127,7 @@ void ui_detail_create(const char *provider, const UsageData &data, lv_color_t br
     lv_label_set_text(lbl_month_cost, cost_buf);
     lv_obj_set_style_text_color(lbl_month_cost, UI_COLOR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_month_cost, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(lbl_month_cost, 120, 56);
+    lv_obj_set_pos(lbl_month_cost, cost_col_x, 56);
 
     uint32_t month_total = data.month_input_tokens + data.month_output_tokens;
     format_tokens(month_total, tok_buf, sizeof(tok_buf));
@@ -144,10 +148,18 @@ void ui_detail_create(const char *provider, const UsageData &data, lv_color_t br
     // Thin divider under models header
     ui_create_divider(scr, 93);
 
+    // ---- Layout for model list and footer ----
+    int16_t footer_h = 40;
+    int16_t list_top = 95;
+    int16_t footer_y = sh - footer_h;
+    int16_t divider_footer_y = footer_y - 2;
+    int16_t list_h = divider_footer_y - list_top - 2;  // Dynamic height
+
     // ---- Model list container (scrollable) ----
+    int16_t row_w = sw - 12;
     lv_obj_t *list = lv_obj_create(scr);
-    lv_obj_set_size(list, 320, 100);
-    lv_obj_set_pos(list, 0, 95);
+    lv_obj_set_size(list, sw, list_h);
+    lv_obj_set_pos(list, 0, list_top);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(list, 4, LV_PART_MAIN);
@@ -159,19 +171,21 @@ void ui_detail_create(const char *provider, const UsageData &data, lv_color_t br
     // Find max tokens for relative bars
     uint32_t max_model_tokens = 0;
     for (uint8_t i = 0; i < data.model_count; i++) {
-        uint32_t t = data.models[i].input_tokens + data.models[i].output_tokens;
-        if (t > max_model_tokens) max_model_tokens = t;
+        uint32_t mt = data.models[i].input_tokens + data.models[i].output_tokens;
+        if (mt > max_model_tokens) max_model_tokens = mt;
     }
     if (max_model_tokens == 0) max_model_tokens = 1;
+
+    int16_t model_name_w = is_portrait ? 130 : 170;
 
     // ---- Model entries ----
     for (uint8_t i = 0; i < data.model_count; i++) {
         const ModelUsage &m = data.models[i];
         uint32_t model_total = m.input_tokens + m.output_tokens;
 
-        // Single row per model: name + bar + token count
+        // Single row per model: name + token count
         lv_obj_t *row = lv_obj_create(list);
-        lv_obj_set_size(row, 308, 28);
+        lv_obj_set_size(row, row_w, 28);
         lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_set_style_border_width(row, 0, LV_PART_MAIN);
         lv_obj_set_style_pad_all(row, 2, LV_PART_MAIN);
@@ -183,7 +197,7 @@ void ui_detail_create(const char *provider, const UsageData &data, lv_color_t br
         lv_obj_set_style_text_color(lbl_model, UI_COLOR_TEXT, LV_PART_MAIN);
         lv_obj_set_style_text_font(lbl_model, &lv_font_montserrat_14, LV_PART_MAIN);
         lv_obj_set_pos(lbl_model, 0, 4);
-        lv_obj_set_width(lbl_model, 170);
+        lv_obj_set_width(lbl_model, model_name_w);
         lv_label_set_long_mode(lbl_model, LV_LABEL_LONG_CLIP);
 
         // Token count (right-aligned)
@@ -205,12 +219,12 @@ void ui_detail_create(const char *provider, const UsageData &data, lv_color_t br
     }
 
     // ---- Divider above footer ----
-    ui_create_divider(scr, 198);
+    ui_create_divider(scr, divider_footer_y);
 
     // ---- Footer: Token breakdown (Input / Output / Cached) ----
     lv_obj_t *footer = lv_obj_create(scr);
-    lv_obj_set_size(footer, 320, 40);
-    lv_obj_set_pos(footer, 0, 200);
+    lv_obj_set_size(footer, sw, footer_h);
+    lv_obj_set_pos(footer, 0, footer_y);
     lv_obj_set_style_bg_opa(footer, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(footer, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(footer, 0, LV_PART_MAIN);

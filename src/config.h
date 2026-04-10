@@ -6,7 +6,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "0.4.0"
+#define APP_VERSION "0.5.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---
@@ -34,10 +34,14 @@
 #define PIN_LDR        34
 
 // ============================================================
-// Display dimensions
+// Display dimensions (physical panel)
 // ============================================================
-#define SCREEN_WIDTH  320
-#define SCREEN_HEIGHT 240
+#define DISPLAY_SHORT_SIDE 240
+#define DISPLAY_LONG_SIDE  320
+
+// Runtime screen dimensions (set in main.cpp based on orientation)
+extern uint16_t SCREEN_WIDTH;
+extern uint16_t SCREEN_HEIGHT;
 
 // ============================================================
 // Touch calibration defaults (raw ADC values)
@@ -69,12 +73,19 @@
 // ============================================================
 // Application Configuration Struct
 // ============================================================
+// ============================================================
+// Orientation options
+// ============================================================
+#define ORIENTATION_PORTRAIT   0   // setRotation(2): 240x320, USB at bottom
+#define ORIENTATION_LANDSCAPE  1   // setRotation(1): 320x240, USB at left
+
 struct AppConfig {
     char     anthropic_key[NVS_VAL_MAX_LEN] = "";
     char     anthropic_org[NVS_VAL_MAX_LEN] = "";
     char     openai_key[NVS_VAL_MAX_LEN]    = "";
     char     openai_org[NVS_VAL_MAX_LEN]    = "";
     uint32_t poll_interval_sec               = DEFAULT_POLL_INTERVAL_SEC;
+    uint8_t  orientation                     = ORIENTATION_PORTRAIT;
 };
 
 // ============================================================

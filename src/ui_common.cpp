@@ -134,7 +134,10 @@ lv_obj_t* ui_create_bar(lv_obj_t *parent, lv_color_t color) {
 // Create horizontal divider line
 // ============================================================
 lv_obj_t* ui_create_divider(lv_obj_t *parent, int16_t y_pos) {
-    static lv_point_precise_t div_pts[] = {{0, 0}, {320, 0}};
+    // Use runtime screen width for divider length
+    static lv_point_precise_t div_pts[2];
+    div_pts[0] = {0, 0};
+    div_pts[1] = {(lv_value_precise_t)SCREEN_WIDTH, 0};
     lv_obj_t *line = lv_line_create(parent);
     lv_line_set_points(line, div_pts, 2);
     lv_obj_set_style_line_color(line, UI_COLOR_DIVIDER, LV_PART_MAIN);

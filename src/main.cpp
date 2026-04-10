@@ -1,6 +1,6 @@
 /**
  * AI Usage Monitor - ESP32-2432S028R (CYD 2.8")
- * Phase 4: LVGL Dashboard UI (v0.4.0)
+ * Phase 5: Portrait mode + configurable orientation (v0.5.0)
  *
  * Boot sequence:
  * 1. Init display + touch + LVGL
@@ -22,6 +22,7 @@
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include <lvgl.h>
+#include <Preferences.h>
 #include "config.h"
 #include "wifi_setup.h"
 #include "ntp_time.h"
@@ -40,10 +41,15 @@
 
 TFT_eSPI tft = TFT_eSPI();
 
+// Runtime screen dimensions (defined here, declared extern in config.h)
+uint16_t SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;   // Default: Portrait 240
+uint16_t SCREEN_HEIGHT = DISPLAY_LONG_SIDE;     // Default: Portrait 320
+
 // Touch calibration data (populated by tft.calibrateTouch() or defaults)
 
 // LVGL display buffer (one 10-line strip, double-buffered)
-static const uint32_t LV_BUF_SIZE = SCREEN_WIDTH * 10;
+// Use short side (240) * 10 — fits both orientations
+static const uint32_t LV_BUF_SIZE = DISPLAY_SHORT_SIDE * 10;
 static lv_color_t lv_buf1[LV_BUF_SIZE];
 static lv_color_t lv_buf2[LV_BUF_SIZE];
 
@@ -194,25 +200,51 @@ void setup()
 
     // --- TFT init ---
     tft.init();
-    tft.setRotation(1);  // Landscape
+
+    // Set rotation based on saved orientation config
+    // (config_load is called later by wifi_setup_init, so we do a quick NVS read here)
+    {
+        Preferences orientPrefs;
+        orientPrefs.begin(NVS_NAMESPACE, true);
+        g_config.orientation = orientPrefs.getUChar("orient", ORIENTATION_PORTRAIT);
+        orientPrefs.end();
+    }
+
+    if (g_config.orientation == ORIENTATION_LANDSCAPE) {
+        tft.setRotation(1);   // Landscape: 320x240, USB left
+        SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
+        SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
+    } else {
+        tft.setRotation(2);   // Portrait: 240x320, USB bottom
+        SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
+        SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
+    }
     tft.fillScreen(TFT_BLACK);
-    Serial.println("[TFT] Display initialized (320x240 landscape)");
+    Serial.printf("[TFT] Display initialized (%ux%u %s)\n",
+                  SCREEN_WIDTH, SCREEN_HEIGHT,
+                  g_config.orientation == ORIENTATION_LANDSCAPE ? "landscape" : "portrait");
 
     // --- Touch init (via TFT_eSPI built-in XPT2046 support) ---
-    uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 1 };
-    tft.setTouch(calData);
+    // calData[4] = rotation swap flag: 1 for landscape, 7 for portrait rotation(2)
+    if (g_config.orientation == ORIENTATION_LANDSCAPE) {
+        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 1 };
+        tft.setTouch(calData);
+    } else {
+        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 7 };
+        tft.setTouch(calData);
+    }
     Serial.println("[Touch] XPT2046 initialized via TFT_eSPI");
 
     // --- LVGL init ---
     lv_init();
     Serial.println("[LVGL] Core initialized");
 
-    // Create display
+    // Create display with runtime dimensions
     lv_disp = lv_display_create(SCREEN_WIDTH, SCREEN_HEIGHT);
     lv_display_set_flush_cb(lv_disp, disp_flush_cb);
     lv_display_set_buffers(lv_disp, lv_buf1, lv_buf2,
                            sizeof(lv_buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
-    Serial.println("[LVGL] Display driver registered");
+    Serial.printf("[LVGL] Display driver registered (%ux%u)\n", SCREEN_WIDTH, SCREEN_HEIGHT);
 
     // Create touch input device
     lv_touch = lv_indev_create();

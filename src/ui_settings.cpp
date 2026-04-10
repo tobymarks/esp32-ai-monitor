@@ -1,10 +1,9 @@
 /**
  * UI Settings - System status and config screen
  *
- * Layout (320x240):
- *   Header: 32px  (back arrow + "SETTINGS" + time)
- *   Info:   ~170px (WiFi, IP, mDNS, QR code, Heap, Uptime, Poll)
- *   Footer: 32px  (version)
+ * Adapts to both orientations:
+ *   Portrait  (240x320): QR code below info rows, bigger QR
+ *   Landscape (320x240): QR code to the right, compact layout
  *
  * Accessed via long-press on dashboard.
  */
@@ -61,14 +60,14 @@ static void format_uptime(char *buf, size_t len) {
 // ============================================================
 // Helper: draw inline QR code on the settings screen
 // ============================================================
-static void draw_settings_qr(lv_obj_t *parent, const String &url, int16_t x, int16_t y) {
+static void draw_settings_qr(lv_obj_t *parent, const String &url, int16_t x, int16_t y, uint16_t target_size = 80) {
     QRCode qrcode;
     const uint8_t qr_version = 4;
     uint8_t qrcodeData[qrcode_getBufferSize(qr_version)];
     qrcode_initText(&qrcode, qrcodeData, qr_version, ECC_LOW, url.c_str());
 
     uint8_t modules = qrcode.size;
-    uint8_t px_size = 80 / modules;  // Fit in ~80px
+    uint8_t px_size = target_size / modules;
     if (px_size < 1) px_size = 1;
     uint16_t qr_px = modules * px_size;
     uint16_t padding = 4;
@@ -127,6 +126,10 @@ static lv_obj_t* create_info_row(lv_obj_t *parent, const char *label, const char
 void ui_settings_create() {
     ui_styles_init();
 
+    int16_t sw = SCREEN_WIDTH;
+    int16_t sh = SCREEN_HEIGHT;
+    bool is_portrait = (sw < sh);
+
     lv_obj_t *scr = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(scr, UI_COLOR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
@@ -134,7 +137,7 @@ void ui_settings_create() {
 
     // ---- Header ----
     lv_obj_t *header = lv_obj_create(scr);
-    lv_obj_set_size(header, 320, 32);
+    lv_obj_set_size(header, sw, 32);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(header, 0, LV_PART_MAIN);
@@ -172,46 +175,69 @@ void ui_settings_create() {
     // ---- Divider ----
     ui_create_divider(scr, 32);
 
-    // ---- Info rows (left column) ----
-    // WiFi SSID + RSSI
+    // ---- Info rows ----
     char wifi_buf[48];
     snprintf(wifi_buf, sizeof(wifi_buf), "%s  %d dBm",
              wifi_get_ssid().c_str(), wifi_get_rssi());
     create_info_row(scr, "WiFi:", wifi_buf, 40);
 
-    // IP address
     create_info_row(scr, "IP:", wifi_get_ip().c_str(), 58);
 
-    // mDNS
     char mdns_buf[48];
     snprintf(mdns_buf, sizeof(mdns_buf), "%s.local", MDNS_HOSTNAME);
     create_info_row(scr, "Web:", mdns_buf, 76);
 
-    // ---- QR Code (right side, centered vertically) ----
+    // ---- QR Code ----
     String config_url = webserver_get_url();
-    draw_settings_qr(scr, config_url, 220, 40);
 
-    // ---- System info rows (below QR area) ----
-    // Heap
-    char heap_buf[48];
-    snprintf(heap_buf, sizeof(heap_buf), "%u KB / Min: %u KB",
-             ESP.getFreeHeap() / 1024, ESP.getMinFreeHeap() / 1024);
-    create_info_row(scr, "Heap:", heap_buf, 140);
+    if (is_portrait) {
+        // Portrait: QR code centered below info rows, larger (120px)
+        int16_t qr_x = (sw - 120) / 2;
+        draw_settings_qr(scr, config_url, qr_x, 98, 120);
 
-    // Uptime
-    char uptime_buf[32];
-    format_uptime(uptime_buf, sizeof(uptime_buf));
-    create_info_row(scr, "Uptime:", uptime_buf, 158);
+        // System info below QR
+        char heap_buf[48];
+        snprintf(heap_buf, sizeof(heap_buf), "%u KB / Min: %u KB",
+                 ESP.getFreeHeap() / 1024, ESP.getMinFreeHeap() / 1024);
+        create_info_row(scr, "Heap:", heap_buf, 228);
 
-    // Poll interval + NTP status
-    char poll_buf[48];
-    snprintf(poll_buf, sizeof(poll_buf), "%lus | NTP: %s",
-             (unsigned long)g_config.poll_interval_sec,
-             ntp_is_synced() ? "synced" : "not synced");
-    create_info_row(scr, "Poll:", poll_buf, 176);
+        char uptime_buf[32];
+        format_uptime(uptime_buf, sizeof(uptime_buf));
+        create_info_row(scr, "Uptime:", uptime_buf, 246);
+
+        char poll_buf[48];
+        snprintf(poll_buf, sizeof(poll_buf), "%lus | NTP: %s",
+                 (unsigned long)g_config.poll_interval_sec,
+                 ntp_is_synced() ? "synced" : "not synced");
+        create_info_row(scr, "Poll:", poll_buf, 264);
+
+        // Orientation info
+        create_info_row(scr, "Mode:", "Portrait (USB down)", 282);
+
+    } else {
+        // Landscape: QR code to the right of info rows (80px)
+        draw_settings_qr(scr, config_url, sw - 100, 40, 80);
+
+        // System info below first rows
+        char heap_buf[48];
+        snprintf(heap_buf, sizeof(heap_buf), "%u KB / Min: %u KB",
+                 ESP.getFreeHeap() / 1024, ESP.getMinFreeHeap() / 1024);
+        create_info_row(scr, "Heap:", heap_buf, 140);
+
+        char uptime_buf[32];
+        format_uptime(uptime_buf, sizeof(uptime_buf));
+        create_info_row(scr, "Uptime:", uptime_buf, 158);
+
+        char poll_buf[48];
+        snprintf(poll_buf, sizeof(poll_buf), "%lus | NTP: %s",
+                 (unsigned long)g_config.poll_interval_sec,
+                 ntp_is_synced() ? "synced" : "not synced");
+        create_info_row(scr, "Poll:", poll_buf, 176);
+    }
 
     // ---- Divider above footer ----
-    ui_create_divider(scr, 198);
+    int16_t footer_div_y = sh - 42;
+    ui_create_divider(scr, footer_div_y);
 
     // ---- Footer: Version ----
     lv_obj_t *lbl_ver = lv_label_create(scr);
@@ -220,7 +246,7 @@ void ui_settings_create() {
     lv_label_set_text(lbl_ver, ver_buf);
     lv_obj_set_style_text_color(lbl_ver, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_ver, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(lbl_ver, 12, 208);
+    lv_obj_set_pos(lbl_ver, 12, sh - 30);
 
     // ---- Load with slide animation ----
     ui_screen_load_forward(scr);

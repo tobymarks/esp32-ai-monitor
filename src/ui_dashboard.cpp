@@ -1,7 +1,14 @@
 /**
  * UI Dashboard - Main screen showing provider usage cards
  *
- * Layout (320x240):
+ * Supports both orientations dynamically:
+ *
+ * Portrait (240x320):
+ *   Header: 28px  (app name + time)
+ *   Cards:  ~250px (two provider cards, ~110px each + gap)
+ *   Footer: 42px  (total cost + status dot + refresh time)
+ *
+ * Landscape (320x240):
  *   Header: 28px  (app name + time)
  *   Cards:  ~166px (two provider cards, ~78px each + gap)
  *   Footer: 44px  (total cost + status dot + refresh time)
@@ -98,9 +105,16 @@ static lv_obj_t* create_provider_card(
     lv_obj_t **out_today_lbl,
     lv_obj_t **out_trend_lbl
 ) {
+    // Dynamic sizing based on screen dimensions
+    int16_t card_w = SCREEN_WIDTH - 16;  // 8px margin each side
+    bool is_portrait = (SCREEN_WIDTH < SCREEN_HEIGHT);
+    int16_t card_h = is_portrait ? 105 : 76;
+    int16_t bar_w  = is_portrait ? (card_w - 80) : 196;
+    int16_t tok_x  = bar_w + 8;
+
     // Card container
     lv_obj_t *card = ui_create_panel(parent);
-    lv_obj_set_size(card, 304, 76);
+    lv_obj_set_size(card, card_w, card_h);
     lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -120,22 +134,24 @@ static lv_obj_t* create_provider_card(
     lv_obj_align(*out_cost_lbl, LV_ALIGN_TOP_RIGHT, 0, 0);
 
     // Row 2: Progress bar + token count
+    int16_t bar_y = is_portrait ? 28 : 24;
     *out_bar = ui_create_bar(card, brand_color);
-    lv_obj_set_width(*out_bar, 196);
-    lv_obj_set_pos(*out_bar, 0, 24);
+    lv_obj_set_width(*out_bar, bar_w);
+    lv_obj_set_pos(*out_bar, 0, bar_y);
 
     *out_token_lbl = lv_label_create(card);
     lv_label_set_text(*out_token_lbl, "0 tok");
     lv_obj_set_style_text_color(*out_token_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
     lv_obj_set_style_text_font(*out_token_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(*out_token_lbl, 204, 22);
+    lv_obj_set_pos(*out_token_lbl, tok_x, bar_y - 2);
 
     // Row 3: Today cost (left) + Trend placeholder (right)
+    int16_t today_y = is_portrait ? 52 : 42;
     *out_today_lbl = lv_label_create(card);
     lv_label_set_text(*out_today_lbl, "Today: $0.00");
     lv_obj_set_style_text_color(*out_today_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
     lv_obj_set_style_text_font(*out_today_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(*out_today_lbl, 0, 42);
+    lv_obj_set_pos(*out_today_lbl, 0, today_y);
 
     *out_trend_lbl = lv_label_create(card);
     lv_label_set_text(*out_trend_lbl, "");
@@ -157,14 +173,18 @@ void ui_dashboard_create() {
         return;  // Already created — just load it
     }
 
+    bool is_portrait = (SCREEN_WIDTH < SCREEN_HEIGHT);
+    int16_t sw = SCREEN_WIDTH;
+    int16_t sh = SCREEN_HEIGHT;
+
     scr_dashboard = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(scr_dashboard, UI_COLOR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr_dashboard, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(scr_dashboard, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ---- Header bar ----
+    // ---- Header bar (28px) ----
     lv_obj_t *header = lv_obj_create(scr_dashboard);
-    lv_obj_set_size(header, 320, 28);
+    lv_obj_set_size(header, sw, 28);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(header, 0, LV_PART_MAIN);
@@ -172,7 +192,7 @@ void ui_dashboard_create() {
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl_title = lv_label_create(header);
-    lv_label_set_text(lbl_title, "AI USAGE MONITOR");
+    lv_label_set_text(lbl_title, is_portrait ? "AI MONITOR" : "AI USAGE MONITOR");
     lv_obj_set_style_text_color(lbl_title, UI_COLOR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_set_pos(lbl_title, 8, 6);
@@ -186,13 +206,23 @@ void ui_dashboard_create() {
     // ---- Divider under header ----
     ui_create_divider(scr_dashboard, 28);
 
+    // ---- Layout calculations ----
+    // Portrait: cards are taller (105px), with more vertical space
+    // Landscape: cards are compact (76px), original layout
+    int16_t card_h = is_portrait ? 105 : 76;
+    int16_t card1_y = 32;
+    int16_t card2_y = card1_y + card_h + 6;  // 6px gap between cards
+    int16_t footer_h = 42;
+    int16_t divider_y = sh - footer_h - 2;
+    int16_t footer_y = sh - footer_h;
+
     // ---- Anthropic Card ----
     card_anthropic = create_provider_card(
         scr_dashboard, "ANTHROPIC", UI_COLOR_ANTHROPIC,
         &lbl_anth_name, &lbl_anth_cost, &bar_anth,
         &lbl_anth_tokens, &lbl_anth_today, &lbl_anth_trend
     );
-    lv_obj_set_pos(card_anthropic, 8, 32);
+    lv_obj_set_pos(card_anthropic, 8, card1_y);
     lv_obj_add_flag(card_anthropic, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(card_anthropic, on_anthropic_tap, LV_EVENT_CLICKED, nullptr);
 
@@ -202,17 +232,17 @@ void ui_dashboard_create() {
         &lbl_oai_name, &lbl_oai_cost, &bar_oai,
         &lbl_oai_tokens, &lbl_oai_today, &lbl_oai_trend
     );
-    lv_obj_set_pos(card_openai, 8, 114);
+    lv_obj_set_pos(card_openai, 8, card2_y);
     lv_obj_add_flag(card_openai, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(card_openai, on_openai_tap, LV_EVENT_CLICKED, nullptr);
 
     // ---- Divider above footer ----
-    ui_create_divider(scr_dashboard, 196);
+    ui_create_divider(scr_dashboard, divider_y);
 
     // ---- Footer ----
     lv_obj_t *footer = lv_obj_create(scr_dashboard);
-    lv_obj_set_size(footer, 320, 42);
-    lv_obj_set_pos(footer, 0, 198);
+    lv_obj_set_size(footer, sw, footer_h);
+    lv_obj_set_pos(footer, 0, footer_y);
     lv_obj_set_style_bg_opa(footer, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(footer, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(footer, 0, LV_PART_MAIN);
@@ -241,7 +271,7 @@ void ui_dashboard_create() {
 
     // ---- Full-screen overlay for long-press detection ----
     long_press_overlay = lv_obj_create(scr_dashboard);
-    lv_obj_set_size(long_press_overlay, 320, 240);
+    lv_obj_set_size(long_press_overlay, sw, sh);
     lv_obj_set_pos(long_press_overlay, 0, 0);
     lv_obj_set_style_bg_opa(long_press_overlay, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(long_press_overlay, 0, LV_PART_MAIN);
@@ -257,7 +287,8 @@ void ui_dashboard_create() {
     memset(&last_state, 0, sizeof(last_state));
     state_stored = false;
 
-    Serial.println("[UI] Dashboard screen created (v0.4.0)");
+    Serial.printf("[UI] Dashboard screen created (v0.5.0, %s)\n",
+                  is_portrait ? "portrait" : "landscape");
 }
 
 // ============================================================

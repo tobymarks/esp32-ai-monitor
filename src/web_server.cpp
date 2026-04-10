@@ -146,6 +146,14 @@ h1{text-align:center;color:#E94560;font-size:1.4em;margin-bottom:8px}
       <label>Polling Interval (seconds)</label>
       <input type="number" id="poll_interval_sec" name="poll_interval_sec" min="10" max="86400" value="300">
     </div>
+    <div class="field">
+      <label>Display Orientation</label>
+      <select id="orientation" name="orientation" style="width:100%;padding:8px 10px;background:#0F3460;border:1px solid #1A1A2E;border-radius:4px;color:#E0E0E0;font-size:.9em;outline:none">
+        <option value="0">Portrait (USB bottom)</option>
+        <option value="1">Landscape</option>
+      </select>
+      <div style="font-size:.75em;color:#888;margin-top:4px">Requires restart to take effect</div>
+    </div>
   </div>
 
   <div class="actions">
@@ -189,6 +197,7 @@ async function loadConfig(){
     document.getElementById('openai_key').placeholder=d.openai_key||'sk-...';
     document.getElementById('openai_org').value=d.openai_org||'';
     document.getElementById('poll_interval_sec').value=d.poll_interval_sec||300;
+    document.getElementById('orientation').value=d.orientation||0;
   }catch(e){}
 }
 
@@ -205,13 +214,19 @@ document.getElementById('configForm').addEventListener('submit',async function(e
   const oo=document.getElementById('openai_org').value;
   if(oo)data.openai_org=oo;
   data.poll_interval_sec=parseInt(document.getElementById('poll_interval_sec').value)||300;
+  data.orientation=parseInt(document.getElementById('orientation').value)||0;
 
   try{
     const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
     if(r.ok){
+      const resp=await r.json();
       btn.classList.add('success');btn.textContent='Saved!';
       setTimeout(()=>{btn.classList.remove('success');btn.textContent='Save';},2000);
-      showMsg('Configuration saved successfully',true);
+      if(resp.restart_hint){
+        showMsg(resp.restart_hint+' Click Restart to apply.',true);
+      }else{
+        showMsg('Configuration saved successfully',true);
+      }
       loadConfig();
     }else{
       showMsg('Failed to save',false);
@@ -250,6 +265,7 @@ void webserver_init() {
         doc["openai_key"]    = maskKey(g_config.openai_key);
         doc["openai_org"]    = String(g_config.openai_org);
         doc["poll_interval_sec"] = g_config.poll_interval_sec;
+        doc["orientation"]       = g_config.orientation;
 
         String json;
         serializeJson(doc, json);
@@ -292,9 +308,24 @@ void webserver_init() {
                     uint32_t val = doc["poll_interval_sec"];
                     if (val >= 10 && val <= 86400) g_config.poll_interval_sec = val;
                 }
+                if (doc["orientation"].is<unsigned int>()) {
+                    uint8_t val = doc["orientation"];
+                    if (val <= 1) g_config.orientation = val;
+                }
 
                 config_save(g_config);
-                request->send(200, "application/json", "{\"status\":\"ok\"}");
+
+                // Check if orientation changed — notify that restart is needed
+                bool needs_restart = false;
+                if (doc["orientation"].is<unsigned int>()) {
+                    needs_restart = true;
+                }
+
+                if (needs_restart) {
+                    request->send(200, "application/json", "{\"status\":\"ok\",\"restart_hint\":\"Orientation changed. Restart required.\"}");
+                } else {
+                    request->send(200, "application/json", "{\"status\":\"ok\"}");
+                }
                 Serial.println("[Web] Config updated via API");
             }
         }
