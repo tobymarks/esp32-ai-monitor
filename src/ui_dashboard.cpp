@@ -1,5 +1,5 @@
 /**
- * UI Dashboard - Vibe-TV-Style main screen (v0.6.0)
+ * UI Dashboard - Vibe-TV-Style main screen
  *
  * Portrait (240x320):
  * +---------------------------+
@@ -268,7 +268,7 @@ void ui_dashboard_create() {
     memset(&last_state, 0, sizeof(last_state));
     state_stored = false;
 
-    Serial.println("[UI] Dashboard screen created (v0.6.0, Vibe-TV-Style)");
+    Serial.println("[UI] Dashboard screen created (Vibe-TV-Style)");
 }
 
 // ============================================================

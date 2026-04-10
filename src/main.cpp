@@ -1,6 +1,6 @@
 /**
  * AI Usage Monitor - ESP32-2432S028R (CYD 2.8")
- * Phase 6: Vibe-TV-Style Dashboard (v0.6.0)
+ * Phase 6: Vibe-TV-Style Dashboard
  *
  * Boot sequence:
  * 1. Init display + touch + LVGL
@@ -120,7 +120,7 @@ static void create_boot_screen(void)
 
     // Title
     lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "AI Usage Monitor v0.6.0");
+    lv_label_set_text_fmt(title, "AI Usage Monitor v%s", APP_VERSION);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, -30);
