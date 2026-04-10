@@ -270,22 +270,16 @@ void setup()
         update_boot_status("Starting web server...");
         webserver_init();
 
-        // --- Show QR Code ---
+        // --- Go to main UI ---
         String url = webserver_get_url();
         update_boot_status("Ready!");
         delay(500);
 
-        qr_display_show(url);
-        qr_show_time = millis();
-
-        // If QR failed to render (canvas allocation), skip directly to main UI
-        if (!qr_display_is_visible()) {
-            Serial.println("[Boot] QR display skipped (memory), entering main UI directly");
-            enter_main_ui();
-        }
-
         // --- Init API Manager ---
         api_manager_init();
+
+        // Enter dashboard or setup screen directly
+        enter_main_ui();
 
         Serial.printf("[System] Config URL: %s\n", url.c_str());
         Serial.printf("[System] mDNS: http://%s.local/\n", MDNS_HOSTNAME);
@@ -308,12 +302,6 @@ void setup()
 void loop()
 {
     lv_timer_handler();  // Let LVGL do its work
-
-    // Switch from QR code to main UI after timeout
-    if (qr_display_is_visible() && (millis() - qr_show_time > QR_DISPLAY_DURATION)) {
-        qr_display_hide();
-        enter_main_ui();
-    }
 
     // WiFi reconnect check (every 10 seconds internally)
     wifi_check_connection();
