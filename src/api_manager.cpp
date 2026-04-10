@@ -30,6 +30,10 @@ static bool first_fetch_done = false;
 // Minimum interval between fetches (60 seconds)
 static const unsigned long MIN_FETCH_INTERVAL_MS = 60000;
 
+// Cooldown after rate-limiting: wait at least 60s before next poll
+static const unsigned long RATE_LIMIT_COOLDOWN_MS = 60000;
+static bool last_cycle_rate_limited = false;
+
 // Token expiry lookahead: refresh if within 5 minutes of expiry
 static const uint32_t TOKEN_REFRESH_MARGIN_SEC = 300;
 
@@ -104,6 +108,13 @@ void api_manager_fetch() {
 
     Serial.printf("[APIManager] Heap after usage fetch: %u bytes\n", ESP.getFreeHeap());
 
+    // Track if this cycle was rate-limited (affects next poll interval)
+    last_cycle_rate_limited = claude_was_rate_limited();
+    if (last_cycle_rate_limited) {
+        Serial.printf("[APIManager] Rate-limited — next poll delayed by %lu sec cooldown\n",
+                      RATE_LIMIT_COOLDOWN_MS / 1000UL);
+    }
+
     state.token_valid  = state.usage.valid;
     state.is_fetching  = false;
     strlcpy(state.status, "Idle", sizeof(state.status));
@@ -133,10 +144,13 @@ void api_manager_tick() {
         return;
     }
 
-    // Enforce minimum interval (60s)
+    // Enforce minimum interval (60s), extend if last cycle was rate-limited
     unsigned long interval_ms = (unsigned long)g_config.poll_interval_sec * 1000UL;
     if (interval_ms < MIN_FETCH_INTERVAL_MS) {
         interval_ms = MIN_FETCH_INTERVAL_MS;
+    }
+    if (last_cycle_rate_limited && interval_ms < RATE_LIMIT_COOLDOWN_MS) {
+        interval_ms = RATE_LIMIT_COOLDOWN_MS;
     }
 
     // Check if interval elapsed (handle millis() overflow)

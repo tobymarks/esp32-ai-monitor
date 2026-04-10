@@ -26,7 +26,13 @@ extern void config_save(const AppConfig &cfg);
 static const char *TAG             = "Claude";
 static const int  HTTP_TIMEOUT_MS  = 15000;
 static const int  MAX_RETRIES      = 3;
-static const int  RETRY_BASE_MS    = 2000;
+// Backoff delays per retry attempt (10s, 30s, 60s)
+static const int  RETRY_DELAYS_MS[] = { 10000, 30000, 60000 };
+
+// Filled by fetch_usage_once when a 429 includes Retry-After header
+static int last_retry_after_sec = 0;
+// Set to true if any attempt in the last fetch cycle got a 429
+static bool last_fetch_was_rate_limited = false;
 
 // ============================================================
 // Create a configured WiFiClientSecure (heap-managed)
@@ -146,10 +152,31 @@ static int fetch_usage_once(UsageData &data) {
     http.addHeader("anthropic-beta", "oauth-2025-04-20");
     http.setTimeout(HTTP_TIMEOUT_MS);
 
+    // Collect Retry-After header from response
+    const char *headerKeys[] = { "Retry-After" };
+    http.collectHeaders(headerKeys, 1);
+
     httpCode = http.GET();
     Serial.printf("[%s] GET usage -> %d\n", TAG, httpCode);
 
-    if (httpCode == 200) {
+    // Reset retry-after tracking
+    last_retry_after_sec = 0;
+
+    if (httpCode == 429) {
+        last_fetch_was_rate_limited = true;
+        // Parse Retry-After header if present
+        if (http.hasHeader("Retry-After")) {
+            String retryAfter = http.header("Retry-After");
+            last_retry_after_sec = retryAfter.toInt();
+            Serial.printf("[%s] 429 Rate Limited — Retry-After: %s (%d sec)\n",
+                          TAG, retryAfter.c_str(), last_retry_after_sec);
+        } else {
+            Serial.printf("[%s] 429 Rate Limited — no Retry-After header\n", TAG);
+        }
+        String errBody = http.getString();
+        Serial.printf("[%s] 429 body: %s\n", TAG, errBody.c_str());
+        snprintf(data.error, sizeof(data.error), "HTTP 429 (rate limited)");
+    } else if (httpCode == 200) {
         JsonDocument doc;
         DeserializationError err = deserializeJson(doc, http.getStream());
 
@@ -213,12 +240,25 @@ bool claude_fetch_usage(UsageData &data) {
     }
 
     bool token_refreshed = false;
+    last_fetch_was_rate_limited = false;
 
     for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         if (attempt > 1) {
-            int wait = RETRY_BASE_MS * (1 << (attempt - 2));  // 2s, 4s
-            Serial.printf("[%s] Retry %d/%d in %dms\n", TAG, attempt, MAX_RETRIES, wait);
-            delay(wait);
+            // Use Retry-After value if server provided one, otherwise use backoff table
+            int wait_ms;
+            if (last_retry_after_sec > 0) {
+                wait_ms = last_retry_after_sec * 1000;
+                Serial.printf("[%s] Retry %d/%d — waiting Retry-After %d sec\n",
+                              TAG, attempt, MAX_RETRIES, last_retry_after_sec);
+            } else {
+                int idx = (attempt - 2);
+                if (idx >= (int)(sizeof(RETRY_DELAYS_MS) / sizeof(RETRY_DELAYS_MS[0]))) {
+                    idx = (sizeof(RETRY_DELAYS_MS) / sizeof(RETRY_DELAYS_MS[0])) - 1;
+                }
+                wait_ms = RETRY_DELAYS_MS[idx];  // 10s, 30s, 60s
+                Serial.printf("[%s] Retry %d/%d in %dms (backoff)\n", TAG, attempt, MAX_RETRIES, wait_ms);
+            }
+            delay(wait_ms);
         }
 
         int code = fetch_usage_once(data);
@@ -232,7 +272,8 @@ bool claude_fetch_usage(UsageData &data) {
                 Serial.printf("[%s] 401 — attempting token refresh\n", TAG);
                 if (claude_refresh_token()) {
                     token_refreshed = true;
-                    // Retry immediately after refresh (don't consume an attempt slot)
+                    // Brief pause after refresh before retrying
+                    delay(1000);
                     int retry_code = fetch_usage_once(data);
                     if (data.valid) return true;
                     // If still failing (not 401), fall through to backoff retries
@@ -259,4 +300,11 @@ bool claude_fetch_usage(UsageData &data) {
     }
 
     return false;
+}
+
+// ============================================================
+// Public: Check if last fetch was rate-limited (429)
+// ============================================================
+bool claude_was_rate_limited() {
+    return last_fetch_was_rate_limited;
 }
