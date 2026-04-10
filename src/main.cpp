@@ -109,46 +109,40 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 }
 
 // ============================================================
-// Boot screen with progress info
+// Boot screen — direct TFT drawing (no LVGL!)
+// LVGL default screen stays untouched so screen transitions work.
 // ============================================================
-static void create_boot_screen(void)
+static void draw_boot_screen(void)
 {
-    lv_obj_t *scr = lv_screen_active();
-
-    lv_obj_set_style_bg_color(scr, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);  // Middle-center alignment
 
     // Title
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text_fmt(title, "AI Usage Monitor v%s", APP_VERSION);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, -30);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setFreeFont(nullptr);
+    tft.setTextSize(2);
+    tft.drawString("AI Usage Monitor", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 30);
 
-    // Status label (updated during boot)
-    boot_status_label = lv_label_create(scr);
-    lv_label_set_text(boot_status_label, "Initializing...");
-    lv_obj_set_style_text_color(boot_status_label, lv_color_hex(0x666666), LV_PART_MAIN);
-    lv_obj_set_style_text_font(boot_status_label, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(boot_status_label, LV_ALIGN_CENTER, 0, 10);
+    // Status
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("Initializing...", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 10);
 
     // Version
-    lv_obj_t *ver = lv_label_create(scr);
-    lv_label_set_text_fmt(ver, "v%s", APP_VERSION);
-    lv_obj_set_style_text_color(ver, lv_color_hex(0x444444), LV_PART_MAIN);
-    lv_obj_set_style_text_font(ver, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(ver, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+    tft.setTextDatum(BR_DATUM);  // Bottom-right
+    tft.drawString("v" APP_VERSION, SCREEN_WIDTH - 10, SCREEN_HEIGHT - 10);
 }
 
 // ============================================================
-// Update boot status text on display
+// Update boot status text on display (direct TFT)
 // ============================================================
 static void update_boot_status(const char *msg) {
-    if (boot_status_label != nullptr) {
-        lv_label_set_text(boot_status_label, msg);
-        lv_timer_handler();  // Force display update
-        delay(5);
-    }
+    // Clear status area and redraw
+    tft.fillRect(0, SCREEN_HEIGHT / 2, SCREEN_WIDTH, 30, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString(msg, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 10);
     Serial.printf("[Boot] %s\n", msg);
 }
 
@@ -163,37 +157,28 @@ static bool has_valid_token(void) {
 // Transition from QR to main UI (dashboard or setup)
 // ============================================================
 static void enter_main_ui(void) {
-    // Clear TFT directly to reset display state after boot screen
-    // (the boot screen used the LVGL default screen which doesn't
-    // transition cleanly to new screens via lv_screen_load)
-    tft.fillScreen(TFT_BLACK);
+    // Boot screen was drawn with direct TFT calls (no LVGL).
+    // LVGL's default screen is still clean/empty.
+    // Creating and loading a new LVGL screen will overwrite the TFT content.
 
     if (has_valid_token()) {
-        // Create and show dashboard
         ui_dashboard_create();
         ui_dashboard_load();
         dashboard_active = true;
 
-        // Force immediate render
-        lv_obj_invalidate(lv_screen_active());
-        lv_refr_now(NULL);
-
-        // Trigger immediate first update with current state
         const MonitorState &state = api_manager_get_state();
         ui_dashboard_update(state);
 
         Serial.println("[UI] Dashboard active");
     } else {
-        // Show setup hint screen
         ui_setup_create();
         dashboard_active = false;
 
-        // Force immediate render
-        lv_obj_invalidate(lv_screen_active());
-        lv_refr_now(NULL);
-
         Serial.println("[UI] Setup screen — kein Token konfiguriert");
     }
+
+    // Force LVGL to render the new screen immediately
+    lv_refr_now(NULL);
 }
 
 // ============================================================
@@ -265,10 +250,8 @@ void setup()
     lv_indev_set_read_cb(lv_touch, touch_read_cb);
     Serial.println("[LVGL] Touch input registered");
 
-    // --- Boot screen ---
-    create_boot_screen();
-    lv_timer_handler();
-    delay(10);
+    // --- Boot screen (direct TFT, no LVGL) ---
+    draw_boot_screen();
 
     // --- WiFi Setup ---
     update_boot_status("Connecting to WiFi...");
