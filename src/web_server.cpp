@@ -254,7 +254,7 @@ setInterval(loadStatus,5000);
 void webserver_init() {
     // Serve config page
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "text/html", INDEX_HTML);
+        request->send_P(200, "text/html; charset=utf-8", INDEX_HTML);
     });
 
     // GET /api/config — return config with masked keys
