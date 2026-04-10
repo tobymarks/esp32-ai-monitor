@@ -63,6 +63,8 @@ void ui_setup_create() {
     lv_obj_set_style_text_font(ver, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(ver, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
 
+    Serial.printf("[UI] Setup screen created: %p, loading...\n", (void *)scr);
     lv_screen_load(scr);
-    Serial.println("[UI] Setup screen loaded — kein Token konfiguriert");
+    lv_obj_invalidate(scr);  // Force full redraw
+    Serial.printf("[UI] Setup screen loaded, active screen: %p\n", (void *)lv_screen_active());
 }

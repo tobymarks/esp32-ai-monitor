@@ -181,6 +181,13 @@ static void enter_main_ui(void) {
 
         Serial.println("[UI] Setup screen — kein Token konfiguriert");
     }
+
+    // Force LVGL to process screen change and render immediately
+    lv_timer_handler();
+    delay(5);
+    lv_timer_handler();
+
+    Serial.printf("[UI] Active screen ptr: %p\n", (void *)lv_screen_active());
 }
 
 // ============================================================
