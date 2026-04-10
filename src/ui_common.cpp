@@ -182,12 +182,21 @@ lv_obj_t* ui_create_bar(lv_obj_t *parent, lv_color_t color) {
 // Create horizontal divider line
 // ============================================================
 lv_obj_t* ui_create_divider(lv_obj_t *parent, int16_t y_pos) {
-    // Use runtime screen width for divider length
-    static lv_point_precise_t div_pts[2];
-    div_pts[0] = {0, 0};
-    div_pts[1] = {(lv_value_precise_t)SCREEN_WIDTH, 0};
+    // IMPORTANT: lv_line_set_points() stores a pointer to the points array —
+    // it must remain valid for the lifetime of the line object.
+    // Using a single static array caused all dividers to share state and
+    // corrupted each other on every call.  Use a small heap allocation instead
+    // so every divider owns its own independent point data.
+    lv_point_precise_t *pts = (lv_point_precise_t *)lv_malloc(2 * sizeof(lv_point_precise_t));
+    if (pts == nullptr) {
+        Serial.println("[UI] ui_create_divider: lv_malloc failed");
+        return nullptr;
+    }
+    pts[0] = {0, 0};
+    pts[1] = {(lv_value_precise_t)SCREEN_WIDTH, 0};
+
     lv_obj_t *line = lv_line_create(parent);
-    lv_line_set_points(line, div_pts, 2);
+    lv_line_set_points(line, pts, 2);
     lv_obj_set_style_line_color(line, UI_COLOR_DIVIDER, LV_PART_MAIN);
     lv_obj_set_style_line_width(line, 1, LV_PART_MAIN);
     lv_obj_set_pos(line, 0, y_pos);

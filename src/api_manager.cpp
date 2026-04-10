@@ -72,8 +72,12 @@ void api_manager_fetch() {
     if (strlen(g_config.access_token) == 0) {
         strlcpy(state.status, "No token", sizeof(state.status));
         strlcpy(state.usage.error, "No access token", sizeof(state.usage.error));
-        state.token_valid = false;
-        state.is_fetching = false;
+        state.token_valid    = false;
+        state.is_fetching    = false;
+        // Mark first fetch as done so tick() doesn't retry every loop cycle
+        // when there is deliberately no token configured.
+        first_fetch_done     = true;
+        last_fetch_time      = millis();
         Serial.println("[APIManager] No access token — skipping fetch");
         return;
     }

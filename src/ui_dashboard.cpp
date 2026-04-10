@@ -37,6 +37,8 @@
 
 // ============================================================
 // Widget references (created once, updated in-place)
+// All initialised to nullptr — guards in ui_dashboard_update()
+// rely on these being NULL before ui_dashboard_create() runs.
 // ============================================================
 static lv_obj_t *scr_dashboard      = nullptr;
 
@@ -64,6 +66,23 @@ static bool state_stored = false;
 
 // Long-press overlay
 static lv_obj_t *long_press_overlay = nullptr;
+
+// ============================================================
+// Helper: returns true only when all dashboard widgets are live
+// ============================================================
+static inline bool widgets_ready() {
+    return scr_dashboard    != nullptr
+        && lbl_provider     != nullptr
+        && lbl_time         != nullptr
+        && lbl_session_pct  != nullptr
+        && bar_session      != nullptr
+        && lbl_session_reset!= nullptr
+        && lbl_weekly_pct   != nullptr
+        && bar_weekly       != nullptr
+        && lbl_weekly_reset != nullptr
+        && lbl_status_dot   != nullptr
+        && lbl_refresh      != nullptr;
+}
 
 // ============================================================
 // Event handlers
@@ -256,7 +275,10 @@ void ui_dashboard_create() {
 // Update dashboard with fresh MonitorState
 // ============================================================
 void ui_dashboard_update(const MonitorState &state) {
-    if (scr_dashboard == nullptr) return;
+    // Guard: bail out if any widget pointer is still NULL.
+    // This prevents StoreProhibited crashes when update is called
+    // before create_usage_block() has finished populating all pointers.
+    if (!widgets_ready()) return;
 
     memcpy(&last_state, &state, sizeof(MonitorState));
     state_stored = true;
@@ -314,10 +336,13 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_label_set_text(lbl_weekly_reset, reset_buf);
 
     } else if (strlen(state.usage.error) > 0) {
-        lv_label_set_text(lbl_session_pct, "ERR");
+        // All widget pointers are guaranteed non-NULL here (widgets_ready() above).
+        lv_label_set_text(lbl_session_pct,   "ERR");
         lv_label_set_text(lbl_session_reset, state.usage.error);
-        lv_label_set_text(lbl_weekly_pct, "ERR");
-        lv_label_set_text(lbl_weekly_reset, "");
+        lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
+        lv_label_set_text(lbl_weekly_pct,    "ERR");
+        lv_label_set_text(lbl_weekly_reset,  "");
+        lv_bar_set_value(bar_weekly, 0, LV_ANIM_OFF);
     }
 
     // ---- Footer: status dot ----
