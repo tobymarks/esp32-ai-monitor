@@ -87,48 +87,54 @@ bool wifi_setup_init() {
     // Copy poll interval to buffer for WiFiManager
     snprintf(buf_poll_interval, sizeof(buf_poll_interval), "%u", g_config.poll_interval_sec);
 
-    // Create WiFiManager
-    WiFiManager wm;
-    wm.setConfigPortalTimeout(WIFIMANAGER_TIMEOUT_SEC);
-    wm.setSaveConfigCallback(saveConfigCallback);
-    wm.setAPStaticIPConfig(IPAddress(192, 168, 4, 1),
-                           IPAddress(192, 168, 4, 1),
-                           IPAddress(255, 255, 255, 0));
+    // WiFiManager in its own scope so destructor runs and releases port 80
+    {
+        WiFiManager wm;
+        wm.setConfigPortalTimeout(WIFIMANAGER_TIMEOUT_SEC);
+        wm.setSaveConfigCallback(saveConfigCallback);
+        wm.setAPStaticIPConfig(IPAddress(192, 168, 4, 1),
+                               IPAddress(192, 168, 4, 1),
+                               IPAddress(255, 255, 255, 0));
 
-    // WiFiManager fragt nur WLAN-Credentials ab.
-    // Token-Setup läuft ausschliesslich über das Web-Config-Portal (/api/token).
-    WiFiManagerParameter param_header("<h2>AI Monitor – WLAN Setup</h2><p style='color:#aaa;font-size:.85em'>Token-Konfiguration nach der Verbindung unter http://ai-monitor.local/</p>");
-    WiFiManagerParameter param_settings_header("<h3>Settings</h3>");
-    WiFiManagerParameter p_poll("poll_sec", "Poll Interval (Sekunden)", buf_poll_interval, 7);
+        // WiFiManager fragt nur WLAN-Credentials ab.
+        // Token-Setup läuft ausschliesslich über das Web-Config-Portal (/api/token).
+        WiFiManagerParameter param_header("<h2>AI Monitor – WLAN Setup</h2><p style='color:#aaa;font-size:.85em'>Token-Konfiguration nach der Verbindung unter http://ai-monitor.local/</p>");
+        WiFiManagerParameter param_settings_header("<h3>Settings</h3>");
+        WiFiManagerParameter p_poll("poll_sec", "Poll Interval (Sekunden)", buf_poll_interval, 7);
 
-    wm.addParameter(&param_header);
-    wm.addParameter(&param_settings_header);
-    wm.addParameter(&p_poll);
+        wm.addParameter(&param_header);
+        wm.addParameter(&param_settings_header);
+        wm.addParameter(&p_poll);
 
-    Serial.println("[WiFi] Starting WiFiManager autoConnect...");
+        Serial.println("[WiFi] Starting WiFiManager autoConnect...");
 
-    // Try to connect with stored credentials, or open AP portal
-    bool connected = wm.autoConnect(WIFI_AP_NAME);
+        // Try to connect with stored credentials, or open AP portal
+        bool connected = wm.autoConnect(WIFI_AP_NAME);
 
-    if (!connected) {
-        Serial.println("[WiFi] Failed to connect. Rebooting in 3 seconds...");
-        delay(3000);
-        ESP.restart();
-        return false;
-    }
-
-    Serial.printf("[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
-
-    // Save settings if config portal was used
-    if (shouldSaveConfig) {
-        uint32_t poll = atoi(p_poll.getValue());
-        if (poll >= 10 && poll <= 86400) {
-            g_config.poll_interval_sec = poll;
+        if (!connected) {
+            Serial.println("[WiFi] Failed to connect. Rebooting in 3 seconds...");
+            delay(3000);
+            ESP.restart();
+            return false;
         }
 
-        config_save(g_config);
-        Serial.println("[WiFi] Config saved from portal");
-    }
+        Serial.printf("[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+
+        // Save settings if config portal was used
+        if (shouldSaveConfig) {
+            uint32_t poll = atoi(p_poll.getValue());
+            if (poll >= 10 && poll <= 86400) {
+                g_config.poll_interval_sec = poll;
+            }
+
+            config_save(g_config);
+            Serial.println("[WiFi] Config saved from portal");
+        }
+    } // WiFiManager destructor runs here — releases port 80
+
+    // Give TCP stack time to release the socket
+    delay(200);
+    Serial.println("[WiFi] WiFiManager cleaned up, port 80 released");
 
     // Setup mDNS
     if (MDNS.begin(MDNS_HOSTNAME)) {
