@@ -163,7 +163,11 @@ static void enter_main_ui(void) {
 
     if (has_valid_token()) {
         ui_dashboard_create();
-        ui_dashboard_load();
+        // Direct screen load — no fade animation from white default screen
+        lv_obj_t *dash_scr = ui_dashboard_get_screen();
+        if (dash_scr) {
+            lv_screen_load(dash_scr);
+        }
         dashboard_active = true;
 
         const MonitorState &state = api_manager_get_state();
