@@ -4,120 +4,268 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Usage Monitor — Installer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
   <style>
+    :root {
+      --card: #ffffff;
+      --ring: #3b82f6;
+      --input: #e5e7eb;
+      --muted: #f9fafb;
+      --accent: #e0f2fe;
+      --border: #e5e7eb;
+      --radius: 0.375rem;
+      --popover: #ffffff;
+      --primary: #3b82f6;
+      --font-mono: 'JetBrains Mono', monospace;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --secondary: #f3f4f6;
+      --background: #ffffff;
+      --foreground: #333333;
+      --destructive: #ef4444;
+      --card-foreground: #333333;
+      --muted-foreground: #6b7280;
+      --accent-foreground: #1e3a8a;
+      --primary-foreground: #ffffff;
+      --secondary-foreground: #4b5563;
+      --success: #22c55e;
+      --success-muted: #dcfce7;
+      --warning: #f59e0b;
+      --warning-muted: #fef3c7;
+    }
+
+    .dark {
+      --card: #262626;
+      --ring: #3b82f6;
+      --input: #404040;
+      --muted: #262626;
+      --accent: #1e3a8a;
+      --border: #404040;
+      --popover: #262626;
+      --primary: #3b82f6;
+      --secondary: #262626;
+      --background: #171717;
+      --foreground: #e5e5e5;
+      --destructive: #ef4444;
+      --card-foreground: #e5e5e5;
+      --muted-foreground: #a3a3a3;
+      --accent-foreground: #bfdbfe;
+      --primary-foreground: #ffffff;
+      --secondary-foreground: #e5e5e5;
+      --success: #4ade80;
+      --success-muted: #14532d;
+      --warning: #fbbf24;
+      --warning-muted: #78350f;
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #1A1A2E;
-      color: #E0E0E0;
+      font-family: var(--font-sans);
+      background: var(--background);
+      color: var(--foreground);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
+      transition: background 0.2s, color 0.2s;
     }
 
     .container {
-      max-width: 680px;
+      max-width: 640px;
       width: 100%;
-      padding: 2rem 1.5rem;
+      padding: 2.5rem 1.5rem 1.5rem;
     }
 
-    h1 {
-      font-size: 1.8rem;
-      color: #FFFFFF;
+    /* ---- Header ---- */
+    .header {
       text-align: center;
-      margin-bottom: 0.5rem;
-    }
-
-    .subtitle {
-      text-align: center;
-      color: #9090B0;
-      font-size: 0.95rem;
       margin-bottom: 2rem;
     }
 
+    .header-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .logo {
+      width: 40px;
+      height: 40px;
+      background: var(--primary);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .logo svg {
+      width: 22px;
+      height: 22px;
+      fill: var(--primary-foreground);
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--foreground);
+      letter-spacing: -0.025em;
+    }
+
+    .subtitle {
+      color: var(--muted-foreground);
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    /* ---- Theme toggle ---- */
+    .theme-toggle {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--muted-foreground);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s;
+      z-index: 10;
+    }
+
+    .theme-toggle:hover {
+      background: var(--muted);
+      border-color: var(--muted-foreground);
+    }
+
+    .theme-toggle svg { width: 18px; height: 18px; }
+    .dark .icon-moon { display: none; }
+    :not(.dark) .icon-sun { display: none; }
+
+    /* ---- Cards ---- */
     .card {
-      background: #16213E;
+      background: var(--card);
       border-radius: 12px;
       padding: 1.5rem;
-      margin-bottom: 1.5rem;
-      border: 1px solid #2A2A4A;
+      margin-bottom: 1rem;
+      border: 1px solid var(--border);
+      transition: background 0.2s, border-color 0.2s;
     }
 
     .card h2 {
-      font-size: 1.1rem;
-      color: #FFFFFF;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--foreground);
       margin-bottom: 0.75rem;
+      letter-spacing: -0.01em;
     }
 
     .card p, .card li {
-      font-size: 0.9rem;
-      line-height: 1.6;
-      color: #C0C0D8;
+      font-size: 0.875rem;
+      line-height: 1.65;
+      color: var(--secondary-foreground);
     }
 
+    .dark .card p, .dark .card li {
+      color: var(--muted-foreground);
+    }
+
+    /* ---- Hardware badge ---- */
     .hardware-badge {
-      display: inline-block;
-      background: #0F3460;
-      color: #7EC8E3;
-      padding: 0.3rem 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: var(--accent);
+      color: var(--accent-foreground);
+      padding: 0.3rem 0.7rem;
       border-radius: 6px;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       font-weight: 500;
-      margin-bottom: 1rem;
+      font-family: var(--font-mono);
+      margin-top: 0.75rem;
     }
 
+    .hardware-badge svg {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+    }
+
+    /* ---- Feature list ---- */
     .features {
       list-style: none;
       padding: 0;
+      margin-top: 1rem;
+      display: grid;
+      gap: 0.35rem;
     }
 
     .features li {
-      padding: 0.3rem 0;
       padding-left: 1.5rem;
       position: relative;
     }
 
     .features li::before {
-      content: "\2713";
+      content: "";
       position: absolute;
       left: 0;
-      color: #53E88B;
-      font-weight: bold;
+      top: 0.45em;
+      width: 14px;
+      height: 14px;
+      background: var(--success);
+      mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.25 4.75L6 12 2.75 8.75' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.25 4.75L6 12 2.75 8.75' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
     }
 
+    /* ---- Steps ---- */
     .steps {
       list-style: none;
       padding: 0;
       counter-reset: step;
+      display: grid;
+      gap: 0.5rem;
     }
 
     .steps li {
-      padding: 0.5rem 0;
-      padding-left: 2.2rem;
+      padding-left: 2.4rem;
       position: relative;
       counter-increment: step;
+      min-height: 1.8rem;
+      display: flex;
+      align-items: center;
     }
 
     .steps li::before {
       content: counter(step);
       position: absolute;
       left: 0;
-      width: 1.6rem;
-      height: 1.6rem;
-      background: #0F3460;
-      color: #7EC8E3;
+      width: 1.65rem;
+      height: 1.65rem;
+      background: var(--primary);
+      color: var(--primary-foreground);
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.8rem;
-      font-weight: 700;
-      top: 0.45rem;
+      font-size: 0.75rem;
+      font-weight: 600;
     }
 
+    .steps li strong {
+      color: var(--foreground);
+      font-weight: 600;
+    }
+
+    /* ---- Install section ---- */
     .install-section {
       text-align: center;
       padding: 2rem 1.5rem;
@@ -128,81 +276,158 @@
     }
 
     esp-web-install-button button {
-      background: #E94560;
-      color: #FFFFFF;
+      background: var(--primary);
+      color: var(--primary-foreground);
       border: none;
-      padding: 0.9rem 2.5rem;
-      font-size: 1.1rem;
+      padding: 0.75rem 2rem;
+      font-size: 1rem;
       font-weight: 600;
+      font-family: var(--font-sans);
       border-radius: 8px;
       cursor: pointer;
-      transition: background 0.2s;
+      transition: background 0.15s, box-shadow 0.15s;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
 
     esp-web-install-button button:hover {
-      background: #D63050;
+      background: #2563eb;
+      box-shadow: 0 4px 12px rgba(59,130,246,0.3);
+    }
+
+    esp-web-install-button button:active {
+      transform: scale(0.98);
     }
 
     .browser-note {
       font-size: 0.8rem;
-      color: #7070A0;
+      color: var(--muted-foreground);
       margin-top: 0.75rem;
+    }
+
+    /* ---- Unsupported banner ---- */
+    .unsupported {
+      display: none;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      text-align: center;
+      color: #991b1b;
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+      line-height: 1.5;
+    }
+
+    .dark .unsupported {
+      background: #450a0a;
+      border-color: #7f1d1d;
+      color: #fca5a5;
+    }
+
+    .unsupported strong {
+      font-weight: 600;
+    }
+
+    /* ---- Troubleshooting ---- */
+    .troubleshooting {
+      display: grid;
+      gap: 0.75rem;
     }
 
     .troubleshooting dt {
       font-weight: 600;
-      color: #E0C060;
-      margin-top: 0.75rem;
-      font-size: 0.9rem;
+      color: var(--foreground);
+      font-size: 0.875rem;
     }
 
     .troubleshooting dd {
-      font-size: 0.85rem;
-      color: #C0C0D8;
+      font-size: 0.825rem;
+      color: var(--muted-foreground);
       margin-left: 0;
-      padding-left: 1rem;
+      padding-left: 0;
       line-height: 1.6;
     }
 
+    .troubleshooting dd + dt {
+      margin-top: 0.25rem;
+    }
+
+    .troubleshooting a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .troubleshooting a:hover {
+      text-decoration: underline;
+    }
+
+    /* ---- Setup info box ---- */
+    .info-box {
+      background: var(--accent);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-top: 1rem;
+      font-size: 0.825rem;
+      line-height: 1.6;
+      color: var(--accent-foreground);
+    }
+
+    .info-box strong {
+      font-weight: 600;
+    }
+
+    .info-box code {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      background: rgba(59,130,246,0.1);
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+    }
+
+    /* ---- Footer ---- */
     footer {
       text-align: center;
       padding: 1.5rem;
       font-size: 0.8rem;
-      color: #606080;
+      color: var(--muted-foreground);
       margin-top: auto;
     }
 
     footer a {
-      color: #7EC8E3;
+      color: var(--primary);
       text-decoration: none;
+      font-weight: 500;
     }
 
     footer a:hover {
       text-decoration: underline;
     }
 
-    .unsupported {
-      display: none;
-      background: #3E1620;
-      border: 1px solid #E94560;
-      border-radius: 8px;
-      padding: 1rem;
-      text-align: center;
-      color: #F0A0A0;
-      font-size: 0.9rem;
-      margin-bottom: 1.5rem;
-    }
-
+    /* ---- Responsive ---- */
     @media (max-width: 500px) {
-      .container { padding: 1.2rem 1rem; }
-      h1 { font-size: 1.4rem; }
+      .container { padding: 1.5rem 1rem 1rem; }
+      h1 { font-size: 1.3rem; }
+      .card { padding: 1.25rem; }
     }
   </style>
 </head>
 <body>
+  <button class="theme-toggle" id="themeToggle" aria-label="Theme wechseln">
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+  </button>
+
   <div class="container">
-    <h1>AI Usage Monitor</h1>
-    <p class="subtitle">ESP32 Dashboard fuer AI Token-Verbrauch und Kosten</p>
+    <div class="header">
+      <div class="header-row">
+        <div class="logo">
+          <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        </div>
+        <h1>AI Usage Monitor</h1>
+      </div>
+      <p class="subtitle">Standalone-Display fuer AI-Token-Verbrauch und Kosten</p>
+    </div>
 
     <div class="unsupported" id="unsupported">
       Dein Browser unterstuetzt Web Serial nicht. Bitte verwende <strong>Google Chrome</strong> oder <strong>Microsoft Edge</strong> auf einem Desktop-Computer.
@@ -210,33 +435,38 @@
 
     <div class="card">
       <h2>Was ist das?</h2>
-      <p>Ein kompaktes Hardware-Dashboard, das deinen AI-Token-Verbrauch in Echtzeit anzeigt. Kosten, Nutzung und Verlauf von Anthropic und OpenAI auf einen Blick.</p>
-      <br>
-      <span class="hardware-badge">ESP32-2432S028R (CYD 2.8")</span>
+      <p>Ein kompaktes Hardware-Dashboard, das deinen AI-Token-Verbrauch in Echtzeit anzeigt. Kosten, Nutzung und Aufschluesselung nach Modell &mdash; fuer Anthropic und OpenAI auf einen Blick.</p>
+      <span class="hardware-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="15" x2="23" y2="15"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="15" x2="4" y2="15"/></svg>
+        ESP32-2432S028R (CYD 2.8")
+      </span>
       <ul class="features">
         <li>Token-Verbrauch pro Provider (Anthropic, OpenAI)</li>
-        <li>Echtzeit-Kostentracking</li>
-        <li>Nutzungsverlauf und Charts</li>
-        <li>WiFi-Konfiguration per Captive Portal</li>
-        <li>OTA-Updates</li>
+        <li>Echtzeit-Kostentracking (heute und Monat)</li>
+        <li>Aufschluesselung nach Modell</li>
+        <li>Web-basierte Konfiguration</li>
+        <li>Portrait- und Landscape-Modus</li>
       </ul>
     </div>
 
     <div class="card">
       <h2>Installation</h2>
       <ol class="steps">
-        <li>ESP32 per USB-Kabel an den Computer anschliessen</li>
+        <li>ESP32 per USB-Datenkabel an den Computer anschliessen</li>
         <li>Google Chrome oder Microsoft Edge oeffnen</li>
-        <li>Unten auf <strong>"Installieren"</strong> klicken und den USB Serial Port waehlen</li>
-        <li>Warten bis die Installation abgeschlossen ist</li>
+        <li>Unten auf <strong>&bdquo;Firmware installieren&ldquo;</strong> klicken und den USB-Port waehlen</li>
+        <li>Warten bis die Installation abgeschlossen ist (~30 Sek.)</li>
       </ol>
+      <div class="info-box">
+        <strong>Nach der Installation:</strong> Das Display zeigt ein WiFi-Setup. Verbinde dich mit dem Netzwerk <code>AI-Monitor-Setup</code> und konfiguriere dein WLAN. Danach erreichst du die Konfiguration unter <code>http://ai-monitor.local</code>
+      </div>
     </div>
 
     <div class="card install-section">
       <esp-web-install-button manifest="manifest.json">
-        <button slot="activate">Installieren</button>
+        <button slot="activate">Firmware installieren</button>
       </esp-web-install-button>
-      <p class="browser-note">Erfordert Chrome oder Edge mit Web Serial Unterstuetzung</p>
+      <p class="browser-note">Erfordert Chrome oder Edge mit Web Serial</p>
     </div>
 
     <div class="card">
@@ -248,21 +478,41 @@
         <dt>Installation schlaegt fehl?</dt>
         <dd>Druecke den Reset-Button auf dem Board und versuche es erneut. Stelle sicher, dass keine andere Anwendung (Arduino IDE, PlatformIO) den Port belegt.</dd>
 
-        <dt>Display bleibt schwarz nach Installation?</dt>
+        <dt>Display bleibt schwarz?</dt>
         <dd>Trenne das USB-Kabel und schliesse es erneut an. Das Board startet automatisch neu und zeigt das WiFi-Setup an.</dd>
       </dl>
     </div>
   </div>
 
   <footer>
-    <span id="version-tag">v0.4.0</span> &middot;
-    <a href="https://github.com/tobiasmarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a>
+    <span id="version-tag">v0.5.0</span> &middot;
+    <a href="https://github.com/tobymarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a>
   </footer>
 
   <script>
+    // Web Serial check
     if (!('serial' in navigator)) {
       document.getElementById('unsupported').style.display = 'block';
     }
+
+    // Theme toggle with localStorage persistence
+    const toggle = document.getElementById('themeToggle');
+    const html = document.documentElement;
+
+    function setTheme(dark) {
+      html.classList.toggle('dark', dark);
+      localStorage.setItem('theme', dark ? 'dark' : 'light');
+    }
+
+    // Init: check saved preference or system preference
+    const saved = localStorage.getItem('theme');
+    if (saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      setTheme(true);
+    }
+
+    toggle.addEventListener('click', () => {
+      setTheme(!html.classList.contains('dark'));
+    });
   </script>
 </body>
 </html>
