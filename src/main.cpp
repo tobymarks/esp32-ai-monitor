@@ -163,41 +163,37 @@ static bool has_valid_token(void) {
 // Transition from QR to main UI (dashboard or setup)
 // ============================================================
 static void enter_main_ui(void) {
-    // ============================================================
-    // DIAGNOSTIC TEST — Step 1: Direct TFT draw (bypasses LVGL)
-    // ============================================================
-    Serial.println("[TEST] Step 1: Direct TFT draw — red/green/blue bars");
-    tft.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT / 3, TFT_RED);
-    tft.fillRect(0, SCREEN_HEIGHT / 3, SCREEN_WIDTH, SCREEN_HEIGHT / 3, TFT_GREEN);
-    tft.fillRect(0, 2 * (SCREEN_HEIGHT / 3), SCREEN_WIDTH, SCREEN_HEIGHT / 3, TFT_BLUE);
-    tft.setTextColor(TFT_WHITE, TFT_RED);
-    tft.setTextSize(2);
-    tft.setCursor(10, 20);
-    tft.print("TFT DIRECT OK");
-    Serial.println("[TEST] Step 1 done — display should show RGB bars");
-    delay(3000);  // Show for 3 seconds
+    // Clear TFT directly to reset display state after boot screen
+    // (the boot screen used the LVGL default screen which doesn't
+    // transition cleanly to new screens via lv_screen_load)
+    tft.fillScreen(TFT_BLACK);
 
-    // ============================================================
-    // DIAGNOSTIC TEST — Step 2: Simple LVGL screen
-    // ============================================================
-    Serial.println("[TEST] Step 2: LVGL screen — yellow bg + white label");
-    lv_obj_t *test_scr = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(test_scr, lv_color_hex(0xFFFF00), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(test_scr, LV_OPA_COVER, LV_PART_MAIN);
+    if (has_valid_token()) {
+        // Create and show dashboard
+        ui_dashboard_create();
+        ui_dashboard_load();
+        dashboard_active = true;
 
-    lv_obj_t *test_label = lv_label_create(test_scr);
-    lv_label_set_text(test_label, "LVGL WORKS!");
-    lv_obj_set_style_text_color(test_label, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_text_font(test_label, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_align(test_label, LV_ALIGN_CENTER, 0, 0);
+        // Force immediate render
+        lv_obj_invalidate(lv_screen_active());
+        lv_refr_now(NULL);
 
-    lv_screen_load(test_scr);
-    lv_obj_invalidate(test_scr);
-    lv_refr_now(NULL);
-    Serial.printf("[TEST] Step 2 done — active screen: %p, test screen: %p\n",
-                  (void *)lv_screen_active(), (void *)test_scr);
-    Serial.println("[TEST] Display should show yellow screen with 'LVGL WORKS!'");
-    // Stay on test screen — don't load anything else
+        // Trigger immediate first update with current state
+        const MonitorState &state = api_manager_get_state();
+        ui_dashboard_update(state);
+
+        Serial.println("[UI] Dashboard active");
+    } else {
+        // Show setup hint screen
+        ui_setup_create();
+        dashboard_active = false;
+
+        // Force immediate render
+        lv_obj_invalidate(lv_screen_active());
+        lv_refr_now(NULL);
+
+        Serial.println("[UI] Setup screen — kein Token konfiguriert");
+    }
 }
 
 // ============================================================
