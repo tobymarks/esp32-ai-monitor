@@ -99,7 +99,7 @@
 // Disabled widgets to save Flash
 #define LV_USE_ANIMIMAGE    0
 #define LV_USE_CALENDAR     0
-#define LV_USE_CANVAS       0
+#define LV_USE_CANVAS       1
 #define LV_USE_CHECKBOX     0
 #define LV_USE_DROPDOWN     0
 #define LV_USE_IMAGEBUTTON  0
