@@ -2,6 +2,26 @@
 #define API_COMMON_H
 
 #include <Arduino.h>
+#include <time.h>
+
+// ============================================================
+// timegm replacement for ESP32 (newlib doesn't have timegm)
+// Converts struct tm (UTC) to time_t without timezone adjustment
+// ============================================================
+inline time_t timegm_compat(struct tm *tm) {
+    // Save and override TZ to UTC
+    const char *tz = getenv("TZ");
+    setenv("TZ", "UTC0", 1);
+    tzset();
+    time_t t = mktime(tm);
+    if (tz) {
+        setenv("TZ", tz, 1);
+    } else {
+        unsetenv("TZ");
+    }
+    tzset();
+    return t;
+}
 
 // ============================================================
 // Shared data structures for Anthropic + OpenAI API clients

@@ -250,7 +250,7 @@ bool anthropic_fetch_usage(UsageData &data) {
     utc_day.tm_hour = 0;
     utc_day.tm_min  = 0;
     utc_day.tm_sec  = 0;
-    time_t utc_day_start = timegm(&utc_day);
+    time_t utc_day_start = timegm_compat(&utc_day);
 
     // UTC start of this month
     struct tm utc_month = utc_now;
@@ -258,7 +258,7 @@ bool anthropic_fetch_usage(UsageData &data) {
     utc_month.tm_hour = 0;
     utc_month.tm_min  = 0;
     utc_month.tm_sec  = 0;
-    time_t utc_month_start = timegm(&utc_month);
+    time_t utc_month_start = timegm_compat(&utc_month);
 
     // Fetch today's usage
     bool ok_today = fetch_usage_range(data, utc_day_start, now, true);
@@ -367,11 +367,11 @@ bool anthropic_fetch_costs(UsageData &data) {
 
     struct tm utc_day = utc_now;
     utc_day.tm_hour = 0; utc_day.tm_min = 0; utc_day.tm_sec = 0;
-    time_t utc_day_start = timegm(&utc_day);
+    time_t utc_day_start = timegm_compat(&utc_day);
 
     struct tm utc_month = utc_now;
     utc_month.tm_mday = 1; utc_month.tm_hour = 0; utc_month.tm_min = 0; utc_month.tm_sec = 0;
-    time_t utc_month_start = timegm(&utc_month);
+    time_t utc_month_start = timegm_compat(&utc_month);
 
     float today_cost = 0.0f, month_cost = 0.0f;
     bool ok_today = fetch_cost_range(today_cost, utc_day_start, now, data.error, sizeof(data.error));

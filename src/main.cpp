@@ -21,7 +21,6 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
-#include <XPT2046_Touchscreen.h>
 #include <lvgl.h>
 #include "config.h"
 #include "wifi_setup.h"
@@ -41,9 +40,7 @@
 
 TFT_eSPI tft = TFT_eSPI();
 
-// Touch on HSPI with dedicated pins
-SPIClass hspi(HSPI);
-XPT2046_Touchscreen ts(PIN_TOUCH_CS);
+// Touch calibration data (populated by tft.calibrateTouch() or defaults)
 
 // LVGL display buffer (one 10-line strip, double-buffered)
 static const uint32_t LV_BUF_SIZE = SCREEN_WIDTH * 10;
@@ -93,16 +90,10 @@ static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 // ============================================================
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
-    if (ts.touched()) {
-        TS_Point p = ts.getPoint();
+    uint16_t x = 0, y = 0;
+    bool touched = tft.getTouch(&x, &y);
 
-        // Map raw touch coordinates to screen coordinates
-        int16_t x = map(p.x, TOUCH_MIN_X, TOUCH_MAX_X, 0, SCREEN_WIDTH - 1);
-        int16_t y = map(p.y, TOUCH_MIN_Y, TOUCH_MAX_Y, 0, SCREEN_HEIGHT - 1);
-
-        x = constrain(x, 0, SCREEN_WIDTH - 1);
-        y = constrain(y, 0, SCREEN_HEIGHT - 1);
-
+    if (touched) {
         data->point.x = x;
         data->point.y = y;
         data->state = LV_INDEV_STATE_PRESSED;
@@ -207,11 +198,10 @@ void setup()
     tft.fillScreen(TFT_BLACK);
     Serial.println("[TFT] Display initialized (320x240 landscape)");
 
-    // --- Touch init (HSPI) ---
-    hspi.begin(PIN_TOUCH_CLK, PIN_TOUCH_MISO, PIN_TOUCH_MOSI, PIN_TOUCH_CS);
-    ts.begin(hspi);
-    ts.setRotation(1);
-    Serial.println("[Touch] XPT2046 initialized on HSPI");
+    // --- Touch init (via TFT_eSPI built-in XPT2046 support) ---
+    uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 1 };
+    tft.setTouch(calData);
+    Serial.println("[Touch] XPT2046 initialized via TFT_eSPI");
 
     // --- LVGL init ---
     lv_init();
