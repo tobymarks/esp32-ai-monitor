@@ -1,6 +1,6 @@
 /**
  * AI Usage Monitor - ESP32-2432S028R (CYD 2.8")
- * Phase 5: Portrait mode + configurable orientation (v0.5.0)
+ * Phase 6: Vibe-TV-Style Dashboard (v0.6.0)
  *
  * Boot sequence:
  * 1. Init display + touch + LVGL
@@ -9,11 +9,11 @@
  * 4. NTP time sync
  * 5. Start AsyncWebServer
  * 6. Show QR code for config URL (8 seconds)
- * 7. Check API keys: if none -> Setup screen, else -> Dashboard + fetch
- * 8. Main loop: periodic fetch + UI update
+ * 7. Check token: if none -> Setup screen, else -> Dashboard + fetch
+ * 8. Main loop: periodic fetch + UI update (1s interval for live countdown)
  *
  * Navigation:
- *   Dashboard (default) -> tap provider card -> Detail screen
+ *   Dashboard (default) -> tap -> Detail screen
  *   Dashboard -> long press (>1s) -> Settings screen
  *   Detail / Settings -> tap back arrow -> Dashboard
  */
@@ -67,7 +67,7 @@ static const unsigned long QR_DISPLAY_DURATION = 8000;  // 8 seconds
 // Dashboard state
 static bool dashboard_active = false;
 static unsigned long last_ui_update = 0;
-static const unsigned long UI_UPDATE_INTERVAL = 5000;  // Update display every 5s (time-ago, clock)
+static const unsigned long UI_UPDATE_INTERVAL = 1000;  // 1s interval for live countdown + clock
 
 // Heap monitoring
 static unsigned long lastHeapLog = 0;
@@ -120,9 +120,9 @@ static void create_boot_screen(void)
 
     // Title
     lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, APP_NAME);
+    lv_label_set_text(title, "AI Usage Monitor v0.6.0");
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, -30);
 
     // Status label (updated during boot)
@@ -153,17 +153,17 @@ static void update_boot_status(const char *msg) {
 }
 
 // ============================================================
-// Check if any API keys are configured
+// Check if a valid access token is configured
 // ============================================================
-static bool has_api_keys(void) {
-    return (strlen(g_config.anthropic_key) > 0 || strlen(g_config.openai_key) > 0);
+static bool has_valid_token(void) {
+    return (strlen(g_config.access_token) > 0);
 }
 
 // ============================================================
 // Transition from QR to main UI (dashboard or setup)
 // ============================================================
 static void enter_main_ui(void) {
-    if (has_api_keys()) {
+    if (has_valid_token()) {
         // Create and show dashboard
         ui_dashboard_create();
         ui_dashboard_load();
@@ -179,7 +179,7 @@ static void enter_main_ui(void) {
         ui_setup_create();
         dashboard_active = false;
 
-        Serial.println("[UI] Setup screen — no API keys");
+        Serial.println("[UI] Setup screen — kein Token konfiguriert");
     }
 }
 

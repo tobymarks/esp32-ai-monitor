@@ -1,9 +1,10 @@
 /**
  * WiFi Setup - WiFiManager + NVS Config Storage + mDNS
  *
- * Handles first-boot AP config portal with custom parameters,
- * stores credentials and API keys in NVS (Preferences),
+ * Handles first-boot AP config portal (WLAN-only),
+ * stores OAuth tokens and settings in NVS (Preferences),
  * and sets up mDNS for easy access.
+ * Token setup runs via web config portal at /api/token.
  */
 
 #include "wifi_setup.h"
@@ -18,12 +19,8 @@
 // ============================================================
 static Preferences prefs;
 
-// Buffers for custom parameter values (WiFiManager needs char arrays)
-static char buf_anthropic_key[NVS_VAL_MAX_LEN]  = "";
-static char buf_anthropic_org[NVS_VAL_MAX_LEN]   = "";
-static char buf_openai_key[NVS_VAL_MAX_LEN]      = "";
-static char buf_openai_org[NVS_VAL_MAX_LEN]       = "";
-static char buf_poll_interval[8]                   = "300";
+// Buffer for poll interval (WiFiManager needs char array)
+static char buf_poll_interval[8] = "120";
 
 // ============================================================
 // Load config from NVS
@@ -31,18 +28,20 @@ static char buf_poll_interval[8]                   = "300";
 void config_load(AppConfig &cfg) {
     prefs.begin(NVS_NAMESPACE, true);  // read-only
 
-    strlcpy(cfg.anthropic_key, prefs.getString("anth_key", "").c_str(), sizeof(cfg.anthropic_key));
-    strlcpy(cfg.anthropic_org, prefs.getString("anth_org", "").c_str(), sizeof(cfg.anthropic_org));
-    strlcpy(cfg.openai_key, prefs.getString("oai_key", "").c_str(), sizeof(cfg.openai_key));
-    strlcpy(cfg.openai_org, prefs.getString("oai_org", "").c_str(), sizeof(cfg.openai_org));
+    strlcpy(cfg.access_token,  prefs.getString("access_tkn", "").c_str(),  sizeof(cfg.access_token));
+    strlcpy(cfg.refresh_token, prefs.getString("refresh_tkn", "").c_str(), sizeof(cfg.refresh_token));
+    cfg.expires_at        = prefs.getUInt("expires_at", 0);
+    cfg.provider          = prefs.getUChar("provider", PROVIDER_CLAUDE);
     cfg.poll_interval_sec = prefs.getUInt("poll_sec", DEFAULT_POLL_INTERVAL_SEC);
-    cfg.orientation = prefs.getUChar("orient", ORIENTATION_PORTRAIT);
+    cfg.orientation       = prefs.getUChar("orient", ORIENTATION_PORTRAIT);
 
     prefs.end();
 
     Serial.println("[Config] Loaded from NVS");
-    Serial.printf("[Config] Anthropic key: %s\n", strlen(cfg.anthropic_key) > 0 ? "(set)" : "(empty)");
-    Serial.printf("[Config] OpenAI key: %s\n", strlen(cfg.openai_key) > 0 ? "(set)" : "(empty)");
+    Serial.printf("[Config] Access token: %s\n", strlen(cfg.access_token) > 0 ? "(set)" : "(empty)");
+    Serial.printf("[Config] Refresh token: %s\n", strlen(cfg.refresh_token) > 0 ? "(set)" : "(empty)");
+    Serial.printf("[Config] Expires at: %u\n", cfg.expires_at);
+    Serial.printf("[Config] Provider: %s\n", cfg.provider == PROVIDER_OPENAI ? "OpenAI" : "Claude");
     Serial.printf("[Config] Poll interval: %u sec\n", cfg.poll_interval_sec);
     Serial.printf("[Config] Orientation: %s\n", cfg.orientation == ORIENTATION_LANDSCAPE ? "landscape" : "portrait");
 }
@@ -53,12 +52,12 @@ void config_load(AppConfig &cfg) {
 void config_save(const AppConfig &cfg) {
     prefs.begin(NVS_NAMESPACE, false);  // read-write
 
-    prefs.putString("anth_key", cfg.anthropic_key);
-    prefs.putString("anth_org", cfg.anthropic_org);
-    prefs.putString("oai_key", cfg.openai_key);
-    prefs.putString("oai_org", cfg.openai_org);
-    prefs.putUInt("poll_sec", cfg.poll_interval_sec);
-    prefs.putUChar("orient", cfg.orientation);
+    prefs.putString("access_tkn",  cfg.access_token);
+    prefs.putString("refresh_tkn", cfg.refresh_token);
+    prefs.putUInt("expires_at",    cfg.expires_at);
+    prefs.putUChar("provider",     cfg.provider);
+    prefs.putUInt("poll_sec",      cfg.poll_interval_sec);
+    prefs.putUChar("orient",       cfg.orientation);
 
     prefs.end();
     Serial.println("[Config] Saved to NVS");
@@ -85,11 +84,7 @@ bool wifi_setup_init() {
     // Load existing config from NVS
     config_load(g_config);
 
-    // Copy loaded values to buffers for WiFiManager
-    strlcpy(buf_anthropic_key, g_config.anthropic_key, sizeof(buf_anthropic_key));
-    strlcpy(buf_anthropic_org, g_config.anthropic_org, sizeof(buf_anthropic_org));
-    strlcpy(buf_openai_key, g_config.openai_key, sizeof(buf_openai_key));
-    strlcpy(buf_openai_org, g_config.openai_org, sizeof(buf_openai_org));
+    // Copy poll interval to buffer for WiFiManager
     snprintf(buf_poll_interval, sizeof(buf_poll_interval), "%u", g_config.poll_interval_sec);
 
     // Create WiFiManager
@@ -100,24 +95,13 @@ bool wifi_setup_init() {
                            IPAddress(192, 168, 4, 1),
                            IPAddress(255, 255, 255, 0));
 
-    // Custom parameters
-    WiFiManagerParameter param_header("<h2>AI Monitor Config</h2>");
-    WiFiManagerParameter param_anth_header("<h3>Anthropic</h3>");
-    WiFiManagerParameter p_anthropic_key("anth_key", "Anthropic API Key", buf_anthropic_key, NVS_VAL_MAX_LEN - 1);
-    WiFiManagerParameter p_anthropic_org("anth_org", "Anthropic Org ID", buf_anthropic_org, NVS_VAL_MAX_LEN - 1);
-    WiFiManagerParameter param_oai_header("<h3>OpenAI</h3>");
-    WiFiManagerParameter p_openai_key("oai_key", "OpenAI API Key", buf_openai_key, NVS_VAL_MAX_LEN - 1);
-    WiFiManagerParameter p_openai_org("oai_org", "OpenAI Org ID", buf_openai_org, NVS_VAL_MAX_LEN - 1);
+    // WiFiManager fragt nur WLAN-Credentials ab.
+    // Token-Setup läuft ausschliesslich über das Web-Config-Portal (/api/token).
+    WiFiManagerParameter param_header("<h2>AI Monitor – WLAN Setup</h2><p style='color:#aaa;font-size:.85em'>Token-Konfiguration nach der Verbindung unter http://ai-monitor.local/</p>");
     WiFiManagerParameter param_settings_header("<h3>Settings</h3>");
-    WiFiManagerParameter p_poll("poll_sec", "Poll Interval (seconds)", buf_poll_interval, 7);
+    WiFiManagerParameter p_poll("poll_sec", "Poll Interval (Sekunden)", buf_poll_interval, 7);
 
     wm.addParameter(&param_header);
-    wm.addParameter(&param_anth_header);
-    wm.addParameter(&p_anthropic_key);
-    wm.addParameter(&p_anthropic_org);
-    wm.addParameter(&param_oai_header);
-    wm.addParameter(&p_openai_key);
-    wm.addParameter(&p_openai_org);
     wm.addParameter(&param_settings_header);
     wm.addParameter(&p_poll);
 
@@ -135,13 +119,8 @@ bool wifi_setup_init() {
 
     Serial.printf("[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
 
-    // Save custom parameters if config portal was used
+    // Save settings if config portal was used
     if (shouldSaveConfig) {
-        strlcpy(g_config.anthropic_key, p_anthropic_key.getValue(), sizeof(g_config.anthropic_key));
-        strlcpy(g_config.anthropic_org, p_anthropic_org.getValue(), sizeof(g_config.anthropic_org));
-        strlcpy(g_config.openai_key, p_openai_key.getValue(), sizeof(g_config.openai_key));
-        strlcpy(g_config.openai_org, p_openai_org.getValue(), sizeof(g_config.openai_org));
-
         uint32_t poll = atoi(p_poll.getValue());
         if (poll >= 10 && poll <= 86400) {
             g_config.poll_interval_sec = poll;

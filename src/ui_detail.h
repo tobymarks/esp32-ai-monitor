@@ -4,8 +4,8 @@
 #include <lvgl.h>
 #include "api_common.h"
 
-// Create and show the detail screen for a provider
+// Create and show the detail screen from a MonitorState
 // Automatically loads the screen with slide-left animation
-void ui_detail_create(const char *provider, const UsageData &data, lv_color_t brand_color);
+void ui_detail_create(const MonitorState &state);
 
 #endif // UI_DETAIL_H

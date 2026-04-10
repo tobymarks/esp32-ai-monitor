@@ -1,14 +1,13 @@
 /**
  * API Manager
  *
- * Coordinates sequential fetching of Anthropic + OpenAI usage/cost data.
+ * Coordinates Claude OAuth token management and usage fetching.
  * Timer-based polling with configurable interval.
- * Sequential (not parallel) to conserve heap — WiFiClientSecure uses ~45KB.
+ * Sequential execution to conserve heap — WiFiClientSecure uses ~45KB.
  */
 
 #include "api_manager.h"
-#include "api_anthropic.h"
-#include "api_openai.h"
+#include "api_claude.h"
 #include "config.h"
 #include "ntp_time.h"
 #include "wifi_setup.h"
@@ -28,31 +27,34 @@ static unsigned long last_fetch_time = 0;
 static bool initialized = false;
 static bool first_fetch_done = false;
 
-// Minimum interval between fetches (60 seconds, per Anthropic recommendation)
+// Minimum interval between fetches (60 seconds)
 static const unsigned long MIN_FETCH_INTERVAL_MS = 60000;
+
+// Token expiry lookahead: refresh if within 5 minutes of expiry
+static const uint32_t TOKEN_REFRESH_MARGIN_SEC = 300;
 
 // ============================================================
 // Init
 // ============================================================
 void api_manager_init() {
     memset(&state, 0, sizeof(state));
-    usage_data_clear(state.anthropic);
-    usage_data_clear(state.openai);
-    state.is_fetching = false;
+    usage_data_clear(state.usage);
+    state.is_fetching  = false;
+    state.token_valid  = strlen(g_config.access_token) > 0;
+    state.provider     = g_config.provider;
     strlcpy(state.status, "Initializing", sizeof(state.status));
 
-    initialized = true;
+    initialized     = true;
     first_fetch_done = false;
     last_fetch_time = 0;  // Force immediate first fetch
 
     Serial.println("[APIManager] Initialized");
     Serial.printf("[APIManager] Poll interval: %u sec\n", g_config.poll_interval_sec);
-    Serial.printf("[APIManager] Anthropic key: %s\n", strlen(g_config.anthropic_key) > 0 ? "configured" : "not set");
-    Serial.printf("[APIManager] OpenAI key: %s\n", strlen(g_config.openai_key) > 0 ? "configured" : "not set");
+    Serial.printf("[APIManager] Access token: %s\n", state.token_valid ? "configured" : "not set");
 }
 
 // ============================================================
-// Fetch all APIs sequentially
+// Fetch usage (with token refresh if needed)
 // ============================================================
 void api_manager_fetch() {
     if (!wifi_is_connected()) {
@@ -61,61 +63,54 @@ void api_manager_fetch() {
         return;
     }
 
-    if (!ntp_is_synced()) {
-        strlcpy(state.status, "NTP not synced", sizeof(state.status));
-        Serial.println("[APIManager] Skipping fetch — NTP not synced");
-        return;
-    }
-
     state.is_fetching = true;
 
     Serial.println("[APIManager] ======= Starting fetch cycle =======");
     Serial.printf("[APIManager] Free heap before: %u bytes\n", ESP.getFreeHeap());
 
-    // --- Anthropic ---
-    if (strlen(g_config.anthropic_key) > 0) {
-        strlcpy(state.status, "Fetching Anthropic...", sizeof(state.status));
-        Serial.println("[APIManager] --- Anthropic Usage ---");
-        anthropic_fetch_usage(state.anthropic);
-
-        Serial.printf("[APIManager] Heap after Anthropic usage: %u bytes\n", ESP.getFreeHeap());
-
-        Serial.println("[APIManager] --- Anthropic Costs ---");
-        anthropic_fetch_costs(state.anthropic);
-
-        Serial.printf("[APIManager] Heap after Anthropic costs: %u bytes\n", ESP.getFreeHeap());
-    } else {
-        strlcpy(state.anthropic.error, "No API key", sizeof(state.anthropic.error));
+    // --- Token check ---
+    if (strlen(g_config.access_token) == 0) {
+        strlcpy(state.status, "No token", sizeof(state.status));
+        strlcpy(state.usage.error, "No access token", sizeof(state.usage.error));
+        state.token_valid = false;
+        state.is_fetching = false;
+        Serial.println("[APIManager] No access token — skipping fetch");
+        return;
     }
 
-    // --- OpenAI ---
-    if (strlen(g_config.openai_key) > 0) {
-        strlcpy(state.status, "Fetching OpenAI...", sizeof(state.status));
-        Serial.println("[APIManager] --- OpenAI Usage ---");
-        openai_fetch_usage(state.openai);
-
-        Serial.printf("[APIManager] Heap after OpenAI usage: %u bytes\n", ESP.getFreeHeap());
-
-        Serial.println("[APIManager] --- OpenAI Costs ---");
-        openai_fetch_costs(state.openai);
-
-        Serial.printf("[APIManager] Heap after OpenAI costs: %u bytes\n", ESP.getFreeHeap());
-    } else {
-        strlcpy(state.openai.error, "No API key", sizeof(state.openai.error));
+    // --- Token refresh if near expiry ---
+    uint32_t now_epoch = (uint32_t)time(nullptr);
+    if (g_config.expires_at > 0 && now_epoch >= g_config.expires_at - TOKEN_REFRESH_MARGIN_SEC) {
+        strlcpy(state.status, "Refreshing token...", sizeof(state.status));
+        Serial.println("[APIManager] Token near expiry — refreshing");
+        if (!claude_refresh_token()) {
+            Serial.println("[APIManager] Token refresh failed");
+            state.token_valid = false;
+            strlcpy(state.status, "Token refresh failed", sizeof(state.status));
+            state.is_fetching = false;
+            return;
+        }
+        state.token_valid = true;
     }
 
-    // --- Calculate totals ---
-    state.total_today_cost = state.anthropic.today_cost + state.openai.today_cost;
-    state.total_month_cost = state.anthropic.month_cost + state.openai.month_cost;
+    // --- Fetch usage ---
+    strlcpy(state.status, "Fetching usage...", sizeof(state.status));
+    Serial.println("[APIManager] --- Claude OAuth Usage ---");
+    claude_fetch_usage(state.usage);
 
-    state.is_fetching = false;
+    Serial.printf("[APIManager] Heap after usage fetch: %u bytes\n", ESP.getFreeHeap());
+
+    state.token_valid  = state.usage.valid;
+    state.is_fetching  = false;
     strlcpy(state.status, "Idle", sizeof(state.status));
-    last_fetch_time = millis();
-    first_fetch_done = true;
+    last_fetch_time   = millis();
+    first_fetch_done  = true;
 
     Serial.println("[APIManager] ======= Fetch cycle complete =======");
-    Serial.printf("[APIManager] Total cost today: $%.4f | month: $%.4f\n",
-                  state.total_today_cost, state.total_month_cost);
+    Serial.printf("[APIManager] 5h: %.0f%% | 7d: %.0f%% | extra: %.0f%%\n",
+                  state.usage.five_hour_utilization  * 100.0f,
+                  state.usage.seven_day_utilization  * 100.0f,
+                  state.usage.extra_utilization      * 100.0f);
     Serial.printf("[APIManager] Free heap after: %u bytes\n", ESP.getFreeHeap());
 }
 

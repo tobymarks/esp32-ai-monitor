@@ -6,6 +6,7 @@
 #include "config.h"
 #include <Arduino.h>
 #include <stdio.h>
+#include <time.h>
 
 // ============================================================
 // Static styles (must be persistent, not stack-allocated)
@@ -96,6 +97,53 @@ void format_time_ago(unsigned long last_fetch_ms, char *buf, size_t len) {
         unsigned long days = elapsed_sec / 86400;
         snprintf(buf, len, "%lud ago", days);
     }
+}
+
+// ============================================================
+// Percentage formatting: 0.73 -> "73%"
+// ============================================================
+void format_percentage(float utilization, char *buf, size_t len) {
+    int pct = (int)(utilization * 100.0f + 0.5f);
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    snprintf(buf, len, "%d%%", pct);
+}
+
+// ============================================================
+// Countdown formatting from reset epoch: "2h 14m", "4d 12h"
+// ============================================================
+void format_countdown(time_t reset_epoch, char *buf, size_t len) {
+    if (reset_epoch <= 0) {
+        snprintf(buf, len, "--");
+        return;
+    }
+    time_t now = time(nullptr);
+    long diff = (long)(reset_epoch - now);
+    if (diff <= 0) {
+        snprintf(buf, len, "soon");
+        return;
+    }
+    long days  = diff / 86400;
+    long hours = (diff % 86400) / 3600;
+    long mins  = (diff % 3600) / 60;
+
+    if (days > 0) {
+        snprintf(buf, len, "%ldd %ldh", days, hours);
+    } else if (hours > 0) {
+        snprintf(buf, len, "%ldh %ldm", hours, mins);
+    } else {
+        snprintf(buf, len, "%ldm", mins > 0 ? mins : 1);
+    }
+}
+
+// ============================================================
+// Bar color based on utilization level
+// ============================================================
+lv_color_t ui_bar_color(float utilization) {
+    if (utilization >= 0.95f) return UI_COLOR_BAR_RED;
+    if (utilization >= 0.80f) return UI_COLOR_BAR_ORANGE;
+    if (utilization >= 0.50f) return UI_COLOR_BAR_YELLOW;
+    return UI_COLOR_BAR_GREEN;
 }
 
 // ============================================================

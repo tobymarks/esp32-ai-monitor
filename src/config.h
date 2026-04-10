@@ -6,7 +6,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "0.5.0"
+#define APP_VERSION "0.6.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---
@@ -63,29 +63,42 @@ extern uint16_t SCREEN_HEIGHT;
 // NVS (Non-Volatile Storage) Configuration
 // ============================================================
 #define NVS_NAMESPACE      "aim_config"    // Max 15 chars
-#define NVS_VAL_MAX_LEN    256             // Max length for API keys
+#define NVS_VAL_MAX_LEN    512             // Max length for tokens
 
 // ============================================================
 // Defaults
 // ============================================================
-#define DEFAULT_POLL_INTERVAL_SEC  300     // 5 minutes
+#define DEFAULT_POLL_INTERVAL_SEC  120     // 2 minutes
 
 // ============================================================
-// Application Configuration Struct
+// Provider constants
 // ============================================================
+#define PROVIDER_CLAUDE   0
+#define PROVIDER_OPENAI   1
+
+// ============================================================
+// OAuth / API endpoints
+// ============================================================
+#define CLAUDE_OAUTH_CLIENT_ID  "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+#define CLAUDE_USAGE_ENDPOINT   "api.anthropic.com"
+#define CLAUDE_TOKEN_ENDPOINT   "platform.claude.com"
+
 // ============================================================
 // Orientation options
 // ============================================================
 #define ORIENTATION_PORTRAIT   0   // setRotation(2): 240x320, USB at bottom
 #define ORIENTATION_LANDSCAPE  1   // setRotation(1): 320x240, USB at left
 
+// ============================================================
+// Application Configuration Struct
+// ============================================================
 struct AppConfig {
-    char     anthropic_key[NVS_VAL_MAX_LEN] = "";
-    char     anthropic_org[NVS_VAL_MAX_LEN] = "";
-    char     openai_key[NVS_VAL_MAX_LEN]    = "";
-    char     openai_org[NVS_VAL_MAX_LEN]    = "";
-    uint32_t poll_interval_sec               = DEFAULT_POLL_INTERVAL_SEC;
-    uint8_t  orientation                     = ORIENTATION_PORTRAIT;
+    char     access_token[512];       // OAuth access token
+    char     refresh_token[512];      // OAuth refresh token
+    uint32_t expires_at;              // Unix epoch when access token expires
+    uint8_t  provider;                // PROVIDER_CLAUDE(0) or PROVIDER_OPENAI(1)
+    uint16_t poll_interval_sec;       // Default 120
+    uint8_t  orientation;             // ORIENTATION_PORTRAIT(0) or ORIENTATION_LANDSCAPE(1)
 };
 
 // ============================================================

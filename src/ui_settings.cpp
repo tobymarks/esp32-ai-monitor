@@ -176,63 +176,75 @@ void ui_settings_create() {
     ui_create_divider(scr, 32);
 
     // ---- Info rows ----
+    // Provider row
+    const MonitorState &ms = ui_dashboard_get_last_state();
+    create_info_row(scr, "Provider:", ms.provider == 1 ? "OpenAI" : "Claude", 40);
+
+    // Token validity
+    {
+        char tok_buf[40];
+        if (ms.token_valid) {
+            snprintf(tok_buf, sizeof(tok_buf), "Gueltig");
+        } else {
+            snprintf(tok_buf, sizeof(tok_buf), "Abgelaufen");
+        }
+        create_info_row(scr, "Token:", tok_buf, 58);
+    }
+
     char wifi_buf[48];
     snprintf(wifi_buf, sizeof(wifi_buf), "%s  %d dBm",
              wifi_get_ssid().c_str(), wifi_get_rssi());
-    create_info_row(scr, "WiFi:", wifi_buf, 40);
+    create_info_row(scr, "WiFi:", wifi_buf, 76);
 
-    create_info_row(scr, "IP:", wifi_get_ip().c_str(), 58);
+    create_info_row(scr, "IP:", wifi_get_ip().c_str(), 94);
 
     char mdns_buf[48];
     snprintf(mdns_buf, sizeof(mdns_buf), "%s.local", MDNS_HOSTNAME);
-    create_info_row(scr, "Web:", mdns_buf, 76);
+    create_info_row(scr, "Web:", mdns_buf, 112);
 
     // ---- QR Code ----
     String config_url = webserver_get_url();
 
     if (is_portrait) {
-        // Portrait: QR code centered below info rows, larger (120px)
-        int16_t qr_x = (sw - 120) / 2;
-        draw_settings_qr(scr, config_url, qr_x, 98, 120);
+        // Portrait: QR code centered below info rows (shifted down due to extra rows)
+        int16_t qr_x = (sw - 100) / 2;
+        draw_settings_qr(scr, config_url, qr_x, 130, 100);
 
         // System info below QR
         char heap_buf[48];
         snprintf(heap_buf, sizeof(heap_buf), "%u KB / Min: %u KB",
                  ESP.getFreeHeap() / 1024, ESP.getMinFreeHeap() / 1024);
-        create_info_row(scr, "Heap:", heap_buf, 228);
+        create_info_row(scr, "Heap:", heap_buf, 240);
 
         char uptime_buf[32];
         format_uptime(uptime_buf, sizeof(uptime_buf));
-        create_info_row(scr, "Uptime:", uptime_buf, 246);
+        create_info_row(scr, "Uptime:", uptime_buf, 258);
 
         char poll_buf[48];
         snprintf(poll_buf, sizeof(poll_buf), "%lus | NTP: %s",
                  (unsigned long)g_config.poll_interval_sec,
                  ntp_is_synced() ? "synced" : "not synced");
-        create_info_row(scr, "Poll:", poll_buf, 264);
-
-        // Orientation info
-        create_info_row(scr, "Mode:", "Portrait (USB down)", 282);
+        create_info_row(scr, "Poll:", poll_buf, 276);
 
     } else {
-        // Landscape: QR code to the right of info rows (80px)
+        // Landscape: QR code to the right (80px)
         draw_settings_qr(scr, config_url, sw - 100, 40, 80);
 
-        // System info below first rows
+        // System info
         char heap_buf[48];
         snprintf(heap_buf, sizeof(heap_buf), "%u KB / Min: %u KB",
                  ESP.getFreeHeap() / 1024, ESP.getMinFreeHeap() / 1024);
-        create_info_row(scr, "Heap:", heap_buf, 140);
+        create_info_row(scr, "Heap:", heap_buf, 130);
 
         char uptime_buf[32];
         format_uptime(uptime_buf, sizeof(uptime_buf));
-        create_info_row(scr, "Uptime:", uptime_buf, 158);
+        create_info_row(scr, "Uptime:", uptime_buf, 148);
 
         char poll_buf[48];
         snprintf(poll_buf, sizeof(poll_buf), "%lus | NTP: %s",
                  (unsigned long)g_config.poll_interval_sec,
                  ntp_is_synced() ? "synced" : "not synced");
-        create_info_row(scr, "Poll:", poll_buf, 176);
+        create_info_row(scr, "Poll:", poll_buf, 166);
     }
 
     // ---- Divider above footer ----

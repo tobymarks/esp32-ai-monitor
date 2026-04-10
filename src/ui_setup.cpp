@@ -37,7 +37,7 @@ void ui_setup_create() {
 
     // Instructions
     lv_obj_t *instr = lv_label_create(scr);
-    lv_label_set_text(instr, "Open in your browser:");
+    lv_label_set_text(instr, "Token konfigurieren unter:");
     lv_obj_set_style_text_color(instr, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
     lv_obj_set_style_text_font(instr, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(instr, LV_ALIGN_CENTER, 0, 10);
@@ -51,7 +51,7 @@ void ui_setup_create() {
 
     // Subtitle
     lv_obj_t *sub = lv_label_create(scr);
-    lv_label_set_text(sub, "to configure your API keys");
+    lv_label_set_text(sub, "im Browser aufrufen");
     lv_obj_set_style_text_color(sub, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
     lv_obj_set_style_text_font(sub, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(sub, LV_ALIGN_CENTER, 0, 60);
@@ -64,5 +64,5 @@ void ui_setup_create() {
     lv_obj_align(ver, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
 
     lv_screen_load(scr);
-    Serial.println("[UI] Setup screen loaded — no API keys configured");
+    Serial.println("[UI] Setup screen loaded — kein Token konfiguriert");
 }

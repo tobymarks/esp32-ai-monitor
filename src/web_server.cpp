@@ -2,7 +2,7 @@
  * Async Web Server - Config Portal + REST API
  *
  * Serves a dark-themed config UI and provides JSON endpoints
- * for reading/writing config and checking device status.
+ * for reading/writing config, OAuth token setup, and device status.
  */
 
 #include "web_server.h"
@@ -15,6 +15,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <time.h>
 
 // ============================================================
 // External references
@@ -27,19 +28,6 @@ extern void config_load(AppConfig &cfg);
 // Server instance
 // ============================================================
 static AsyncWebServer server(80);
-
-// ============================================================
-// Mask API key: show first 4 + last 4, rest asterisks
-// ============================================================
-static String maskKey(const char *key) {
-    size_t len = strlen(key);
-    if (len == 0) return "";
-    if (len <= 8) return "********";
-    String masked = String(key).substring(0, 4);
-    for (size_t i = 4; i < len - 4; i++) masked += '*';
-    masked += String(key).substring(len - 4);
-    return masked;
-}
 
 // ============================================================
 // Uptime string
@@ -55,194 +43,347 @@ static String getUptime() {
 }
 
 // ============================================================
+// Token status helpers
+// ============================================================
+static String getTokenStatus() {
+    if (strlen(g_config.access_token) == 0) return "missing";
+    if (g_config.expires_at == 0) return "valid";  // no expiry info → assume valid
+    uint32_t now_epoch = (uint32_t)(time(nullptr));
+    if (now_epoch > 0 && now_epoch >= g_config.expires_at) return "expired";
+    return "valid";
+}
+
+static String getTokenExpires() {
+    if (g_config.expires_at == 0 || strlen(g_config.access_token) == 0) return "";
+    time_t t = (time_t)g_config.expires_at;
+    struct tm tm_info;
+    gmtime_r(&t, &tm_info);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_info);
+    return String(buf);
+}
+
+// ============================================================
 // Embedded HTML/CSS/JS - Config Portal UI
 // ============================================================
 static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI Monitor Config</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1A1A2E;color:#E0E0E0;min-height:100vh;display:flex;justify-content:center;padding:16px}
-.container{width:100%;max-width:480px}
-h1{text-align:center;color:#E94560;font-size:1.4em;margin-bottom:8px}
-.subtitle{text-align:center;color:#666;font-size:.85em;margin-bottom:20px}
-.status-bar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px;padding:12px;background:#16213E;border-radius:8px;font-size:.8em}
-.status-bar .item{display:flex;flex-direction:column}
-.status-bar .label{color:#888;font-size:.75em;text-transform:uppercase}
-.status-bar .value{color:#0F3460;font-weight:600;color:#E94560}
-.group{margin-bottom:16px;padding:14px;background:#16213E;border-radius:8px}
-.group h2{font-size:.95em;color:#E94560;margin-bottom:10px;border-bottom:1px solid #0F3460;padding-bottom:6px}
-.field{margin-bottom:10px}
-.field label{display:block;font-size:.8em;color:#AAA;margin-bottom:4px}
-.field .input-wrap{position:relative;display:flex}
-.field input{width:100%;padding:8px 10px;background:#0F3460;border:1px solid #1A1A2E;border-radius:4px;color:#E0E0E0;font-size:.9em;outline:none}
-.field input:focus{border-color:#E94560}
-.field input[type="number"]{-moz-appearance:textfield}
-.toggle-btn{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;color:#888;cursor:pointer;font-size:1.1em;padding:4px}
-.toggle-btn:hover{color:#E94560}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#171717;color:#e5e5e5;min-height:100vh;display:flex;justify-content:center;padding:20px 16px 40px}
+.container{width:100%;max-width:500px}
+.header{text-align:center;margin-bottom:24px;padding-top:8px}
+.header h1{font-size:1.35em;font-weight:700;color:#fff;letter-spacing:-.02em;margin-bottom:4px}
+.header p{color:#737373;font-size:.85em}
+.status-bar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px}
+.stat{background:#1c1c1c;border:1px solid #2a2a2a;border-radius:10px;padding:12px 14px}
+.stat .lbl{color:#525252;font-size:.7em;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.stat .val{color:#e5e5e5;font-size:.9em;font-weight:600}
+.card{background:#1c1c1c;border:1px solid #2a2a2a;border-radius:12px;padding:18px;margin-bottom:12px}
+.card-title{font-size:.8em;font-weight:600;color:#737373;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px}
+.field{margin-bottom:12px}
+.field:last-child{margin-bottom:0}
+.field label{display:block;font-size:.8em;color:#a3a3a3;margin-bottom:5px;font-weight:500}
+.field input,.field select{width:100%;padding:9px 12px;background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e5e5e5;font-size:.9em;font-family:inherit;outline:none;transition:border-color .15s}
+.field input:focus,.field select:focus{border-color:#525252}
+.field .hint{font-size:.72em;color:#525252;margin-top:4px}
+/* Provider radio */
+.radio-group{display:flex;gap:8px}
+.radio-opt{flex:1;position:relative}
+.radio-opt input[type=radio]{position:absolute;opacity:0;width:0;height:0}
+.radio-opt label{display:flex;align-items:center;justify-content:center;gap:7px;padding:9px;background:#111;border:1px solid #2a2a2a;border-radius:8px;cursor:pointer;font-size:.88em;font-weight:500;color:#a3a3a3;transition:all .15s;user-select:none}
+.radio-opt input[type=radio]:checked + label{background:#1a1a1a;border-color:#525252;color:#fff}
+.radio-opt label .dot{width:8px;height:8px;border-radius:50%;background:#525252;transition:background .15s}
+.radio-opt input[type=radio]:checked + label .dot{background:#22c55e}
+/* Token status */
+.token-status{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#111;border:1px solid #2a2a2a;border-radius:8px;margin-bottom:12px}
+.status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.status-dot.valid{background:#22c55e}
+.status-dot.expired{background:#ef4444}
+.status-dot.missing{background:#525252}
+.status-text{font-size:.83em;color:#a3a3a3;flex:1}
+.status-text strong{color:#e5e5e5;font-weight:500}
+/* Code block */
+.code-section{margin-top:12px}
+.code-label{font-size:.75em;color:#737373;margin-bottom:6px;font-weight:500}
+.code-wrap{position:relative;background:#111;border:1px solid #2a2a2a;border-radius:8px;overflow:hidden}
+.code-wrap code{display:block;padding:10px 42px 10px 12px;font-family:'SF Mono',ui-monospace,monospace;font-size:.7em;color:#a3a3a3;line-height:1.5;word-break:break-all;white-space:pre-wrap}
+.copy-btn{position:absolute;top:7px;right:7px;background:#2a2a2a;border:none;border-radius:5px;padding:4px 8px;color:#737373;font-size:.7em;cursor:pointer;transition:all .15s;font-family:inherit}
+.copy-btn:hover{background:#333;color:#e5e5e5}
+.copy-btn.copied{background:#166534;color:#86efac}
+.tabs{display:flex;gap:4px;margin-bottom:8px}
+.tab{padding:4px 10px;border-radius:5px;font-size:.72em;font-weight:500;cursor:pointer;color:#737373;background:transparent;border:1px solid transparent;transition:all .15s;font-family:inherit}
+.tab.active{background:#1c1c1c;border-color:#2a2a2a;color:#e5e5e5}
+.tab-content{display:none}
+.tab-content.active{display:block}
+/* Usage bars */
+.usage-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.usage-row:last-child{margin-bottom:0}
+.usage-lbl{font-size:.78em;color:#737373;width:90px;flex-shrink:0;font-weight:500}
+.usage-bar-wrap{flex:1;background:#111;border-radius:4px;height:6px;overflow:hidden}
+.usage-bar{height:100%;border-radius:4px;background:#22c55e;transition:width .4s ease}
+.usage-pct{font-size:.78em;color:#a3a3a3;width:36px;text-align:right;flex-shrink:0}
+.usage-reset{font-size:.7em;color:#525252;margin-top:2px}
+/* Actions */
 .actions{display:flex;gap:10px;margin-top:16px}
-.btn{flex:1;padding:12px;border:none;border-radius:6px;font-size:.95em;font-weight:600;cursor:pointer;transition:background .2s}
-.btn-save{background:#E94560;color:#fff}
-.btn-save:hover{background:#c73550}
-.btn-save.success{background:#27ae60}
-.btn-restart{background:#0F3460;color:#E0E0E0}
-.btn-restart:hover{background:#1a4a8a}
-.msg{text-align:center;padding:8px;margin-top:10px;border-radius:4px;font-size:.85em;display:none}
+.btn{flex:1;padding:11px;border:none;border-radius:8px;font-size:.9em;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit}
+.btn-save{background:#fff;color:#000}
+.btn-save:hover{background:#e5e5e5}
+.btn-save.success{background:#166534;color:#86efac}
+.btn-restart{background:#1c1c1c;color:#e5e5e5;border:1px solid #2a2a2a}
+.btn-restart:hover{background:#2a2a2a}
+.msg{text-align:center;padding:8px 12px;margin-top:10px;border-radius:8px;font-size:.82em;display:none}
 .msg.show{display:block}
-.msg.ok{background:#27ae6033;color:#27ae60}
-.msg.err{background:#e9456033;color:#E94560}
+.msg.ok{background:#14532d33;color:#86efac;border:1px solid #166534}
+.msg.err{background:#7f1d1d33;color:#fca5a5;border:1px solid #7f1d1d}
 </style>
 </head>
 <body>
 <div class="container">
-<h1>AI Usage Monitor</h1>
-<p class="subtitle">Configuration Portal</p>
+  <div class="header">
+    <h1>AI Usage Monitor</h1>
+    <p>Konfigurationsportal · ai-monitor.local</p>
+  </div>
 
-<div class="status-bar" id="status">
-  <div class="item"><span class="label">IP</span><span class="value" id="s-ip">--</span></div>
-  <div class="item"><span class="label">RSSI</span><span class="value" id="s-rssi">--</span></div>
-  <div class="item"><span class="label">Heap</span><span class="value" id="s-heap">--</span></div>
-  <div class="item"><span class="label">Uptime</span><span class="value" id="s-uptime">--</span></div>
-</div>
+  <!-- Status Bar -->
+  <div class="status-bar">
+    <div class="stat"><div class="lbl">IP</div><div class="val" id="s-ip">--</div></div>
+    <div class="stat"><div class="lbl">RSSI</div><div class="val" id="s-rssi">--</div></div>
+    <div class="stat"><div class="lbl">Heap</div><div class="val" id="s-heap">--</div></div>
+    <div class="stat"><div class="lbl">Uptime</div><div class="val" id="s-uptime">--</div></div>
+  </div>
 
-<form id="configForm">
-  <div class="group">
-    <h2>Anthropic</h2>
-    <div class="field">
-      <label>API Key</label>
-      <div class="input-wrap">
-        <input type="password" id="anthropic_key" name="anthropic_key" placeholder="sk-ant-...">
-        <button type="button" class="toggle-btn" onclick="toggleVis(this)">&#128065;</button>
+  <!-- Usage -->
+  <div class="card" id="usage-card">
+    <div class="card-title">Live Usage</div>
+    <div class="usage-row">
+      <div class="usage-lbl">Session</div>
+      <div class="usage-bar-wrap"><div class="usage-bar" id="bar-session" style="width:0%"></div></div>
+      <div class="usage-pct" id="pct-session">--</div>
+    </div>
+    <div class="usage-reset" id="reset-session"></div>
+    <div class="usage-row" style="margin-top:10px">
+      <div class="usage-lbl">Wöchentlich</div>
+      <div class="usage-bar-wrap"><div class="usage-bar" id="bar-weekly" style="width:0%;background:#3b82f6"></div></div>
+      <div class="usage-pct" id="pct-weekly">--</div>
+    </div>
+    <div class="usage-reset" id="reset-weekly"></div>
+  </div>
+
+  <form id="configForm">
+    <!-- Provider -->
+    <div class="card">
+      <div class="card-title">Provider</div>
+      <div class="radio-group">
+        <div class="radio-opt">
+          <input type="radio" id="p-claude" name="provider" value="0" checked>
+          <label for="p-claude"><span class="dot"></span>Claude</label>
+        </div>
+        <div class="radio-opt">
+          <input type="radio" id="p-openai" name="provider" value="1">
+          <label for="p-openai"><span class="dot"></span>OpenAI</label>
+        </div>
       </div>
     </div>
-    <div class="field">
-      <label>Organization ID</label>
-      <input type="text" id="anthropic_org" name="anthropic_org" placeholder="org-...">
-    </div>
-  </div>
 
-  <div class="group">
-    <h2>OpenAI</h2>
-    <div class="field">
-      <label>API Key</label>
-      <div class="input-wrap">
-        <input type="password" id="openai_key" name="openai_key" placeholder="sk-...">
-        <button type="button" class="toggle-btn" onclick="toggleVis(this)">&#128065;</button>
+    <!-- Token Setup -->
+    <div class="card">
+      <div class="card-title">OAuth Token</div>
+
+      <div class="token-status">
+        <div class="status-dot missing" id="token-dot"></div>
+        <div class="status-text" id="token-text">Lade...</div>
+      </div>
+
+      <div class="code-section">
+        <div class="code-label">Token übertragen – Terminal-Befehl:</div>
+        <div class="tabs">
+          <button type="button" class="tab active" onclick="switchTab(this,'tab-file')">~/.credentials.json</button>
+          <button type="button" class="tab" onclick="switchTab(this,'tab-keychain')">macOS Keychain</button>
+        </div>
+        <div class="tab-content active" id="tab-file">
+          <div class="code-wrap">
+            <code id="cmd-file">jq -c '{access_token:.claudeAiOauth.accessToken,refresh_token:.claudeAiOauth.refreshToken,expires_at:.claudeAiOauth.expiresAt}' ~/.claude/.credentials.json | curl -s -X POST -H 'Content-Type: application/json' -d @- http://ai-monitor.local/api/token</code>
+            <button type="button" class="copy-btn" onclick="copyCode('cmd-file',this)">Kopieren</button>
+          </div>
+        </div>
+        <div class="tab-content" id="tab-keychain">
+          <div class="code-wrap">
+            <code id="cmd-keychain">security find-generic-password -s 'Claude Code-credentials' -w | jq -c '{access_token:.claudeAiOauth.accessToken,refresh_token:.claudeAiOauth.refreshToken,expires_at:.claudeAiOauth.expiresAt}' | curl -s -X POST -H 'Content-Type: application/json' -d @- http://ai-monitor.local/api/token</code>
+            <button type="button" class="copy-btn" onclick="copyCode('cmd-keychain',this)">Kopieren</button>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="field">
-      <label>Organization ID</label>
-      <input type="text" id="openai_org" name="openai_org" placeholder="org-...">
-    </div>
-  </div>
 
-  <div class="group">
-    <h2>Settings</h2>
-    <div class="field">
-      <label>Polling Interval (seconds)</label>
-      <input type="number" id="poll_interval_sec" name="poll_interval_sec" min="10" max="86400" value="300">
+    <!-- Settings -->
+    <div class="card">
+      <div class="card-title">Einstellungen</div>
+      <div class="field">
+        <label>Poll-Intervall (Sekunden)</label>
+        <input type="number" id="poll_interval" name="poll_interval" min="10" max="86400" value="120">
+        <div class="hint">Wie oft die API abgefragt wird. Empfohlen: 60–300.</div>
+      </div>
+      <div class="field">
+        <label>Display-Ausrichtung</label>
+        <select id="orientation" name="orientation">
+          <option value="0">Portrait (USB unten)</option>
+          <option value="1">Landscape (USB links)</option>
+        </select>
+        <div class="hint">Erfordert Neustart.</div>
+      </div>
     </div>
-    <div class="field">
-      <label>Display Orientation</label>
-      <select id="orientation" name="orientation" style="width:100%;padding:8px 10px;background:#0F3460;border:1px solid #1A1A2E;border-radius:4px;color:#E0E0E0;font-size:.9em;outline:none">
-        <option value="0">Portrait (USB bottom)</option>
-        <option value="1">Landscape</option>
-      </select>
-      <div style="font-size:.75em;color:#888;margin-top:4px">Requires restart to take effect</div>
-    </div>
-  </div>
 
-  <div class="actions">
-    <button type="submit" class="btn btn-save" id="saveBtn">Save</button>
-    <button type="button" class="btn btn-restart" onclick="doRestart()">Restart</button>
-  </div>
-  <div class="msg" id="msg"></div>
-</form>
+    <div class="actions">
+      <button type="submit" class="btn btn-save" id="saveBtn">Speichern</button>
+      <button type="button" class="btn btn-restart" onclick="doRestart()">Neustart</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </form>
 </div>
 
 <script>
-function toggleVis(btn){
-  const inp=btn.parentElement.querySelector('input');
-  inp.type=inp.type==='password'?'text':'password';
+// ---- Tabs ----
+function switchTab(btn, tabId) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(tabId).classList.add('active');
 }
 
-function showMsg(text,ok){
-  const m=document.getElementById('msg');
-  m.textContent=text;
-  m.className='msg show '+(ok?'ok':'err');
-  setTimeout(()=>m.classList.remove('show'),3000);
+// ---- Copy ----
+async function copyCode(id, btn) {
+  const text = document.getElementById(id).textContent.trim();
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Kopiert!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Kopieren'; btn.classList.remove('copied'); }, 2000);
+  } catch(e) {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = 'Kopiert!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Kopieren'; btn.classList.remove('copied'); }, 2000);
+  }
 }
 
-async function loadStatus(){
-  try{
-    const r=await fetch('/api/status');
-    const d=await r.json();
-    document.getElementById('s-ip').textContent=d.ip||'--';
-    document.getElementById('s-rssi').textContent=(d.rssi||'--')+' dBm';
-    document.getElementById('s-heap').textContent=Math.round((d.free_heap||0)/1024)+' KB';
-    document.getElementById('s-uptime').textContent=d.uptime||'--';
-  }catch(e){}
+// ---- Message ----
+function showMsg(text, ok) {
+  const m = document.getElementById('msg');
+  m.textContent = text;
+  m.className = 'msg show ' + (ok ? 'ok' : 'err');
+  setTimeout(() => m.classList.remove('show'), 3500);
 }
 
-async function loadConfig(){
-  try{
-    const r=await fetch('/api/config');
-    const d=await r.json();
-    document.getElementById('anthropic_key').placeholder=d.anthropic_key||'sk-ant-...';
-    document.getElementById('anthropic_org').value=d.anthropic_org||'';
-    document.getElementById('openai_key').placeholder=d.openai_key||'sk-...';
-    document.getElementById('openai_org').value=d.openai_org||'';
-    document.getElementById('poll_interval_sec').value=d.poll_interval_sec||300;
-    document.getElementById('orientation').value=d.orientation||0;
-  }catch(e){}
+// ---- Status ----
+async function loadStatus() {
+  try {
+    const d = await fetch('/api/status').then(r => r.json());
+    document.getElementById('s-ip').textContent = d.ip || '--';
+    document.getElementById('s-rssi').textContent = (d.rssi || '--') + ' dBm';
+    document.getElementById('s-heap').textContent = Math.round((d.free_heap || 0) / 1024) + ' KB';
+    document.getElementById('s-uptime').textContent = d.uptime || '--';
+  } catch(e) {}
 }
 
-document.getElementById('configForm').addEventListener('submit',async function(e){
-  e.preventDefault();
-  const btn=document.getElementById('saveBtn');
-  const data={};
-  const ak=document.getElementById('anthropic_key').value;
-  if(ak)data.anthropic_key=ak;
-  const ao=document.getElementById('anthropic_org').value;
-  if(ao)data.anthropic_org=ao;
-  const ok_=document.getElementById('openai_key').value;
-  if(ok_)data.openai_key=ok_;
-  const oo=document.getElementById('openai_org').value;
-  if(oo)data.openai_org=oo;
-  data.poll_interval_sec=parseInt(document.getElementById('poll_interval_sec').value)||300;
-  data.orientation=parseInt(document.getElementById('orientation').value)||0;
+// ---- Config ----
+async function loadConfig() {
+  try {
+    const d = await fetch('/api/config').then(r => r.json());
 
-  try{
-    const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-    if(r.ok){
-      const resp=await r.json();
-      btn.classList.add('success');btn.textContent='Saved!';
-      setTimeout(()=>{btn.classList.remove('success');btn.textContent='Save';},2000);
-      if(resp.restart_hint){
-        showMsg(resp.restart_hint+' Click Restart to apply.',true);
-      }else{
-        showMsg('Configuration saved successfully',true);
-      }
-      loadConfig();
-    }else{
-      showMsg('Failed to save',false);
+    // Provider
+    const prov = d.provider || 0;
+    document.querySelector(`input[name=provider][value="${prov}"]`).checked = true;
+
+    // Poll & orientation
+    document.getElementById('poll_interval').value = d.poll_interval || 120;
+    document.getElementById('orientation').value = d.orientation || 0;
+
+    // Token status
+    const dot = document.getElementById('token-dot');
+    const txt = document.getElementById('token-text');
+    dot.className = 'status-dot ' + (d.token_status || 'missing');
+    if (d.token_status === 'valid') {
+      txt.innerHTML = '<strong>Token: Gültig</strong>' + (d.token_expires ? ' · Läuft ab: ' + d.token_expires : '');
+    } else if (d.token_status === 'expired') {
+      txt.innerHTML = '<strong>Token: Abgelaufen</strong> · Bitte neu übertragen';
+    } else {
+      txt.innerHTML = '<strong>Kein Token konfiguriert</strong> · Befehl unten ausführen';
     }
-  }catch(e){showMsg('Error: '+e.message,false);}
+  } catch(e) {}
+}
+
+// ---- Usage ----
+async function loadUsage() {
+  try {
+    const d = await fetch('/api/usage').then(r => r.json());
+    const sp = Math.min(Math.round((d.session_pct || 0) * 100), 100);
+    const wp = Math.min(Math.round((d.weekly_pct || 0) * 100), 100);
+    document.getElementById('bar-session').style.width = sp + '%';
+    document.getElementById('pct-session').textContent = sp + '%';
+    document.getElementById('bar-weekly').style.width = wp + '%';
+    document.getElementById('pct-weekly').textContent = wp + '%';
+    if (d.session_reset) document.getElementById('reset-session').textContent = 'Reset: ' + d.session_reset;
+    if (d.weekly_reset) document.getElementById('reset-weekly').textContent = 'Reset: ' + d.weekly_reset;
+  } catch(e) {}
+}
+
+// ---- Save ----
+document.getElementById('configForm').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const btn = document.getElementById('saveBtn');
+  const data = {
+    poll_interval: parseInt(document.getElementById('poll_interval').value) || 120,
+    orientation:   parseInt(document.getElementById('orientation').value) || 0,
+    provider:      parseInt(document.querySelector('input[name=provider]:checked').value) || 0
+  };
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data)
+    });
+    if (r.ok) {
+      const resp = await r.json();
+      btn.classList.add('success');
+      btn.textContent = 'Gespeichert!';
+      setTimeout(() => { btn.classList.remove('success'); btn.textContent = 'Speichern'; }, 2000);
+      const hint = resp.restart_hint ? ' ' + resp.restart_hint : '';
+      showMsg('Konfiguration gespeichert.' + hint, true);
+      loadConfig();
+    } else {
+      showMsg('Fehler beim Speichern.', false);
+    }
+  } catch(e) { showMsg('Fehler: ' + e.message, false); }
 });
 
-async function doRestart(){
-  if(!confirm('Restart the device?'))return;
-  try{await fetch('/api/restart',{method:'POST'});}catch(e){}
-  showMsg('Restarting...',true);
+// ---- Restart ----
+async function doRestart() {
+  if (!confirm('Gerät neu starten?')) return;
+  try { await fetch('/api/restart', {method: 'POST'}); } catch(e) {}
+  showMsg('Neustart wird durchgeführt...', true);
 }
 
+// ---- Init ----
 loadStatus();
 loadConfig();
-setInterval(loadStatus,5000);
+loadUsage();
+setInterval(loadStatus, 5000);
+setInterval(loadUsage, 30000);
 </script>
 </body>
 </html>
@@ -257,30 +398,29 @@ void webserver_init() {
         request->send_P(200, "text/html; charset=utf-8", INDEX_HTML);
     });
 
-    // GET /api/config — return config with masked keys
+    // --------------------------------------------------------
+    // GET /api/config — return config (tokens NEVER returned)
+    // --------------------------------------------------------
     server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
-        doc["anthropic_key"] = maskKey(g_config.anthropic_key);
-        doc["anthropic_org"] = String(g_config.anthropic_org);
-        doc["openai_key"]    = maskKey(g_config.openai_key);
-        doc["openai_org"]    = String(g_config.openai_org);
-        doc["poll_interval_sec"] = g_config.poll_interval_sec;
-        doc["orientation"]       = g_config.orientation;
+        doc["provider"]      = g_config.provider;
+        doc["poll_interval"] = g_config.poll_interval_sec;
+        doc["orientation"]   = g_config.orientation;
+        doc["token_status"]  = getTokenStatus();
+        doc["token_expires"] = getTokenExpires();
 
         String json;
         serializeJson(doc, json);
         request->send(200, "application/json", json);
     });
 
-    // POST /api/config — save config
+    // --------------------------------------------------------
+    // POST /api/config — save settings (no token changes here)
+    // --------------------------------------------------------
     server.on("/api/config", HTTP_POST,
-        // Request handler (called after body is received)
         [](AsyncWebServerRequest *request) {},
-        // Upload handler (not used)
         nullptr,
-        // Body handler
         [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-            // Collect body (should fit in one chunk for our small JSON)
             if (index == 0 && len == total) {
                 JsonDocument doc;
                 DeserializationError err = deserializeJson(doc, data, len);
@@ -289,58 +429,91 @@ void webserver_init() {
                     return;
                 }
 
-                // Only update fields that are present and non-empty
-                if (doc["anthropic_key"].is<const char*>()) {
-                    const char *v = doc["anthropic_key"];
-                    if (strlen(v) > 0) strlcpy(g_config.anthropic_key, v, sizeof(g_config.anthropic_key));
-                }
-                if (doc["anthropic_org"].is<const char*>()) {
-                    strlcpy(g_config.anthropic_org, doc["anthropic_org"], sizeof(g_config.anthropic_org));
-                }
-                if (doc["openai_key"].is<const char*>()) {
-                    const char *v = doc["openai_key"];
-                    if (strlen(v) > 0) strlcpy(g_config.openai_key, v, sizeof(g_config.openai_key));
-                }
-                if (doc["openai_org"].is<const char*>()) {
-                    strlcpy(g_config.openai_org, doc["openai_org"], sizeof(g_config.openai_org));
-                }
-                if (doc["poll_interval_sec"].is<unsigned int>()) {
-                    uint32_t val = doc["poll_interval_sec"];
-                    if (val >= 10 && val <= 86400) g_config.poll_interval_sec = val;
+                bool orientation_changed = false;
+
+                if (doc["poll_interval"].is<unsigned int>()) {
+                    uint32_t val = doc["poll_interval"];
+                    if (val >= 10 && val <= 86400) g_config.poll_interval_sec = (uint16_t)val;
                 }
                 if (doc["orientation"].is<unsigned int>()) {
                     uint8_t val = doc["orientation"];
-                    if (val <= 1) g_config.orientation = val;
+                    if (val <= 1 && val != g_config.orientation) {
+                        g_config.orientation = val;
+                        orientation_changed = true;
+                    }
+                }
+                if (doc["provider"].is<unsigned int>()) {
+                    uint8_t val = doc["provider"];
+                    if (val <= 1) g_config.provider = val;
                 }
 
                 config_save(g_config);
+                Serial.println("[Web] Config updated via /api/config");
 
-                // Check if orientation changed — notify that restart is needed
-                bool needs_restart = false;
-                if (doc["orientation"].is<unsigned int>()) {
-                    needs_restart = true;
-                }
-
-                if (needs_restart) {
-                    request->send(200, "application/json", "{\"status\":\"ok\",\"restart_hint\":\"Orientation changed. Restart required.\"}");
+                if (orientation_changed) {
+                    request->send(200, "application/json",
+                        "{\"status\":\"ok\",\"restart_hint\":\"Ausrichtung geändert – Neustart erforderlich.\"}");
                 } else {
                     request->send(200, "application/json", "{\"status\":\"ok\"}");
                 }
-                Serial.println("[Web] Config updated via API");
             }
         }
     );
 
+    // --------------------------------------------------------
+    // POST /api/token — receive OAuth token from terminal
+    // Body: { "access_token": "...", "refresh_token": "...", "expires_at": 1234567890 }
+    // --------------------------------------------------------
+    server.on("/api/token", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        nullptr,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            if (index == 0 && len == total) {
+                JsonDocument doc;
+                DeserializationError err = deserializeJson(doc, data, len);
+                if (err) {
+                    request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+                    return;
+                }
+
+                if (!doc["access_token"].is<const char*>()) {
+                    request->send(400, "application/json", "{\"error\":\"access_token required\"}");
+                    return;
+                }
+
+                strlcpy(g_config.access_token,
+                        doc["access_token"].as<const char*>(),
+                        sizeof(g_config.access_token));
+
+                if (doc["refresh_token"].is<const char*>()) {
+                    strlcpy(g_config.refresh_token,
+                            doc["refresh_token"].as<const char*>(),
+                            sizeof(g_config.refresh_token));
+                }
+
+                if (doc["expires_at"].is<unsigned long>()) {
+                    g_config.expires_at = (uint32_t)doc["expires_at"].as<unsigned long>();
+                }
+
+                config_save(g_config);
+                Serial.println("[Web] OAuth token updated via /api/token");
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
+            }
+        }
+    );
+
+    // --------------------------------------------------------
     // GET /api/status
+    // --------------------------------------------------------
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
-        doc["ip"]        = wifi_get_ip();
-        doc["ssid"]      = wifi_get_ssid();
-        doc["rssi"]      = wifi_get_rssi();
-        doc["free_heap"] = ESP.getFreeHeap();
-        doc["min_heap"]  = ESP.getMinFreeHeap();
-        doc["uptime"]    = getUptime();
-        doc["time"]      = ntp_get_datetime();
+        doc["ip"]         = wifi_get_ip();
+        doc["ssid"]       = wifi_get_ssid();
+        doc["rssi"]       = wifi_get_rssi();
+        doc["free_heap"]  = ESP.getFreeHeap();
+        doc["min_heap"]   = ESP.getMinFreeHeap();
+        doc["uptime"]     = getUptime();
+        doc["time"]       = ntp_get_datetime();
         doc["time_synced"] = ntp_is_synced();
 
         String json;
@@ -348,60 +521,32 @@ void webserver_init() {
         request->send(200, "application/json", json);
     });
 
-    // GET /api/usage — return current MonitorState as JSON
+    // --------------------------------------------------------
+    // GET /api/usage — current MonitorState as JSON
+    // --------------------------------------------------------
     server.on("/api/usage", HTTP_GET, [](AsyncWebServerRequest *request) {
         const MonitorState &s = api_manager_get_state();
         JsonDocument doc;
 
-        // Status
-        doc["status"]          = s.status;
-        doc["is_fetching"]     = s.is_fetching;
-        doc["total_today_cost"] = s.total_today_cost;
-        doc["total_month_cost"] = s.total_month_cost;
-
-        // Helper lambda to serialize UsageData
-        auto serializeUsage = [](JsonObject obj, const UsageData &u) {
-            obj["valid"]       = u.valid;
-            obj["last_fetch"]  = u.last_fetch;
-            obj["error"]       = u.error;
-
-            JsonObject today = obj["today"].to<JsonObject>();
-            today["input_tokens"]  = u.today_input_tokens;
-            today["output_tokens"] = u.today_output_tokens;
-            today["cached_tokens"] = u.today_cached_tokens;
-            today["requests"]      = u.today_requests;
-            today["cost"]          = u.today_cost;
-
-            JsonObject month = obj["month"].to<JsonObject>();
-            month["input_tokens"]  = u.month_input_tokens;
-            month["output_tokens"] = u.month_output_tokens;
-            month["cached_tokens"] = u.month_cached_tokens;
-            month["requests"]      = u.month_requests;
-            month["cost"]          = u.month_cost;
-
-            JsonArray models = obj["models"].to<JsonArray>();
-            for (uint8_t i = 0; i < u.model_count; i++) {
-                JsonObject m = models.add<JsonObject>();
-                m["model"]        = u.models[i].model;
-                m["input_tokens"] = u.models[i].input_tokens;
-                m["output_tokens"] = u.models[i].output_tokens;
-                m["cached_tokens"] = u.models[i].cached_tokens;
-                m["requests"]     = u.models[i].requests;
-            }
-        };
-
-        JsonObject anthropic = doc["anthropic"].to<JsonObject>();
-        serializeUsage(anthropic, s.anthropic);
-
-        JsonObject openai = doc["openai"].to<JsonObject>();
-        serializeUsage(openai, s.openai);
+        doc["status"]        = s.status;
+        doc["is_fetching"]   = s.is_fetching;
+        doc["token_valid"]   = s.token_valid;
+        doc["session_pct"]   = s.usage.five_hour_utilization;
+        doc["session_reset"] = s.usage.five_hour_resets_at;
+        doc["weekly_pct"]    = s.usage.seven_day_utilization;
+        doc["weekly_reset"]  = s.usage.seven_day_resets_at;
+        doc["valid"]         = s.usage.valid;
+        doc["last_fetch"]    = s.usage.last_fetch;
+        doc["error"]         = s.usage.error;
 
         String json;
         serializeJson(doc, json);
         request->send(200, "application/json", json);
     });
 
+    // --------------------------------------------------------
     // POST /api/restart
+    // --------------------------------------------------------
     server.on("/api/restart", HTTP_POST, [](AsyncWebServerRequest *request) {
         request->send(200, "application/json", "{\"status\":\"restarting\"}");
         delay(500);

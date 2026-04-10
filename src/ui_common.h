@@ -12,11 +12,15 @@
 #define UI_COLOR_HEADER_BG     lv_color_hex(0x16213E)
 #define UI_COLOR_ACCENT        lv_color_hex(0xE94560)
 #define UI_COLOR_TEXT          lv_color_hex(0xFFFFFF)
-#define UI_COLOR_TEXT_SEC      lv_color_hex(0xAAAAAA)
+#define UI_COLOR_TEXT_SEC      lv_color_hex(0x9090B0)
 #define UI_COLOR_TEXT_DIM      lv_color_hex(0x666666)
 #define UI_COLOR_ANTHROPIC     lv_color_hex(0xE94560)
 #define UI_COLOR_OPENAI        lv_color_hex(0x0ACF83)
-#define UI_COLOR_BAR_BG        lv_color_hex(0x0F3460)
+#define UI_COLOR_BAR_BG        lv_color_hex(0x2A2A4A)
+#define UI_COLOR_BAR_GREEN     lv_color_hex(0x27AE60)
+#define UI_COLOR_BAR_YELLOW    lv_color_hex(0xF1C40F)
+#define UI_COLOR_BAR_ORANGE    lv_color_hex(0xE67E22)
+#define UI_COLOR_BAR_RED       lv_color_hex(0xE74C3C)
 #define UI_COLOR_SUCCESS       lv_color_hex(0x27AE60)
 #define UI_COLOR_ERROR         lv_color_hex(0xE74C3C)
 #define UI_COLOR_FETCHING      lv_color_hex(0xF1C40F)
@@ -34,6 +38,15 @@ void format_cost(float cost, char *buf, size_t len);
 
 // Format "time ago" from millis timestamp: "just now", "2m ago", "15m ago"
 void format_time_ago(unsigned long last_fetch_ms, char *buf, size_t len);
+
+// Format utilization float to percentage string: 0.73 -> "73%"
+void format_percentage(float utilization, char *buf, size_t len);
+
+// Format countdown from reset epoch to "2h 14m" or "4d 12h"
+void format_countdown(time_t reset_epoch, char *buf, size_t len);
+
+// Return bar color based on utilization level
+lv_color_t ui_bar_color(float utilization);
 
 // ============================================================
 // UI component builders
