@@ -9,6 +9,7 @@
 #include "config.h"
 #include "wifi_setup.h"
 #include "ntp_time.h"
+#include "api_manager.h"
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -310,6 +311,59 @@ void webserver_init() {
         doc["uptime"]    = getUptime();
         doc["time"]      = ntp_get_datetime();
         doc["time_synced"] = ntp_is_synced();
+
+        String json;
+        serializeJson(doc, json);
+        request->send(200, "application/json", json);
+    });
+
+    // GET /api/usage — return current MonitorState as JSON
+    server.on("/api/usage", HTTP_GET, [](AsyncWebServerRequest *request) {
+        const MonitorState &s = api_manager_get_state();
+        JsonDocument doc;
+
+        // Status
+        doc["status"]          = s.status;
+        doc["is_fetching"]     = s.is_fetching;
+        doc["total_today_cost"] = s.total_today_cost;
+        doc["total_month_cost"] = s.total_month_cost;
+
+        // Helper lambda to serialize UsageData
+        auto serializeUsage = [](JsonObject obj, const UsageData &u) {
+            obj["valid"]       = u.valid;
+            obj["last_fetch"]  = u.last_fetch;
+            obj["error"]       = u.error;
+
+            JsonObject today = obj["today"].to<JsonObject>();
+            today["input_tokens"]  = u.today_input_tokens;
+            today["output_tokens"] = u.today_output_tokens;
+            today["cached_tokens"] = u.today_cached_tokens;
+            today["requests"]      = u.today_requests;
+            today["cost"]          = u.today_cost;
+
+            JsonObject month = obj["month"].to<JsonObject>();
+            month["input_tokens"]  = u.month_input_tokens;
+            month["output_tokens"] = u.month_output_tokens;
+            month["cached_tokens"] = u.month_cached_tokens;
+            month["requests"]      = u.month_requests;
+            month["cost"]          = u.month_cost;
+
+            JsonArray models = obj["models"].to<JsonArray>();
+            for (uint8_t i = 0; i < u.model_count; i++) {
+                JsonObject m = models.add<JsonObject>();
+                m["model"]        = u.models[i].model;
+                m["input_tokens"] = u.models[i].input_tokens;
+                m["output_tokens"] = u.models[i].output_tokens;
+                m["cached_tokens"] = u.models[i].cached_tokens;
+                m["requests"]     = u.models[i].requests;
+            }
+        };
+
+        JsonObject anthropic = doc["anthropic"].to<JsonObject>();
+        serializeUsage(anthropic, s.anthropic);
+
+        JsonObject openai = doc["openai"].to<JsonObject>();
+        serializeUsage(openai, s.openai);
 
         String json;
         serializeJson(doc, json);

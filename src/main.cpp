@@ -1,6 +1,6 @@
 /**
  * AI Usage Monitor - ESP32-2432S028R (CYD 2.8")
- * Phase 2: WiFi Setup + Web Config + NTP + QR Code
+ * Phase 3: WiFi Setup + Web Config + NTP + QR Code + API Clients
  *
  * Boot sequence:
  * 1. Init display + touch + LVGL
@@ -8,8 +8,9 @@
  * 3. WiFi setup (stored creds or AP portal)
  * 4. NTP time sync
  * 5. Start AsyncWebServer
- * 6. Show QR code for config URL (5 seconds)
- * 7. Switch to main dashboard
+ * 6. Show QR code for config URL (8 seconds)
+ * 7. Init API manager + first fetch
+ * 8. Switch to main dashboard
  */
 
 #include <Arduino.h>
@@ -22,6 +23,7 @@
 #include "ntp_time.h"
 #include "web_server.h"
 #include "qr_display.h"
+#include "api_manager.h"
 
 // ============================================================
 // Globals
@@ -164,7 +166,7 @@ static void create_dashboard_screen(void) {
 
     // Placeholder text
     lv_obj_t *placeholder = lv_label_create(scr);
-    lv_label_set_text(placeholder, "Dashboard coming in Phase 3");
+    lv_label_set_text(placeholder, "API clients active — UI in Phase 4");
     lv_obj_set_style_text_color(placeholder, lv_color_hex(COLOR_TEXT_DIM), LV_PART_MAIN);
     lv_obj_set_style_text_font(placeholder, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(placeholder, LV_ALIGN_BOTTOM_MID, 0, -20);
@@ -250,6 +252,10 @@ void setup()
         qr_display_show(url);
         qr_show_time = millis();
 
+        // --- Init API Manager ---
+        update_boot_status("Init API manager...");
+        api_manager_init();
+
         Serial.printf("[System] Config URL: %s\n", url.c_str());
         Serial.printf("[System] mDNS: http://%s.local/\n", MDNS_HOSTNAME);
     } else {
@@ -280,6 +286,9 @@ void loop()
 
     // WiFi reconnect check (every 10 seconds internally)
     wifi_check_connection();
+
+    // API polling (checks interval internally)
+    api_manager_tick();
 
     // Periodic heap monitoring (every 60 seconds)
     if (millis() - lastHeapLog > 60000) {
