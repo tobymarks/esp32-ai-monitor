@@ -278,6 +278,12 @@ void setup()
         qr_display_show(url);
         qr_show_time = millis();
 
+        // If QR failed to render (canvas allocation), skip directly to main UI
+        if (!qr_display_is_visible()) {
+            Serial.println("[Boot] QR display skipped (memory), entering main UI directly");
+            enter_main_ui();
+        }
+
         // --- Init API Manager ---
         api_manager_init();
 

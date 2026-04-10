@@ -30,12 +30,11 @@ static void draw_qr_on_screen(lv_obj_t *parent, const String &url) {
     qrcode_initText(&qrcode, qrcodeData, qr_version, ECC_LOW, url.c_str());
 
     uint8_t modules = qrcode.size;  // 33 for version 4
-    uint8_t px_size = 160 / modules;
-    if (px_size < 2) px_size = 2;
+    uint8_t px_size = 2;            // Fixed 2px per module to keep canvas small (~5KB)
     uint16_t qr_px = modules * px_size;
-    uint16_t canvas_size = qr_px + 16;  // 8px padding each side
+    uint16_t canvas_size = qr_px + 8;  // 4px padding each side
 
-    // Allocate canvas buffer on PSRAM or heap
+    // Allocate canvas buffer on heap (~5KB for 74x74 @ 16bit)
     uint32_t buf_size = canvas_size * canvas_size;
     canvas_buf = (lv_color_t *)heap_caps_malloc(buf_size * sizeof(lv_color_t), MALLOC_CAP_DEFAULT);
     if (canvas_buf == nullptr) {
@@ -67,8 +66,8 @@ static void draw_qr_on_screen(lv_obj_t *parent, const String &url) {
         for (uint8_t x = 0; x < modules; x++) {
             if (qrcode_getModule(&qrcode, x, y)) {
                 lv_area_t area;
-                area.x1 = 8 + x * px_size;
-                area.y1 = 8 + y * px_size;
+                area.x1 = 4 + x * px_size;
+                area.y1 = 4 + y * px_size;
                 area.x2 = area.x1 + px_size - 1;
                 area.y2 = area.y1 + px_size - 1;
                 lv_draw_rect(&layer, &rect_dsc, &area);
