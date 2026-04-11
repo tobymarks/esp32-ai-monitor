@@ -19,8 +19,9 @@
 extern AppConfig g_config;
 
 // ============================================================
-// State
+// State  (accessed from main loop AND AsyncWebServer task)
 // ============================================================
+static portMUX_TYPE state_mux = portMUX_INITIALIZER_UNLOCKED;
 static MonitorState state;
 static unsigned long last_fetch_time = 0;
 static bool initialized = false;
@@ -121,6 +122,29 @@ void api_manager_tick() {
 // ============================================================
 // Get state
 // ============================================================
-const MonitorState& api_manager_get_state() {
-    return state;
+MonitorState api_manager_get_state() {
+    portENTER_CRITICAL(&state_mux);
+    MonitorState copy = state;
+    portEXIT_CRITICAL(&state_mux);
+    return copy;
+}
+
+// ============================================================
+// Push usage (from companion app)
+// ============================================================
+void api_manager_push_usage(const UsageData &pushed) {
+    portENTER_CRITICAL(&state_mux);
+    memcpy(&state.usage, &pushed, sizeof(UsageData));
+    state.usage.valid = true;
+    state.usage.last_fetch = millis();
+    state.token_valid = true;
+    state.is_fetching = false;
+    strlcpy(state.status, "OK (pushed)", sizeof(state.status));
+    last_fetch_time = millis();
+    first_fetch_done = true;
+    last_cycle_rate_limited = false;
+    portEXIT_CRITICAL(&state_mux);
+    Serial.printf("[APIManager] Usage pushed — Session: %.0f%% | Weekly: %.0f%%\n",
+                  pushed.five_hour_utilization * 100.0f,
+                  pushed.seven_day_utilization * 100.0f);
 }

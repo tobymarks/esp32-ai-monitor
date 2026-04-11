@@ -73,6 +73,10 @@ static const unsigned long UI_UPDATE_INTERVAL = 1000;  // 1s interval for live c
 // Heap monitoring
 static unsigned long lastHeapLog = 0;
 
+// Loop debug counter
+static unsigned long loopCount = 0;
+static unsigned long lastLoopLog = 0;
+
 // External config (defined in web_server.cpp)
 extern AppConfig g_config;
 
@@ -162,25 +166,19 @@ static void enter_main_ui(void) {
     // LVGL's default screen is still clean/empty.
     // Creating and loading a new LVGL screen will overwrite the TFT content.
 
-    if (has_valid_token()) {
-        ui_dashboard_create();
-        // Direct screen load — no fade animation from white default screen
-        lv_obj_t *dash_scr = ui_dashboard_get_screen();
-        if (dash_scr) {
-            lv_screen_load(dash_scr);
-        }
-        dashboard_active = true;
-
-        const MonitorState &state = api_manager_get_state();
-        ui_dashboard_update(state);
-
-        Serial.println("[UI] Dashboard active");
-    } else {
-        ui_setup_create();
-        dashboard_active = false;
-
-        Serial.println("[UI] Setup screen — kein Token konfiguriert");
+    // Always show dashboard — data arrives via companion app push
+    // or via self-polling if a token is configured.
+    ui_dashboard_create();
+    lv_obj_t *dash_scr = ui_dashboard_get_screen();
+    if (dash_scr) {
+        lv_screen_load(dash_scr);
     }
+    dashboard_active = true;
+
+    MonitorState initState = api_manager_get_state();
+    ui_dashboard_update(initState);
+
+    Serial.println("[UI] Dashboard active (waiting for data)");
 
     // Force LVGL to render the new screen immediately
     lv_refr_now(NULL);
@@ -240,7 +238,11 @@ void setup()
 
     // --- LVGL init ---
     lv_init();
-    Serial.println("[LVGL] Core initialized");
+
+    // LVGL v9: Register tick callback (replaces removed LV_TICK_CUSTOM macros).
+    // Without this, lv_tick_get() always returns 0 and LVGL never refreshes.
+    lv_tick_set_cb([]() -> uint32_t { return (uint32_t)millis(); });
+    Serial.println("[LVGL] Core initialized + tick callback registered");
 
     // Create display with runtime dimensions
     lv_disp = lv_display_create(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -338,21 +340,31 @@ void loop()
 
     // Update dashboard UI
     if (dashboard_active) {
-        const MonitorState &state = api_manager_get_state();
+        MonitorState curState = api_manager_get_state();
 
         // Update UI when fetch just completed (state changed from fetching to idle)
         static bool was_fetching = false;
-        if (was_fetching && !state.is_fetching) {
-            ui_dashboard_update(state);
+        if (was_fetching && !curState.is_fetching) {
+            ui_dashboard_update(curState);
         }
-        was_fetching = state.is_fetching;
+        was_fetching = curState.is_fetching;
 
         // Periodic UI refresh (time-ago counter, clock, status dot)
         unsigned long now = millis();
         if (now - last_ui_update >= UI_UPDATE_INTERVAL) {
             last_ui_update = now;
-            ui_dashboard_update(state);
+            ui_dashboard_update(curState);
         }
+    }
+
+    // Loop debug + heap monitoring (every 10 seconds)
+    loopCount++;
+    if (millis() - lastLoopLog >= 10000) {
+        unsigned long elapsed = millis() - lastLoopLog;
+        Serial.printf("[Loop] %lu iterations in %lu ms | tick=%u | heap=%u\n",
+                      loopCount, elapsed, (unsigned)lv_tick_get(), ESP.getFreeHeap());
+        loopCount = 0;
+        lastLoopLog = millis();
     }
 
     // Periodic heap monitoring (every 60 seconds)

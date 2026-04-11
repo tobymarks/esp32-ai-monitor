@@ -10,6 +10,7 @@
 #include "wifi_setup.h"
 #include "ntp_time.h"
 #include "api_manager.h"
+#include "api_common.h"
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -852,17 +853,66 @@ void webserver_init() {
                 }
 
                 const char *token = doc["access_token"].as<const char*>();
-                if (strlen(token) < 10) {
-                    request->send(400, "application/json", "{\"error\":\"Token too short\"}");
-                    return;
-                }
-
                 strlcpy(g_config.access_token, token, sizeof(g_config.access_token));
                 config_save(g_config);
                 Serial.printf("[Web] Token pushed (%d chars)\n", (int)strlen(token));
 
                 // Re-init API manager to trigger immediate fetch
                 api_manager_init();
+
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
+            }
+        }
+    );
+
+    // --------------------------------------------------------
+    // POST /api/usage-push — receive pre-fetched usage data from companion app
+    // Body: { "five_hour": { "utilization": 0.42, "resets_at": "2026-..." },
+    //         "seven_day": { "utilization": 0.15, "resets_at": "2026-..." },
+    //         "extra_usage": { "is_enabled": false, ... } }
+    // --------------------------------------------------------
+    server.on("/api/usage-push", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        nullptr,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            if (index == 0 && len == total) {
+                JsonDocument doc;
+                DeserializationError err = deserializeJson(doc, data, len);
+                if (err) {
+                    request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+                    return;
+                }
+
+                UsageData usage;
+                usage_data_clear(usage);
+
+                // Parse five_hour
+                usage.five_hour_utilization = doc["five_hour"]["utilization"] | 0.0f;
+                const char *fh_reset = doc["five_hour"]["resets_at"] | "";
+                strlcpy(usage.five_hour_resets_at, fh_reset, sizeof(usage.five_hour_resets_at));
+                usage.five_hour_reset_epoch = iso8601_to_epoch(fh_reset);
+
+                // Parse seven_day
+                usage.seven_day_utilization = doc["seven_day"]["utilization"] | 0.0f;
+                const char *sd_reset = doc["seven_day"]["resets_at"] | "";
+                strlcpy(usage.seven_day_resets_at, sd_reset, sizeof(usage.seven_day_resets_at));
+                usage.seven_day_reset_epoch = iso8601_to_epoch(sd_reset);
+
+                // Parse extra_usage
+                usage.has_extra_usage     = doc["extra_usage"]["is_enabled"] | false;
+                usage.extra_monthly_limit = doc["extra_usage"]["monthly_limit"] | 0.0f;
+                usage.extra_used_credits  = doc["extra_usage"]["used_credits"] | 0.0f;
+                usage.extra_utilization   = doc["extra_usage"]["utilization"] | 0.0f;
+
+                usage.valid = true;
+                usage.last_fetch = millis();
+                usage.error[0] = '\0';
+
+                api_manager_push_usage(usage);
+
+                Serial.printf("[Web] Usage pushed — Session: %.0f%% | Weekly: %.0f%%\n",
+                              usage.five_hour_utilization * 100.0f,
+                              usage.seven_day_utilization * 100.0f);
 
                 request->send(200, "application/json", "{\"status\":\"ok\"}");
             }
@@ -893,7 +943,7 @@ void webserver_init() {
     // GET /api/usage — current MonitorState as JSON
     // --------------------------------------------------------
     server.on("/api/usage", HTTP_GET, [](AsyncWebServerRequest *request) {
-        const MonitorState &s = api_manager_get_state();
+        MonitorState s = api_manager_get_state();
         JsonDocument doc;
 
         doc["status"]        = s.status;
