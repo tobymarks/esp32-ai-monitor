@@ -288,11 +288,13 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_label_set_text(lbl_provider, state.provider == 1 ? "OPENAI" : "CLAUDE");
     }
 
-    // ---- Clock ----
+    // ---- Clock (update every call — uses HH:MM from NTP) ----
     if (lbl_time != nullptr) {
-        String t = ntp_get_time();
-        if (t.length() >= 5) {
-            lv_label_set_text(lbl_time, t.substring(0, 5).c_str());
+        struct tm timeinfo;
+        if (getLocalTime(&timeinfo, 0)) {
+            char tbuf[6];
+            strftime(tbuf, sizeof(tbuf), "%H:%M", &timeinfo);
+            lv_label_set_text(lbl_time, tbuf);
         }
     }
 
