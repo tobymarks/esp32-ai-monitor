@@ -6,7 +6,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "0.7.4"
+#define APP_VERSION "0.9.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---
@@ -79,9 +79,8 @@ extern uint16_t SCREEN_HEIGHT;
 // ============================================================
 // OAuth / API endpoints
 // ============================================================
-#define CLAUDE_OAUTH_CLIENT_ID  "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-#define CLAUDE_USAGE_ENDPOINT   "api.anthropic.com"
-#define CLAUDE_TOKEN_ENDPOINT   "platform.claude.com"
+#define CLAUDE_USAGE_ENDPOINT   "https://api.anthropic.com/api/oauth/usage"
+#define CLAUDE_OAUTH_BETA       "oauth-2025-04-20"
 
 // ============================================================
 // Orientation options
@@ -93,9 +92,7 @@ extern uint16_t SCREEN_HEIGHT;
 // Application Configuration Struct
 // ============================================================
 struct AppConfig {
-    char     access_token[512];       // OAuth access token
-    char     refresh_token[512];      // OAuth refresh token
-    uint32_t expires_at;              // Unix epoch when access token expires
+    char     access_token[512];       // OAuth access token (pushed from Mac, read-only)
     uint8_t  provider;                // PROVIDER_CLAUDE(0) or PROVIDER_OPENAI(1)
     uint16_t poll_interval_sec;       // Default 120
     uint8_t  orientation;             // ORIENTATION_PORTRAIT(0) or ORIENTATION_LANDSCAPE(1)

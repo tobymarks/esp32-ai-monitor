@@ -10,7 +10,6 @@
 #include "wifi_setup.h"
 #include "ntp_time.h"
 #include "api_manager.h"
-#include "api_claude.h"
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -139,24 +138,18 @@ static String getUptime() {
 }
 
 // ============================================================
-// Token status helpers
+// Token status helper
 // ============================================================
 static String getTokenStatus() {
     if (strlen(g_config.access_token) == 0) return "missing";
-    if (g_config.expires_at == 0) return "valid";  // no expiry info → assume valid
-    uint32_t now_epoch = (uint32_t)(time(nullptr));
-    if (now_epoch > 0 && now_epoch >= g_config.expires_at) return "expired";
-    return "valid";
+    return "active";
 }
 
-static String getTokenExpires() {
-    if (g_config.expires_at == 0 || strlen(g_config.access_token) == 0) return "";
-    time_t t = (time_t)g_config.expires_at;
-    struct tm tm_info;
-    gmtime_r(&t, &tm_info);
-    char buf[32];
-    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_info);
-    return String(buf);
+// Mask token for display: first 10 + last 4 chars
+static String getMaskedToken() {
+    if (strlen(g_config.access_token) < 16) return "***";
+    String tok = String(g_config.access_token);
+    return tok.substring(0, 10) + "..." + tok.substring(tok.length() - 4);
 }
 
 // ============================================================
@@ -290,7 +283,7 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#171717;c
       </div>
     </div>
 
-    <!-- Token Setup -->
+    <!-- Token Push -->
     <div class="card">
       <div class="card-title">OAuth Token</div>
 
@@ -301,28 +294,23 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#171717;c
 
       <div class="field">
         <div class="hint" style="color:#a3a3a3;font-size:.8em;line-height:1.5;margin-bottom:8px">
-          <strong style="color:#e5e5e5">Voraussetzung:</strong> <a href="https://claude.ai/download" target="_blank" rel="noopener" style="color:#3b82f6">Claude Code CLI</a> muss installiert und eingeloggt sein. Token wird automatisch im macOS Keychain gespeichert.
+          Token wird automatisch alle 30 Min. vom Mac gepusht. ESP32 refresht nie selbst — kein Konflikt mit Claude Code CLI.
         </div>
       </div>
 
       <div class="code-section">
-        <div class="code-label">Token übertragen – Terminal-Befehl:</div>
-        <div class="tabs">
-          <button type="button" class="tab active" onclick="switchTab(this,'tab-keychain')">macOS Keychain</button>
-          <button type="button" class="tab" onclick="switchTab(this,'tab-file')">~/.credentials.json</button>
+        <div class="code-label">Einmaliger Push — Terminal:</div>
+        <div class="code-wrap">
+          <code id="cmd-push">security find-generic-password -s 'Claude Code-credentials' -w | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps({'access_token':d['claudeAiOauth']['accessToken']}))" | curl -s -X POST -H 'Content-Type: application/json' -d @- http://ai-monitor.local/api/token</code>
+          <button type="button" class="copy-btn" onclick="copyCode('cmd-push',this)">Kopieren</button>
         </div>
-        <div class="tab-content active" id="tab-keychain">
-          <div class="code-wrap">
-            <code id="cmd-keychain">security find-generic-password -s 'Claude Code-credentials' -w | jq -c '{access_token:.claudeAiOauth.accessToken,refresh_token:.claudeAiOauth.refreshToken,expires_at:.claudeAiOauth.expiresAt}' | curl -s -X POST -H 'Content-Type: application/json' -d @- http://ai-monitor.local/api/token</code>
-            <button type="button" class="copy-btn" onclick="copyCode('cmd-keychain',this)">Kopieren</button>
-          </div>
+
+        <div class="code-label" style="margin-top:12px">Automatischer Cronjob (alle 30 Min.):</div>
+        <div class="code-wrap">
+          <code id="cmd-cron">crontab -l 2>/dev/null; echo "*/30 * * * * security find-generic-password -s 'Claude Code-credentials' -w | python3 -c \"import sys,json; d=json.load(sys.stdin); print(json.dumps({'access_token':d['claudeAiOauth']['accessToken']}))\" | curl -s -X POST -H 'Content-Type: application/json' -d @- http://ai-monitor.local/api/token > /dev/null 2>&1") | crontab -</code>
+          <button type="button" class="copy-btn" onclick="copyCode('cmd-cron',this)">Kopieren</button>
         </div>
-        <div class="tab-content" id="tab-file">
-          <div class="code-wrap">
-            <code id="cmd-file">jq -c '{access_token:.claudeAiOauth.accessToken,refresh_token:.claudeAiOauth.refreshToken,expires_at:.claudeAiOauth.expiresAt}' ~/.claude/.credentials.json | curl -s -X POST -H 'Content-Type: application/json' -d @- http://ai-monitor.local/api/token</code>
-            <button type="button" class="copy-btn" onclick="copyCode('cmd-file',this)">Kopieren</button>
-          </div>
-        </div>
+        <div class="hint" style="margin-top:6px">Cronjob einrichten: Befehl oben ins Terminal kopieren. Entfernen: <code style="background:#111;padding:1px 5px;border-radius:3px;font-size:.9em">crontab -e</code></div>
       </div>
     </div>
 
@@ -425,13 +413,12 @@ async function loadConfig() {
     // Token status
     const dot = document.getElementById('token-dot');
     const txt = document.getElementById('token-text');
-    dot.className = 'status-dot ' + (d.token_status || 'missing');
-    if (d.token_status === 'valid') {
-      txt.innerHTML = '<strong>Token: Gültig</strong>' + (d.token_expires ? ' · Läuft ab: ' + d.token_expires : '');
-    } else if (d.token_status === 'expired') {
-      txt.innerHTML = '<strong>Token: Abgelaufen</strong> · Bitte neu übertragen';
+    const ts = d.token_status || 'missing';
+    dot.className = 'status-dot ' + (ts === 'active' ? 'valid' : 'missing');
+    if (ts === 'active') {
+      txt.innerHTML = '<strong>Token aktiv</strong>' + (d.token_masked ? ' · ' + d.token_masked : '');
     } else {
-      txt.innerHTML = '<strong>Kein Token konfiguriert</strong> · Befehl unten ausführen';
+      txt.innerHTML = '<strong>Kein Token</strong> · Push-Befehl unten ausfuehren';
     }
   } catch(e) {}
 }
@@ -600,7 +587,7 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#171717;c
     <div class="hint">
       Erstelle die .bin Datei mit: <code style="background:#111;padding:2px 6px;border-radius:4px">pio run</code><br>
       Datei liegt unter <code style="background:#111;padding:2px 6px;border-radius:4px">.pio/build/esp32dev/firmware.bin</code><br>
-      NVS (WiFi + Token) bleibt bei OTA erhalten.
+      NVS (WiFi + API Key) bleibt bei OTA erhalten.
     </div>
   </div>
 </div>
@@ -789,7 +776,7 @@ void webserver_init() {
         doc["poll_interval"] = g_config.poll_interval_sec;
         doc["orientation"]   = g_config.orientation;
         doc["token_status"]  = getTokenStatus();
-        doc["token_expires"] = getTokenExpires();
+        doc["token_masked"]  = getMaskedToken();
 
         String json;
         serializeJson(doc, json);
@@ -843,8 +830,9 @@ void webserver_init() {
     );
 
     // --------------------------------------------------------
-    // POST /api/token — receive OAuth token from terminal
-    // Body: { "access_token": "...", "refresh_token": "...", "expires_at": 1234567890 }
+    // POST /api/token — receive access token push from Mac
+    // Body: { "access_token": "..." }
+    // ESP32 never refreshes — just stores and uses for GET /api/oauth/usage
     // --------------------------------------------------------
     server.on("/api/token", HTTP_POST,
         [](AsyncWebServerRequest *request) {},
@@ -863,36 +851,20 @@ void webserver_init() {
                     return;
                 }
 
-                strlcpy(g_config.access_token,
-                        doc["access_token"].as<const char*>(),
-                        sizeof(g_config.access_token));
-
-                if (doc["refresh_token"].is<const char*>()) {
-                    strlcpy(g_config.refresh_token,
-                            doc["refresh_token"].as<const char*>(),
-                            sizeof(g_config.refresh_token));
+                const char *token = doc["access_token"].as<const char*>();
+                if (strlen(token) < 10) {
+                    request->send(400, "application/json", "{\"error\":\"Token too short\"}");
+                    return;
                 }
 
-                if (doc["expires_at"].is<unsigned long>()) {
-                    g_config.expires_at = (uint32_t)doc["expires_at"].as<unsigned long>();
-                }
-
+                strlcpy(g_config.access_token, token, sizeof(g_config.access_token));
                 config_save(g_config);
-                Serial.println("[Web] OAuth token updated via /api/token");
+                Serial.printf("[Web] Token pushed (%d chars)\n", (int)strlen(token));
 
-                // Immediately refresh to establish independent token chain
-                bool refreshed = claude_refresh_token();
-                if (refreshed) {
-                    config_save(g_config);
-                    Serial.println("[Web] Token chain established — ESP32 has independent tokens");
-                    request->send(200, "application/json",
-                        "{\"status\":\"ok\",\"token_chain\":\"independent\"}");
-                } else {
-                    Serial.println("[Web] WARNING: Refresh failed — using original token");
-                    request->send(200, "application/json",
-                        "{\"status\":\"ok\",\"token_chain\":\"shared\","
-                        "\"warning\":\"Refresh failed — token may expire\"}");
-                }
+                // Re-init API manager to trigger immediate fetch
+                api_manager_init();
+
+                request->send(200, "application/json", "{\"status\":\"ok\"}");
             }
         }
     );

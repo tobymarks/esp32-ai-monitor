@@ -3,10 +3,10 @@
 
 #include "api_common.h"
 
-bool claude_refresh_token();
+// Fetch usage data via OAuth /api/oauth/usage (read-only, no token refresh)
 bool claude_fetch_usage(UsageData &data);
 
-// Returns true if the last fetch attempt received a 429 (rate limited)
+// Returns true if the last fetch attempt received a 429
 bool claude_was_rate_limited();
 
 #endif

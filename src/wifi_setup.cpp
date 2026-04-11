@@ -2,9 +2,9 @@
  * WiFi Setup - WiFiManager + NVS Config Storage + mDNS
  *
  * Handles first-boot AP config portal (WLAN-only),
- * stores OAuth tokens and settings in NVS (Preferences),
+ * stores API key and settings in NVS (Preferences),
  * and sets up mDNS for easy access.
- * Token setup runs via web config portal at /api/token.
+ * API key setup runs via web config portal at /api/key.
  */
 
 #include "wifi_setup.h"
@@ -28,9 +28,7 @@ static char buf_poll_interval[8] = "120";
 void config_load(AppConfig &cfg) {
     prefs.begin(NVS_NAMESPACE, true);  // read-only
 
-    strlcpy(cfg.access_token,  prefs.getString("access_tkn", "").c_str(),  sizeof(cfg.access_token));
-    strlcpy(cfg.refresh_token, prefs.getString("refresh_tkn", "").c_str(), sizeof(cfg.refresh_token));
-    cfg.expires_at        = prefs.getUInt("expires_at", 0);
+    strlcpy(cfg.access_token, prefs.getString("access_tkn", "").c_str(), sizeof(cfg.access_token));
     cfg.provider          = prefs.getUChar("provider", PROVIDER_CLAUDE);
     cfg.poll_interval_sec = prefs.getUInt("poll_sec", DEFAULT_POLL_INTERVAL_SEC);
     cfg.orientation       = prefs.getUChar("orient", ORIENTATION_PORTRAIT);
@@ -39,8 +37,6 @@ void config_load(AppConfig &cfg) {
 
     Serial.println("[Config] Loaded from NVS");
     Serial.printf("[Config] Access token: %s\n", strlen(cfg.access_token) > 0 ? "(set)" : "(empty)");
-    Serial.printf("[Config] Refresh token: %s\n", strlen(cfg.refresh_token) > 0 ? "(set)" : "(empty)");
-    Serial.printf("[Config] Expires at: %u\n", cfg.expires_at);
     Serial.printf("[Config] Provider: %s\n", cfg.provider == PROVIDER_OPENAI ? "OpenAI" : "Claude");
     Serial.printf("[Config] Poll interval: %u sec\n", cfg.poll_interval_sec);
     Serial.printf("[Config] Orientation: %s\n", cfg.orientation == ORIENTATION_LANDSCAPE ? "landscape" : "portrait");
@@ -53,8 +49,6 @@ void config_save(const AppConfig &cfg) {
     prefs.begin(NVS_NAMESPACE, false);  // read-write
 
     prefs.putString("access_tkn",  cfg.access_token);
-    prefs.putString("refresh_tkn", cfg.refresh_token);
-    prefs.putUInt("expires_at",    cfg.expires_at);
     prefs.putUChar("provider",     cfg.provider);
     prefs.putUInt("poll_sec",      cfg.poll_interval_sec);
     prefs.putUChar("orient",       cfg.orientation);
@@ -97,7 +91,7 @@ bool wifi_setup_init() {
                                IPAddress(255, 255, 255, 0));
 
         // WiFiManager fragt nur WLAN-Credentials ab.
-        // Token-Setup läuft ausschliesslich über das Web-Config-Portal (/api/token).
+        // Token-Push läuft über das Web-Config-Portal (/api/token).
         WiFiManagerParameter param_header("<h2>AI Monitor – WLAN Setup</h2><p style='color:#aaa;font-size:.85em'>Token-Konfiguration nach der Verbindung unter http://ai-monitor.local/</p>");
         WiFiManagerParameter param_settings_header("<h3>Settings</h3>");
         WiFiManagerParameter p_poll("poll_sec", "Poll Interval (Sekunden)", buf_poll_interval, 7);
