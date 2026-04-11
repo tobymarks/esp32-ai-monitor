@@ -214,11 +214,11 @@ void setup()
     }
 
     if (g_config.orientation == ORIENTATION_LANDSCAPE) {
-        tft.setRotation(1);   // Landscape: 320x240, USB left
+        tft.setRotation(3);   // Landscape: 320x240, USB left
         SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
         SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
     } else {
-        tft.setRotation(2);   // Portrait: 240x320, USB bottom
+        tft.setRotation(0);   // Portrait: 240x320, USB bottom
         SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
         SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
     }
@@ -228,12 +228,12 @@ void setup()
                   g_config.orientation == ORIENTATION_LANDSCAPE ? "landscape" : "portrait");
 
     // --- Touch init (via TFT_eSPI built-in XPT2046 support) ---
-    // calData[4] = rotation swap flag: 1 for landscape, 7 for portrait rotation(2)
+    // calData[4] = rotation swap flag: 2 for portrait rotation(0), 5 for landscape rotation(3)
     if (g_config.orientation == ORIENTATION_LANDSCAPE) {
-        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 1 };
+        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 5 };
         tft.setTouch(calData);
     } else {
-        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 7 };
+        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 2 };
         tft.setTouch(calData);
     }
     Serial.println("[Touch] XPT2046 initialized via TFT_eSPI");
