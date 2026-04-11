@@ -10,11 +10,13 @@
 #include "wifi_setup.h"
 #include "ntp_time.h"
 #include "api_manager.h"
+#include "api_claude.h"
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <Update.h>
 #include <time.h>
 
 // ============================================================
@@ -254,6 +256,13 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#171717;c
     </div>
     <div class="msg" id="msg"></div>
   </form>
+
+  <!-- Firmware Update Link -->
+  <div class="card" style="margin-top:12px;text-align:center">
+    <a href="/update" style="color:#737373;text-decoration:none;font-size:.82em;transition:color .15s">
+      Firmware Update (OTA) &rarr;
+    </a>
+  </div>
 </div>
 
 <script>
@@ -396,6 +405,209 @@ setInterval(loadUsage, 30000);
 )rawliteral";
 
 // ============================================================
+// Embedded HTML - OTA Firmware Upload Page
+// ============================================================
+static const char OTA_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Firmware Update</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#171717;color:#e5e5e5;min-height:100vh;display:flex;justify-content:center;padding:20px 16px 40px}
+.container{width:100%;max-width:500px}
+.header{text-align:center;margin-bottom:24px;padding-top:8px}
+.header h1{font-size:1.35em;font-weight:700;color:#fff;letter-spacing:-.02em;margin-bottom:4px}
+.header p{color:#737373;font-size:.85em}
+.back{display:inline-block;color:#737373;text-decoration:none;font-size:.85em;margin-bottom:16px;transition:color .15s}
+.back:hover{color:#e5e5e5}
+.card{background:#1c1c1c;border:1px solid #2a2a2a;border-radius:12px;padding:18px;margin-bottom:12px}
+.card-title{font-size:.8em;font-weight:600;color:#737373;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px}
+.version-info{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#111;border:1px solid #2a2a2a;border-radius:8px;margin-bottom:14px}
+.version-info .lbl{color:#737373;font-size:.8em}
+.version-info .val{color:#e5e5e5;font-size:.9em;font-weight:600}
+.drop-zone{border:2px dashed #2a2a2a;border-radius:10px;padding:40px 20px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:14px}
+.drop-zone:hover,.drop-zone.dragover{border-color:#525252;background:#1a1a1a}
+.drop-zone .icon{font-size:2em;margin-bottom:8px;color:#525252}
+.drop-zone .text{color:#737373;font-size:.85em}
+.drop-zone .text strong{color:#a3a3a3}
+.file-info{display:none;align-items:center;gap:10px;padding:10px 12px;background:#111;border:1px solid #2a2a2a;border-radius:8px;margin-bottom:14px}
+.file-info.show{display:flex}
+.file-info .name{flex:1;font-size:.85em;color:#e5e5e5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-info .size{font-size:.78em;color:#737373;flex-shrink:0}
+.file-info .remove{background:none;border:none;color:#525252;cursor:pointer;font-size:1.1em;padding:2px 6px;transition:color .15s}
+.file-info .remove:hover{color:#ef4444}
+.progress-wrap{display:none;margin-bottom:14px}
+.progress-wrap.show{display:block}
+.progress-bar-bg{background:#111;border-radius:4px;height:8px;overflow:hidden;margin-bottom:6px}
+.progress-bar{height:100%;border-radius:4px;background:#22c55e;width:0%;transition:width .3s ease}
+.progress-text{font-size:.78em;color:#737373;text-align:center}
+.btn-upload{width:100%;padding:12px;border:none;border-radius:8px;font-size:.9em;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;background:#fff;color:#000}
+.btn-upload:hover{background:#e5e5e5}
+.btn-upload:disabled{background:#2a2a2a;color:#525252;cursor:not-allowed}
+.hint{font-size:.72em;color:#525252;margin-top:10px;text-align:center;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back">&larr; Zurück zur Konfiguration</a>
+  <div class="header">
+    <h1>Firmware Update</h1>
+    <p>OTA Upload · ai-monitor.local</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Firmware</div>
+    <div class="version-info">
+      <span class="lbl">Aktuelle Version</span>
+      <span class="val" id="cur-version">--</span>
+    </div>
+
+    <form id="uploadForm" method="POST" action="/update" enctype="multipart/form-data">
+      <div class="drop-zone" id="dropZone">
+        <div class="icon">&#8682;</div>
+        <div class="text"><strong>.bin Datei</strong> hierher ziehen oder klicken</div>
+      </div>
+      <input type="file" id="fileInput" name="update" accept=".bin" style="display:none">
+
+      <div class="file-info" id="fileInfo">
+        <span class="name" id="fileName"></span>
+        <span class="size" id="fileSize"></span>
+        <button type="button" class="remove" id="fileRemove">&times;</button>
+      </div>
+
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
+        <div class="progress-text" id="progressText">0%</div>
+      </div>
+
+      <button type="submit" class="btn-upload" id="uploadBtn" disabled>Firmware hochladen</button>
+    </form>
+
+    <div class="hint">
+      Erstelle die .bin Datei mit: <code style="background:#111;padding:2px 6px;border-radius:4px">pio run</code><br>
+      Datei liegt unter <code style="background:#111;padding:2px 6px;border-radius:4px">.pio/build/esp32dev/firmware.bin</code><br>
+      NVS (WiFi + Token) bleibt bei OTA erhalten.
+    </div>
+  </div>
+</div>
+
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const fileInfo = document.getElementById('fileInfo');
+const fileName = document.getElementById('fileName');
+const fileSize = document.getElementById('fileSize');
+const fileRemove = document.getElementById('fileRemove');
+const uploadBtn = document.getElementById('uploadBtn');
+const uploadForm = document.getElementById('uploadForm');
+const progressWrap = document.getElementById('progressWrap');
+const progressBar = document.getElementById('progressBar');
+const progressText = document.getElementById('progressText');
+
+// Load current version
+fetch('/api/status').then(r=>r.json()).then(d=>{
+  // Version comes from config.h APP_VERSION — exposed via status endpoint if available
+}).catch(()=>{});
+
+let selectedFile = null;
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) selectFile(e.dataTransfer.files[0]);
+});
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) selectFile(fileInput.files[0]);
+});
+
+fileRemove.addEventListener('click', () => {
+  selectedFile = null;
+  fileInput.value = '';
+  fileInfo.classList.remove('show');
+  dropZone.style.display = '';
+  uploadBtn.disabled = true;
+});
+
+function selectFile(file) {
+  if (!file.name.endsWith('.bin')) {
+    alert('Bitte eine .bin Datei auswählen.');
+    return;
+  }
+  selectedFile = file;
+  fileName.textContent = file.name;
+  fileSize.textContent = (file.size / 1024).toFixed(1) + ' KB';
+  fileInfo.classList.add('show');
+  dropZone.style.display = 'none';
+  uploadBtn.disabled = false;
+}
+
+uploadForm.addEventListener('submit', function(e) {
+  e.preventDefault();
+  if (!selectedFile) return;
+
+  const formData = new FormData();
+  formData.append('update', selectedFile);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/update', true);
+
+  progressWrap.classList.add('show');
+  uploadBtn.disabled = true;
+  uploadBtn.textContent = 'Uploading...';
+
+  xhr.upload.addEventListener('progress', (e) => {
+    if (e.lengthComputable) {
+      const pct = Math.round((e.loaded / e.total) * 100);
+      progressBar.style.width = pct + '%';
+      progressText.textContent = pct + '%';
+    }
+  });
+
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      progressBar.style.width = '100%';
+      progressBar.style.background = '#22c55e';
+      progressText.textContent = 'Fertig! Neustart...';
+      uploadBtn.textContent = 'Neustart...';
+      setTimeout(() => { window.location.href = '/'; }, 5000);
+    } else {
+      progressBar.style.background = '#ef4444';
+      progressText.textContent = 'Fehler!';
+      uploadBtn.textContent = 'Fehlgeschlagen';
+      uploadBtn.disabled = false;
+    }
+  };
+
+  xhr.onerror = function() {
+    progressBar.style.background = '#ef4444';
+    progressText.textContent = 'Verbindungsfehler';
+    uploadBtn.textContent = 'Fehlgeschlagen';
+    uploadBtn.disabled = false;
+  };
+
+  xhr.send(formData);
+});
+
+// Show current version
+fetch('/api/status').then(r=>r.json()).then(d=>{
+  document.getElementById('cur-version').textContent = d.version || '--';
+}).catch(()=>{});
+</script>
+</body>
+</html>
+)rawliteral";
+
+// ============================================================
 // Init Web Server
 // ============================================================
 void webserver_init() {
@@ -503,7 +715,20 @@ void webserver_init() {
 
                 config_save(g_config);
                 Serial.println("[Web] OAuth token updated via /api/token");
-                request->send(200, "application/json", "{\"status\":\"ok\"}");
+
+                // Immediately refresh to establish independent token chain
+                bool refreshed = claude_refresh_token();
+                if (refreshed) {
+                    config_save(g_config);
+                    Serial.println("[Web] Token chain established — ESP32 has independent tokens");
+                    request->send(200, "application/json",
+                        "{\"status\":\"ok\",\"token_chain\":\"independent\"}");
+                } else {
+                    Serial.println("[Web] WARNING: Refresh failed — using original token");
+                    request->send(200, "application/json",
+                        "{\"status\":\"ok\",\"token_chain\":\"shared\","
+                        "\"warning\":\"Refresh failed — token may expire\"}");
+                }
             }
         }
     );
@@ -521,6 +746,7 @@ void webserver_init() {
         doc["uptime"]     = getUptime();
         doc["time"]       = ntp_get_datetime();
         doc["time_synced"] = ntp_is_synced();
+        doc["version"]     = APP_VERSION;
 
         String json;
         serializeJson(doc, json);
@@ -558,6 +784,57 @@ void webserver_init() {
         delay(500);
         ESP.restart();
     });
+
+    // --------------------------------------------------------
+    // GET /update — Firmware Upload Page
+    // --------------------------------------------------------
+    server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send_P(200, "text/html; charset=utf-8", OTA_HTML);
+    });
+
+    // --------------------------------------------------------
+    // POST /update — Receive firmware binary and flash
+    // --------------------------------------------------------
+    server.on("/update", HTTP_POST,
+        // Response handler (called after upload completes)
+        [](AsyncWebServerRequest *request) {
+            bool success = !Update.hasError();
+            AsyncWebServerResponse *response = request->beginResponse(200, "text/html; charset=utf-8",
+                success
+                    ? "<html><body style='background:#171717;color:#e5e5e5;font-family:Inter,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0'>"
+                      "<div style='text-align:center'><h2 style='color:#22c55e'>Update erfolgreich!</h2><p>Neustart in 3 Sekunden...</p></div></body></html>"
+                    : "<html><body style='background:#171717;color:#e5e5e5;font-family:Inter,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0'>"
+                      "<div style='text-align:center'><h2 style='color:#ef4444'>Update fehlgeschlagen!</h2><p><a href='/update' style='color:#3b82f6'>Erneut versuchen</a></p></div></body></html>"
+            );
+            response->addHeader("Connection", "close");
+            request->send(response);
+            if (success) {
+                delay(1000);
+                ESP.restart();
+            }
+        },
+        // Upload handler (called per chunk)
+        [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
+            if (index == 0) {
+                Serial.printf("[OTA-Web] Upload start: %s\n", filename.c_str());
+                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                    Update.printError(Serial);
+                }
+            }
+            if (Update.isRunning()) {
+                if (Update.write(data, len) != len) {
+                    Update.printError(Serial);
+                }
+            }
+            if (final) {
+                if (Update.end(true)) {
+                    Serial.printf("[OTA-Web] Upload complete: %u bytes\n", index + len);
+                } else {
+                    Update.printError(Serial);
+                }
+            }
+        }
+    );
 
     // Start server
     server.begin();
