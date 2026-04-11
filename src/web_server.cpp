@@ -47,7 +47,7 @@ static void githubOtaTask(void *param) {
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(30000);
 
-    if (!http.begin(client, "https://tobymarks.github.io/esp32-ai-monitor/firmware.bin")) {
+    if (!http.begin(client, "https://tobymarks.github.io/esp32-ai-monitor/bin/firmware-ota.bin")) {
         Serial.println("[OTA-GitHub] HTTP begin failed");
         vTaskDelete(NULL);
         return;

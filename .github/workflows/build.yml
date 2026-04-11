@@ -52,6 +52,10 @@ jobs:
             0xe000  "$BOOT_APP0" \
             0x10000 "$FIRMWARE_DIR/firmware.bin"
 
+      - name: Copy OTA binary
+        run: |
+          cp .pio/build/esp32dev/firmware.bin installer/bin/firmware-ota.bin
+
       - name: Update manifest version
         run: |
           VERSION=$(grep '#define APP_VERSION' src/config.h | head -1 | sed 's/.*"\(.*\)".*/\1/')
