@@ -203,22 +203,28 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#171717;c
         <div class="status-text" id="token-text">Lade...</div>
       </div>
 
+      <div class="field">
+        <div class="hint" style="color:#a3a3a3;font-size:.8em;line-height:1.5;margin-bottom:8px">
+          <strong style="color:#e5e5e5">Voraussetzung:</strong> <a href="https://claude.ai/download" target="_blank" rel="noopener" style="color:#3b82f6">Claude Code CLI</a> muss installiert und eingeloggt sein. Token wird automatisch im macOS Keychain gespeichert.
+        </div>
+      </div>
+
       <div class="code-section">
         <div class="code-label">Token übertragen – Terminal-Befehl:</div>
         <div class="tabs">
-          <button type="button" class="tab active" onclick="switchTab(this,'tab-file')">~/.credentials.json</button>
-          <button type="button" class="tab" onclick="switchTab(this,'tab-keychain')">macOS Keychain</button>
+          <button type="button" class="tab active" onclick="switchTab(this,'tab-keychain')">macOS Keychain</button>
+          <button type="button" class="tab" onclick="switchTab(this,'tab-file')">~/.credentials.json</button>
         </div>
-        <div class="tab-content active" id="tab-file">
-          <div class="code-wrap">
-            <code id="cmd-file">jq -c '{access_token:.claudeAiOauth.accessToken,refresh_token:.claudeAiOauth.refreshToken,expires_at:.claudeAiOauth.expiresAt}' ~/.claude/.credentials.json | curl -s -X POST -H 'Content-Type: application/json' -d @- http://ai-monitor.local/api/token</code>
-            <button type="button" class="copy-btn" onclick="copyCode('cmd-file',this)">Kopieren</button>
-          </div>
-        </div>
-        <div class="tab-content" id="tab-keychain">
+        <div class="tab-content active" id="tab-keychain">
           <div class="code-wrap">
             <code id="cmd-keychain">security find-generic-password -s 'Claude Code-credentials' -w | jq -c '{access_token:.claudeAiOauth.accessToken,refresh_token:.claudeAiOauth.refreshToken,expires_at:.claudeAiOauth.expiresAt}' | curl -s -X POST -H 'Content-Type: application/json' -d @- http://ai-monitor.local/api/token</code>
             <button type="button" class="copy-btn" onclick="copyCode('cmd-keychain',this)">Kopieren</button>
+          </div>
+        </div>
+        <div class="tab-content" id="tab-file">
+          <div class="code-wrap">
+            <code id="cmd-file">jq -c '{access_token:.claudeAiOauth.accessToken,refresh_token:.claudeAiOauth.refreshToken,expires_at:.claudeAiOauth.expiresAt}' ~/.claude/.credentials.json | curl -s -X POST -H 'Content-Type: application/json' -d @- http://ai-monitor.local/api/token</code>
+            <button type="button" class="copy-btn" onclick="copyCode('cmd-file',this)">Kopieren</button>
           </div>
         </div>
       </div>
