@@ -17,6 +17,8 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <Update.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <time.h>
 
 // ============================================================
@@ -30,6 +32,98 @@ extern void config_load(AppConfig &cfg);
 // Server instance
 // ============================================================
 static AsyncWebServer server(80);
+
+// ============================================================
+// GitHub OTA — runs in a separate FreeRTOS task to avoid
+// blocking the async web server during the ~30s download.
+// ============================================================
+static void githubOtaTask(void *param) {
+    Serial.println("[OTA-GitHub] Task started — downloading firmware...");
+
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setTimeout(30000);
+
+    if (!http.begin(client, "https://tobymarks.github.io/esp32-ai-monitor/firmware.bin")) {
+        Serial.println("[OTA-GitHub] HTTP begin failed");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+        Serial.printf("[OTA-GitHub] HTTP GET failed: %d\n", httpCode);
+        http.end();
+        vTaskDelete(NULL);
+        return;
+    }
+
+    int contentLength = http.getSize();
+    if (contentLength <= 0) {
+        Serial.println("[OTA-GitHub] Invalid content length");
+        http.end();
+        vTaskDelete(NULL);
+        return;
+    }
+
+    Serial.printf("[OTA-GitHub] Firmware size: %d bytes\n", contentLength);
+
+    if (!Update.begin(contentLength)) {
+        Serial.println("[OTA-GitHub] Update.begin() failed");
+        Update.printError(Serial);
+        http.end();
+        vTaskDelete(NULL);
+        return;
+    }
+
+    WiFiClient *stream = http.getStreamPtr();
+    uint8_t buf[1024];
+    int written = 0;
+
+    while (http.connected() && written < contentLength) {
+        size_t available = stream->available();
+        if (available) {
+            int toRead = (available > sizeof(buf)) ? sizeof(buf) : available;
+            int bytesRead = stream->readBytes(buf, toRead);
+            if (bytesRead > 0) {
+                size_t w = Update.write(buf, bytesRead);
+                if (w != (size_t)bytesRead) {
+                    Serial.println("[OTA-GitHub] Update.write() mismatch");
+                    Update.printError(Serial);
+                    Update.abort();
+                    http.end();
+                    vTaskDelete(NULL);
+                    return;
+                }
+                written += bytesRead;
+            }
+        }
+        delay(1);
+    }
+
+    http.end();
+
+    if (written != contentLength) {
+        Serial.printf("[OTA-GitHub] Incomplete: %d/%d\n", written, contentLength);
+        Update.abort();
+        vTaskDelete(NULL);
+        return;
+    }
+
+    if (!Update.end(true)) {
+        Serial.println("[OTA-GitHub] Update.end() failed");
+        Update.printError(Serial);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    Serial.printf("[OTA-GitHub] Success: %d bytes flashed. Restarting...\n", written);
+    delay(500);
+    ESP.restart();
+}
 
 // ============================================================
 // Uptime string
@@ -451,6 +545,15 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#171717;c
 .btn-upload:hover{background:#e5e5e5}
 .btn-upload:disabled{background:#2a2a2a;color:#525252;cursor:not-allowed}
 .hint{font-size:.72em;color:#525252;margin-top:10px;text-align:center;line-height:1.5}
+.btn-github{width:100%;padding:12px;border:none;border-radius:8px;font-size:.9em;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;background:#238636;color:#fff;margin-bottom:14px}
+.btn-github:hover{background:#2ea043}
+.btn-github:disabled{background:#2a2a2a;color:#525252;cursor:not-allowed}
+.gh-status{display:none;padding:10px 12px;background:#111;border:1px solid #2a2a2a;border-radius:8px;margin-bottom:14px;font-size:.85em;color:#a3a3a3;text-align:center}
+.gh-status.show{display:block}
+.gh-status.error{border-color:#7f1d1d;color:#fca5a5}
+.gh-status.success{border-color:#166534;color:#86efac}
+.separator{display:flex;align-items:center;gap:12px;margin:18px 0 14px;color:#525252;font-size:.75em;text-transform:uppercase;letter-spacing:.06em}
+.separator::before,.separator::after{content:'';flex:1;height:1px;background:#2a2a2a}
 </style>
 </head>
 <body>
@@ -467,6 +570,11 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#171717;c
       <span class="lbl">Aktuelle Version</span>
       <span class="val" id="cur-version">--</span>
     </div>
+
+    <button type="button" class="btn-github" id="ghBtn" onclick="doGithubUpdate()">Von GitHub aktualisieren</button>
+    <div class="gh-status" id="ghStatus"></div>
+
+    <div class="separator">oder manuell hochladen</div>
 
     <form id="uploadForm" method="POST" action="/update" enctype="multipart/form-data">
       <div class="drop-zone" id="dropZone">
@@ -602,6 +710,62 @@ uploadForm.addEventListener('submit', function(e) {
 fetch('/api/status').then(r=>r.json()).then(d=>{
   document.getElementById('cur-version').textContent = d.version || '--';
 }).catch(()=>{});
+
+// GitHub OTA Update
+async function doGithubUpdate() {
+  const btn = document.getElementById('ghBtn');
+  const status = document.getElementById('ghStatus');
+  btn.disabled = true;
+  btn.textContent = 'Downloading...';
+  status.className = 'gh-status show';
+  status.textContent = 'Firmware wird von GitHub heruntergeladen und geflasht...';
+
+  try {
+    const r = await fetch('/api/ota-github', {method:'POST', signal:AbortSignal.timeout(10000)});
+    const d = await r.json();
+    if (d.status === 'started') {
+      status.className = 'gh-status show';
+      status.textContent = 'Download + Flash laeuft im Hintergrund...';
+      btn.textContent = 'Bitte warten...';
+      // Poll until device restarts with new firmware
+      setTimeout(() => { tryReconnect(); }, 15000);
+    } else {
+      status.className = 'gh-status show error';
+      status.textContent = 'Fehler: ' + (d.error || 'Unbekannt');
+      btn.disabled = false;
+      btn.textContent = 'Von GitHub aktualisieren';
+    }
+  } catch(e) {
+    // Connection lost likely means ESP is restarting (success case)
+    status.className = 'gh-status show';
+    status.textContent = 'Verbindung unterbrochen — warte auf Neustart...';
+    btn.textContent = 'Neustart...';
+    setTimeout(() => { tryReconnect(); }, 5000);
+  }
+}
+
+function tryReconnect() {
+  const status = document.getElementById('ghStatus');
+  let attempts = 0;
+  const iv = setInterval(async () => {
+    attempts++;
+    status.textContent = 'Warte auf Neustart... (' + attempts + ')';
+    try {
+      const r = await fetch('/api/status', {signal:AbortSignal.timeout(3000)});
+      if (r.ok) {
+        clearInterval(iv);
+        status.className = 'gh-status show success';
+        status.textContent = 'Neustart erfolgreich!';
+        setTimeout(() => { window.location.reload(); }, 1000);
+      }
+    } catch(e) {}
+    if (attempts > 20) {
+      clearInterval(iv);
+      status.className = 'gh-status show error';
+      status.textContent = 'Timeout — bitte manuell pruefen.';
+    }
+  }, 3000);
+}
 </script>
 </body>
 </html>
@@ -783,6 +947,20 @@ void webserver_init() {
         request->send(200, "application/json", "{\"status\":\"restarting\"}");
         delay(500);
         ESP.restart();
+    });
+
+    // --------------------------------------------------------
+    // POST /api/ota-github — Spawn background task for GitHub OTA
+    // --------------------------------------------------------
+    server.on("/api/ota-github", HTTP_POST, [](AsyncWebServerRequest *request) {
+        Serial.println("[OTA-GitHub] Request received — spawning download task...");
+        // 8KB stack is enough for HTTPClient + Update streaming
+        BaseType_t ok = xTaskCreate(githubOtaTask, "ota_gh", 8192, NULL, 1, NULL);
+        if (ok == pdPASS) {
+            request->send(200, "application/json", "{\"status\":\"started\"}");
+        } else {
+            request->send(500, "application/json", "{\"status\":\"error\",\"error\":\"Could not start OTA task\"}");
+        }
     });
 
     // --------------------------------------------------------
