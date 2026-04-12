@@ -28,17 +28,13 @@
 #include "ui_detail.h"
 #include "ui_settings.h"
 #include "config.h"
-#include "ntp_time.h"
-#include "wifi_setup.h"
+#include "serial_receiver.h"
 
 #include <lvgl.h>
 #include <stdio.h>
-#include <time.h>
 
 // ============================================================
 // Widget references (created once, updated in-place)
-// All initialised to nullptr — guards in ui_dashboard_update()
-// rely on these being NULL before ui_dashboard_create() runs.
 // ============================================================
 static lv_obj_t *scr_dashboard      = nullptr;
 
@@ -66,6 +62,11 @@ static bool state_stored = false;
 
 // Long-press overlay
 static lv_obj_t *long_press_overlay = nullptr;
+
+// Splash overlay (shown until first data arrives)
+static lv_obj_t *splash_overlay     = nullptr;
+static lv_obj_t *splash_spinner     = nullptr;
+static bool       first_data_received = false;
 
 // ============================================================
 // Helper: returns true only when all dashboard widgets are live
@@ -102,7 +103,6 @@ static void on_long_press(lv_event_t *e) {
 
 // ============================================================
 // Helper: create a usage block (label + big pct + bar + countdown)
-// Returns the bottom y-position after the block.
 // ============================================================
 static int16_t create_usage_block(
     lv_obj_t *parent,
@@ -113,10 +113,9 @@ static int16_t create_usage_block(
     lv_obj_t **out_reset_lbl
 ) {
     int16_t sw = SCREEN_WIDTH;
-    int16_t bar_w = sw - 24;  // 12px padding each side
+    int16_t bar_w = sw - 24;
     int16_t cx = sw / 2;
 
-    // Section title label (muted)
     lv_obj_t *lbl_title = lv_label_create(parent);
     lv_label_set_text(lbl_title, title);
     lv_obj_set_style_text_color(lbl_title, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
@@ -125,7 +124,6 @@ static int16_t create_usage_block(
     lv_obj_set_width(lbl_title, sw);
     lv_obj_set_style_text_align(lbl_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
-    // Big percentage label (white)
     *out_pct_lbl = lv_label_create(parent);
     lv_label_set_text(*out_pct_lbl, "--%");
     lv_obj_set_style_text_color(*out_pct_lbl, UI_COLOR_TEXT, LV_PART_MAIN);
@@ -134,7 +132,6 @@ static int16_t create_usage_block(
     lv_obj_set_width(*out_pct_lbl, sw);
     lv_obj_set_style_text_align(*out_pct_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
-    // Progress bar
     *out_bar = lv_bar_create(parent);
     lv_obj_set_size(*out_bar, bar_w, 12);
     lv_obj_set_pos(*out_bar, 12, y_start + 76);
@@ -147,7 +144,6 @@ static int16_t create_usage_block(
     lv_obj_set_style_bg_opa(*out_bar, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_radius(*out_bar, 6, LV_PART_INDICATOR);
 
-    // Reset countdown label (muted, centered)
     *out_reset_lbl = lv_label_create(parent);
     lv_label_set_text(*out_reset_lbl, "Resets in --");
     lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
@@ -156,7 +152,7 @@ static int16_t create_usage_block(
     lv_obj_set_width(*out_reset_lbl, sw);
     lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
-    return y_start + 114;  // Block height ~114px
+    return y_start + 114;
 }
 
 // ============================================================
@@ -166,7 +162,7 @@ void ui_dashboard_create() {
     ui_styles_init();
 
     if (scr_dashboard != nullptr) {
-        return;  // Already created
+        return;
     }
 
     int16_t sw = SCREEN_WIDTH;
@@ -186,7 +182,6 @@ void ui_dashboard_create() {
     lv_obj_set_style_pad_all(header, 0, LV_PART_MAIN);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Provider name — Montserrat 20, bold, white, centered
     lbl_provider = lv_label_create(header);
     lv_label_set_text(lbl_provider, "CLAUDE");
     lv_obj_set_style_text_color(lbl_provider, UI_COLOR_TEXT, LV_PART_MAIN);
@@ -195,7 +190,6 @@ void ui_dashboard_create() {
     lv_obj_set_width(lbl_provider, sw);
     lv_obj_set_style_text_align(lbl_provider, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
-    // Clock — Montserrat 14, muted, top right
     lbl_time = lv_label_create(header);
     lv_label_set_text(lbl_time, "--:--");
     lv_obj_set_style_text_color(lbl_time, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
@@ -213,7 +207,6 @@ void ui_dashboard_create() {
         &lbl_session_pct, &bar_session, &lbl_session_reset
     );
 
-    // ---- Thin separator between blocks ----
     ui_create_divider(scr_dashboard, after_session + 4);
 
     // ---- Weekly block ----
@@ -238,14 +231,12 @@ void ui_dashboard_create() {
     lv_obj_set_style_pad_all(footer, 0, LV_PART_MAIN);
     lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Status dot (left)
     lbl_status_dot = lv_label_create(footer);
     lv_label_set_text(lbl_status_dot, LV_SYMBOL_OK);
     lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_status_dot, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_pos(lbl_status_dot, 10, 12);
 
-    // Refresh time (right)
     lbl_refresh = lv_label_create(footer);
     lv_label_set_text(lbl_refresh, "never");
     lv_obj_set_style_text_color(lbl_refresh, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
@@ -267,6 +258,40 @@ void ui_dashboard_create() {
 
     memset(&last_state, 0, sizeof(last_state));
     state_stored = false;
+    first_data_received = false;
+
+    // ---- Splash overlay (covers full screen until first data) ----
+    splash_overlay = lv_obj_create(scr_dashboard);
+    lv_obj_set_size(splash_overlay, sw, sh);
+    lv_obj_set_pos(splash_overlay, 0, 0);
+    lv_obj_set_style_bg_color(splash_overlay, UI_COLOR_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(splash_overlay, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(splash_overlay, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(splash_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Title: "AI Monitor"
+    lv_obj_t *splash_title = lv_label_create(splash_overlay);
+    lv_label_set_text(splash_title, "AI Monitor");
+    lv_obj_set_style_text_color(splash_title, UI_COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_text_font(splash_title, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_align(splash_title, LV_ALIGN_CENTER, 0, -40);
+
+    // Spinner
+    splash_spinner = lv_spinner_create(splash_overlay);
+    lv_obj_set_size(splash_spinner, 40, 40);
+    lv_obj_align(splash_spinner, LV_ALIGN_CENTER, 0, 10);
+    lv_spinner_set_anim_params(splash_spinner, 1000, 270);
+    lv_obj_set_style_arc_color(splash_spinner, UI_COLOR_BAR_BG, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(splash_spinner, UI_COLOR_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(splash_spinner, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(splash_spinner, 4, LV_PART_INDICATOR);
+
+    // "Verbinde..." text
+    lv_obj_t *splash_status = lv_label_create(splash_overlay);
+    lv_label_set_text(splash_status, "Verbinde...");
+    lv_obj_set_style_text_color(splash_status, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(splash_status, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(splash_status, LV_ALIGN_CENTER, 0, 50);
 
     Serial.println("[UI] Dashboard screen created (Vibe-TV-Style)");
 }
@@ -275,38 +300,37 @@ void ui_dashboard_create() {
 // Update dashboard with fresh MonitorState
 // ============================================================
 void ui_dashboard_update(const MonitorState &state) {
-    // Guard: bail out if any widget pointer is still NULL.
-    // This prevents StoreProhibited crashes when update is called
-    // before create_usage_block() has finished populating all pointers.
     if (!widgets_ready()) return;
 
     memcpy(&last_state, &state, sizeof(MonitorState));
     state_stored = true;
+
+    // Hide splash overlay once we receive the first valid data
+    if (!first_data_received && state.usage.valid && splash_overlay != nullptr) {
+        first_data_received = true;
+        lv_obj_delete(splash_overlay);
+        splash_overlay = nullptr;
+        splash_spinner = nullptr;
+        Serial.println("[UI] Splash dismissed — first data received");
+    }
 
     // ---- Provider name ----
     if (lbl_provider != nullptr) {
         lv_label_set_text(lbl_provider, state.provider == 1 ? "OPENAI" : "CLAUDE");
     }
 
-    // ---- Clock (update every call — uses HH:MM from NTP) ----
+    // ---- Clock (display time sent by Mac companion app) ----
     if (lbl_time != nullptr) {
-        struct tm timeinfo;
-        if (getLocalTime(&timeinfo, 0)) {
-            char tbuf[6];
-            strftime(tbuf, sizeof(tbuf), "%H:%M", &timeinfo);
-            lv_label_set_text(lbl_time, tbuf);
-        }
+        lv_label_set_text(lbl_time, serial_get_display_time());
     }
 
     // ---- Session block ----
     if (state.usage.valid) {
         char buf[32];
 
-        // Session percentage
         format_percentage(state.usage.five_hour_utilization, buf, sizeof(buf));
         lv_label_set_text(lbl_session_pct, buf);
 
-        // Session bar (color based on utilization)
         int bar_val = (int)(state.usage.five_hour_utilization * 100.0f);
         if (bar_val < 0) bar_val = 0;
         if (bar_val > 100) bar_val = 100;
@@ -314,17 +338,14 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_color_t session_color = ui_bar_color(state.usage.five_hour_utilization);
         lv_obj_set_style_bg_color(bar_session, session_color, LV_PART_INDICATOR);
 
-        // Session countdown
         format_countdown(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
         char reset_buf[48];
         snprintf(reset_buf, sizeof(reset_buf), "Resets in %s", buf);
         lv_label_set_text(lbl_session_reset, reset_buf);
 
-        // Weekly percentage
         format_percentage(state.usage.seven_day_utilization, buf, sizeof(buf));
         lv_label_set_text(lbl_weekly_pct, buf);
 
-        // Weekly bar
         bar_val = (int)(state.usage.seven_day_utilization * 100.0f);
         if (bar_val < 0) bar_val = 0;
         if (bar_val > 100) bar_val = 100;
@@ -332,13 +353,11 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_color_t weekly_color = ui_bar_color(state.usage.seven_day_utilization);
         lv_obj_set_style_bg_color(bar_weekly, weekly_color, LV_PART_INDICATOR);
 
-        // Weekly countdown
         format_countdown(state.usage.seven_day_reset_epoch, buf, sizeof(buf));
         snprintf(reset_buf, sizeof(reset_buf), "Resets in %s", buf);
         lv_label_set_text(lbl_weekly_reset, reset_buf);
 
     } else if (strlen(state.usage.error) > 0) {
-        // All widget pointers are guaranteed non-NULL here (widgets_ready() above).
         lv_label_set_text(lbl_session_pct,   "ERR");
         lv_label_set_text(lbl_session_reset, state.usage.error);
         lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
@@ -348,16 +367,17 @@ void ui_dashboard_update(const MonitorState &state) {
     }
 
     // ---- Footer: status dot ----
-    bool online = wifi_is_connected();
+    bool has_data = serial_has_recent_data();
     if (state.is_fetching) {
         lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_FETCHING, LV_PART_MAIN);
         lv_label_set_text(lbl_status_dot, LV_SYMBOL_REFRESH);
-    } else if (online && state.usage.valid) {
+    } else if (has_data && state.usage.valid) {
         lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_SUCCESS, LV_PART_MAIN);
         lv_label_set_text(lbl_status_dot, LV_SYMBOL_OK);
-    } else if (!online) {
-        lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_ERROR, LV_PART_MAIN);
-        lv_label_set_text(lbl_status_dot, LV_SYMBOL_CLOSE);
+    } else if (!has_data && state.usage.valid) {
+        // Data exists but is stale (> 5 min) — orange
+        lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_BAR_ORANGE, LV_PART_MAIN);
+        lv_label_set_text(lbl_status_dot, LV_SYMBOL_OK);
     } else {
         lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
         lv_label_set_text(lbl_status_dot, LV_SYMBOL_DUMMY);

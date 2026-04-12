@@ -1,16 +1,16 @@
 /**
  * AI Usage Monitor - ESP32-2432S028R (CYD 2.8")
- * Phase 6: Vibe-TV-Style Dashboard
+ * v2.0.0 — USB-Serial Only (no WiFi, no WebServer)
  *
  * Boot sequence:
- * 1. Init display + touch + LVGL
- * 2. Show "Connecting..." screen
- * 3. WiFi setup (stored creds or AP portal)
- * 4. NTP time sync
- * 5. Start AsyncWebServer
- * 6. Show QR code for config URL (8 seconds)
- * 7. Check token: if none -> Setup screen, else -> Dashboard + fetch
- * 8. Main loop: periodic fetch + UI update (1s interval for live countdown)
+ * 1. Init Serial (USB)
+ * 2. Init display + touch + LVGL
+ * 3. Show boot screen
+ * 4. Init serial receiver
+ * 5. Enter dashboard directly
+ *
+ * Data flow:
+ *   Mac (CodexBar) --USB-Serial--> ESP32 --> Dashboard
  *
  * Navigation:
  *   Dashboard (default) -> tap -> Detail screen
@@ -23,18 +23,13 @@
 #include <TFT_eSPI.h>
 #include <lvgl.h>
 #include <Preferences.h>
-#include <ArduinoOTA.h>
 #include "config.h"
-#include "wifi_setup.h"
-#include "ntp_time.h"
-#include "web_server.h"
-#include "qr_display.h"
-#include "api_manager.h"
+#include "config_store.h"
+#include "serial_receiver.h"
 #include "ui_common.h"
 #include "ui_dashboard.h"
 #include "ui_detail.h"
 #include "ui_settings.h"
-#include "ui_setup.h"
 
 // ============================================================
 // Globals
@@ -46,10 +41,7 @@ TFT_eSPI tft = TFT_eSPI();
 uint16_t SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;   // Default: Portrait 240
 uint16_t SCREEN_HEIGHT = DISPLAY_LONG_SIDE;     // Default: Portrait 320
 
-// Touch calibration data (populated by tft.calibrateTouch() or defaults)
-
 // LVGL display buffer (one 10-line strip, double-buffered)
-// Use short side (240) * 10 — fits both orientations
 static const uint32_t LV_BUF_SIZE = DISPLAY_SHORT_SIDE * 10;
 static lv_color_t lv_buf1[LV_BUF_SIZE];
 static lv_color_t lv_buf2[LV_BUF_SIZE];
@@ -57,13 +49,6 @@ static lv_color_t lv_buf2[LV_BUF_SIZE];
 // LVGL display and input device
 static lv_display_t  *lv_disp = nullptr;
 static lv_indev_t    *lv_touch = nullptr;
-
-// Status label for boot progress
-static lv_obj_t *boot_status_label = nullptr;
-
-// Timing for QR display
-static unsigned long qr_show_time = 0;
-static const unsigned long QR_DISPLAY_DURATION = 8000;  // 8 seconds
 
 // Dashboard state
 static bool dashboard_active = false;
@@ -76,9 +61,6 @@ static unsigned long lastHeapLog = 0;
 // Loop debug counter
 static unsigned long loopCount = 0;
 static unsigned long lastLoopLog = 0;
-
-// External config (defined in web_server.cpp)
-extern AppConfig g_config;
 
 // ============================================================
 // LVGL flush callback - sends pixels to TFT_eSPI
@@ -115,26 +97,22 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 
 // ============================================================
 // Boot screen — direct TFT drawing (no LVGL!)
-// LVGL default screen stays untouched so screen transitions work.
 // ============================================================
 static void draw_boot_screen(void)
 {
     tft.fillScreen(TFT_BLACK);
-    tft.setTextDatum(MC_DATUM);  // Middle-center alignment
+    tft.setTextDatum(MC_DATUM);
 
-    // Title
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setFreeFont(nullptr);
     tft.setTextSize(2);
     tft.drawString("AI Usage Monitor", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 30);
 
-    // Status
     tft.setTextSize(1);
     tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
     tft.drawString("Initializing...", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 10);
 
-    // Version
-    tft.setTextDatum(BR_DATUM);  // Bottom-right
+    tft.setTextDatum(BR_DATUM);
     tft.drawString("v" APP_VERSION, SCREEN_WIDTH - 10, SCREEN_HEIGHT - 10);
 }
 
@@ -142,7 +120,6 @@ static void draw_boot_screen(void)
 // Update boot status text on display (direct TFT)
 // ============================================================
 static void update_boot_status(const char *msg) {
-    // Clear status area and redraw
     tft.fillRect(0, SCREEN_HEIGHT / 2, SCREEN_WIDTH, 30, TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
     tft.setTextSize(1);
@@ -152,22 +129,9 @@ static void update_boot_status(const char *msg) {
 }
 
 // ============================================================
-// Check if a valid access token is configured
-// ============================================================
-static bool has_valid_token(void) {
-    return (strlen(g_config.access_token) > 0);
-}
-
-// ============================================================
-// Transition from QR to main UI (dashboard or setup)
+// Transition to main dashboard UI
 // ============================================================
 static void enter_main_ui(void) {
-    // Boot screen was drawn with direct TFT calls (no LVGL).
-    // LVGL's default screen is still clean/empty.
-    // Creating and loading a new LVGL screen will overwrite the TFT content.
-
-    // Always show dashboard — data arrives via companion app push
-    // or via self-polling if a token is configured.
     ui_dashboard_create();
     lv_obj_t *dash_scr = ui_dashboard_get_screen();
     if (dash_scr) {
@@ -175,12 +139,10 @@ static void enter_main_ui(void) {
     }
     dashboard_active = true;
 
-    MonitorState initState = api_manager_get_state();
+    MonitorState initState = serial_get_state();
     ui_dashboard_update(initState);
 
-    Serial.println("[UI] Dashboard active (waiting for data)");
-
-    // Force LVGL to render the new screen immediately
+    Serial.println("[UI] Dashboard active (waiting for USB data)");
     lv_refr_now(NULL);
 }
 
@@ -189,10 +151,12 @@ static void enter_main_ui(void) {
 // ============================================================
 void setup()
 {
+    // --- Serial init (BEFORE begin for RX buffer) ---
+    Serial.setRxBufferSize(2048);
     Serial.begin(115200);
     delay(500);
     Serial.println("========================================");
-    Serial.printf("%s v%s\n", APP_NAME, APP_VERSION);
+    Serial.printf("%s v%s (USB-Serial)\n", APP_NAME, APP_VERSION);
     Serial.println("========================================");
 
     // --- Backlight on ---
@@ -202,21 +166,15 @@ void setup()
     // --- TFT init ---
     tft.init();
 
-    // Set rotation based on saved orientation config
-    // (config_load is called later by wifi_setup_init, so we do a quick NVS read here)
-    {
-        Preferences orientPrefs;
-        orientPrefs.begin(NVS_NAMESPACE, true);
-        g_config.orientation = orientPrefs.getUChar("orient", ORIENTATION_PORTRAIT);
-        orientPrefs.end();
-    }
+    // Load orientation from NVS
+    config_load(g_config);
 
     if (g_config.orientation == ORIENTATION_LANDSCAPE) {
-        tft.setRotation(3);   // Landscape: 320x240, USB left
+        tft.setRotation(3);
         SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
         SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
     } else {
-        tft.setRotation(0);   // Portrait: 240x320, USB bottom
+        tft.setRotation(0);
         SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
         SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
     }
@@ -225,8 +183,7 @@ void setup()
                   SCREEN_WIDTH, SCREEN_HEIGHT,
                   g_config.orientation == ORIENTATION_LANDSCAPE ? "landscape" : "portrait");
 
-    // --- Touch init (via TFT_eSPI built-in XPT2046 support) ---
-    // calData[4] = rotation swap flag: 2 for portrait rotation(0), 5 for landscape rotation(3)
+    // --- Touch init ---
     if (g_config.orientation == ORIENTATION_LANDSCAPE) {
         uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 5 };
         tft.setTouch(calData);
@@ -238,82 +195,30 @@ void setup()
 
     // --- LVGL init ---
     lv_init();
-
-    // LVGL v9: Register tick callback (replaces removed LV_TICK_CUSTOM macros).
-    // Without this, lv_tick_get() always returns 0 and LVGL never refreshes.
     lv_tick_set_cb([]() -> uint32_t { return (uint32_t)millis(); });
     Serial.println("[LVGL] Core initialized + tick callback registered");
 
-    // Create display with runtime dimensions
     lv_disp = lv_display_create(SCREEN_WIDTH, SCREEN_HEIGHT);
     lv_display_set_flush_cb(lv_disp, disp_flush_cb);
     lv_display_set_buffers(lv_disp, lv_buf1, lv_buf2,
                            sizeof(lv_buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
     Serial.printf("[LVGL] Display driver registered (%ux%u)\n", SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    // Create touch input device
     lv_touch = lv_indev_create();
     lv_indev_set_type(lv_touch, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(lv_touch, touch_read_cb);
     Serial.println("[LVGL] Touch input registered");
 
-    // --- Boot screen (direct TFT, no LVGL) ---
+    // --- Boot screen ---
     draw_boot_screen();
 
-    // --- WiFi Setup ---
-    update_boot_status("Connecting to WiFi...");
-    bool wifiOk = wifi_setup_init();
+    // --- Serial receiver init ---
+    serial_receiver_init();
+    update_boot_status("USB verbunden...");
+    delay(1000);
 
-    if (wifiOk) {
-        // --- NTP Time Sync ---
-        update_boot_status("Syncing time...");
-        ntp_init();
-
-        // --- Start Web Server ---
-        update_boot_status("Starting web server...");
-        webserver_init();
-
-        // --- ArduinoOTA Setup ---
-        ArduinoOTA.setHostname(MDNS_HOSTNAME);
-        ArduinoOTA.onStart([]() {
-            String type = (ArduinoOTA.getCommand() == U_FLASH) ? "firmware" : "filesystem";
-            Serial.printf("[OTA] Start updating %s\n", type.c_str());
-        });
-        ArduinoOTA.onEnd([]() {
-            Serial.println("\n[OTA] Update complete!");
-        });
-        ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-            Serial.printf("[OTA] Progress: %u%%\r", (progress / (total / 100)));
-        });
-        ArduinoOTA.onError([](ota_error_t error) {
-            Serial.printf("[OTA] Error[%u]: ", error);
-            if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-            else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-            else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-            else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-            else if (error == OTA_END_ERROR) Serial.println("End Failed");
-        });
-        ArduinoOTA.begin();
-        Serial.println("[OTA] ArduinoOTA ready");
-
-        // --- Go to main UI ---
-        String url = webserver_get_url();
-        update_boot_status("Ready!");
-        delay(500);
-
-        // --- Init API Manager ---
-        api_manager_init();
-
-        // Enter dashboard or setup screen directly
-        enter_main_ui();
-
-        Serial.printf("[System] Config URL: %s\n", url.c_str());
-        Serial.printf("[System] mDNS: http://%s.local/\n", MDNS_HOSTNAME);
-    } else {
-        update_boot_status("WiFi failed! Rebooting...");
-        delay(3000);
-        ESP.restart();
-    }
+    // --- Enter dashboard ---
+    enter_main_ui();
 
     // --- Heap info ---
     Serial.printf("[System] Free heap: %u bytes\n", ESP.getFreeHeap());
@@ -327,33 +232,17 @@ void setup()
 // ============================================================
 void loop()
 {
-    lv_timer_handler();  // Let LVGL do its work
+    lv_timer_handler();
 
-    // ArduinoOTA handler
-    ArduinoOTA.handle();
+    // Read serial data
+    serial_receiver_tick();
 
-    // WiFi reconnect check (every 10 seconds internally)
-    wifi_check_connection();
-
-    // API polling (checks interval internally)
-    api_manager_tick();
-
-    // Update dashboard UI
+    // Update dashboard UI on new data OR every 1s (clock/countdown)
     if (dashboard_active) {
-        MonitorState curState = api_manager_get_state();
-
-        // Update UI when fetch just completed (state changed from fetching to idle)
-        static bool was_fetching = false;
-        if (was_fetching && !curState.is_fetching) {
+        if (serial_has_new_data() || (millis() - last_ui_update >= UI_UPDATE_INTERVAL)) {
+            MonitorState curState = serial_get_state();
             ui_dashboard_update(curState);
-        }
-        was_fetching = curState.is_fetching;
-
-        // Periodic UI refresh (time-ago counter, clock, status dot)
-        unsigned long now = millis();
-        if (now - last_ui_update >= UI_UPDATE_INTERVAL) {
-            last_ui_update = now;
-            ui_dashboard_update(curState);
+            last_ui_update = millis();
         }
     }
 
@@ -374,5 +263,5 @@ void loop()
                       ESP.getFreeHeap(), ESP.getMinFreeHeap());
     }
 
-    delay(5);  // Short yield
+    delay(5);
 }

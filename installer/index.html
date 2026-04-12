@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Usage Monitor — Installer</title>
+  <title>AI Monitor — Installer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -424,9 +424,9 @@
         <div class="logo">
           <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
         </div>
-        <h1>AI Usage Monitor</h1>
+        <h1>AI Monitor</h1>
       </div>
-      <p class="subtitle">Standalone-Display für AI-Token-Verbrauch und Kosten</p>
+      <p class="subtitle">Dein Claude-Nutzungslimits immer im Blick</p>
     </div>
 
     <div class="unsupported" id="unsupported">
@@ -435,34 +435,42 @@
 
     <div class="card">
       <h2>Was ist das?</h2>
-      <p>Ein kompaktes Hardware-Dashboard, das deine AI-Nutzungslimits in Echtzeit anzeigt. Session- und Wochenlimits mit Countdown &mdash; immer im Blick.</p>
-      <a href="https://de.aliexpress.com/item/1005007731775734.html" target="_blank" rel="noopener" class="hardware-badge" style="text-decoration:none;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="15" x2="23" y2="15"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="15" x2="4" y2="15"/></svg>
-        ESP32-2432S028R (CYD 2.8") &mdash; auf AliExpress kaufen
-      </a>
+      <p>Ein kompaktes Desk-Display, das deine Claude Pro/Max Nutzungslimits in Echtzeit anzeigt. Session-Limits (5h), Wochenlimits und Kosten-Tracking &mdash; per USB mit deinem Mac verbunden, kein WiFi nötig.</p>
       <ul class="features">
         <li>Session- und Wochenlimits mit Fortschrittsbalken</li>
         <li>Live Reset-Countdown</li>
-        <li>OAuth Token-Push (kein Konflikt mit CLI)</li>
-        <li>Web-basierte Konfiguration</li>
+        <li>Kosten-Tracking ($used / $limit)</li>
+        <li>1-Minuten-Polling, immer aktuell</li>
+        <li>Automatische USB-Erkennung</li>
         <li>Portrait- und Landscape-Modus</li>
       </ul>
     </div>
 
     <div class="card">
-      <h2>Installation</h2>
+      <h2>Was du brauchst</h2>
       <ol class="steps">
-        <li>ESP32 per USB-Datenkabel an den Computer anschließen</li>
-        <li>Google Chrome oder Microsoft Edge öffnen</li>
-        <li>Unten auf <strong>&bdquo;Firmware installieren&ldquo;</strong> klicken und den USB-Port wählen</li>
-        <li>Warten bis die Installation abgeschlossen ist (~30 Sek.)</li>
+        <li><a href="https://de.aliexpress.com/item/1005007731775734.html" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">ESP32-2432S028R Board</a> (~8&thinsp;$, &bdquo;Cheap Yellow Display&ldquo;)</li>
+        <li>USB-Datenkabel (kein reines Ladekabel)</li>
+        <li>Mac mit macOS 13+ (Apple Silicon)</li>
+        <li>Claude Pro oder Max Abo</li>
+        <li>Claude Code CLI installiert</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>Setup in 3 Schritten</h2>
+      <ol class="steps">
+        <li>Firmware unten flashen (oder via PlatformIO)</li>
+        <li><strong>AI Monitor Mac App</strong> herunterladen (via <a href="https://github.com/tobymarks/esp32-ai-monitor/releases" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">GitHub Releases</a>)</li>
+        <li>ESP32 per USB an den Mac anschließen &mdash; fertig!</li>
       </ol>
       <div class="info-box">
-        <strong>Nach der Installation:</strong> Das Display zeigt ein WiFi-Setup. Verbinde dich mit dem Netzwerk <code>AI-Monitor-Setup</code> und konfiguriere dein WLAN. Danach erreichst du die Konfiguration unter <code>http://ai-monitor.local</code>
+        <strong>So funktioniert es:</strong> Die Mac App liest deine Claude-Limits über die CLI aus und sendet die Daten per USB-Serial an das Display. Kein WiFi, kein Cloud-Dienst &mdash; alles lokal.
       </div>
     </div>
 
     <div class="card install-section">
+      <h2 style="margin-bottom:1rem;">Firmware flashen</h2>
       <esp-web-install-button manifest="manifest.json">
         <button slot="activate">Firmware installieren</button>
       </esp-web-install-button>
@@ -475,11 +483,14 @@
         <dt>Kein Port sichtbar?</dt>
         <dd>Stelle sicher, dass du ein USB-Datenkabel verwendest (nicht nur Ladekabel). Installiere ggf. den <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">CP2102-Treiber</a> oder <a href="https://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank" rel="noopener">CH340-Treiber</a>.</dd>
 
-        <dt>Installation schlägt fehl?</dt>
-        <dd>Drücke den Reset-Button auf dem Board und versuche es erneut. Stelle sicher, dass keine andere Anwendung (Arduino IDE, PlatformIO) den Port belegt.</dd>
+        <dt>Flash schlägt fehl?</dt>
+        <dd>Drücke den Reset-Button auf dem Board und versuche es erneut. Stelle sicher, dass keine andere Anwendung (Arduino IDE, PlatformIO, AI Monitor App) den Port belegt.</dd>
 
-        <dt>Display bleibt schwarz?</dt>
-        <dd>Trenne das USB-Kabel und schließe es erneut an. Das Board startet automatisch neu und zeigt das WiFi-Setup an.</dd>
+        <dt>Display bleibt schwarz nach dem Flashen?</dt>
+        <dd>Trenne das USB-Kabel und schließe es erneut an. Das Board startet automatisch neu.</dd>
+
+        <dt>Mac App erkennt das Display nicht?</dt>
+        <dd>Prüfe, ob der USB-Treiber (CP2102 oder CH340) installiert ist. Unter <code style="font-family:var(--font-mono);font-size:0.8rem;background:rgba(59,130,246,0.1);padding:0.1rem 0.35rem;border-radius:4px;">ls /dev/tty.usb*</code> sollte ein Gerät erscheinen.</dd>
       </dl>
     </div>
 
@@ -500,8 +511,9 @@
   </div>
 
   <footer>
-    <span id="version-tag">v1.0.0</span> &middot;
-    <a href="https://github.com/tobymarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a>
+    <span id="version-tag">v2.0.0</span> &middot;
+    <a href="https://github.com/tobymarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a> &middot;
+    <a href="https://www.flaticon.com/free-icons/chatbot" title="chatbot icons" target="_blank" rel="noopener">Chatbot icons created by LAFS - Flaticon</a>
   </footer>
 
   <script>

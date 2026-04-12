@@ -9,7 +9,6 @@
 #include "ui_common.h"
 #include "ui_dashboard.h"
 #include "config.h"
-#include "ntp_time.h"
 
 #include <lvgl.h>
 #include <stdio.h>
@@ -58,14 +57,12 @@ static void detail_bar_row(
     int16_t sw  = SCREEN_WIDTH;
     int16_t bar_w = sw - 24;
 
-    // Section label
     lv_obj_t *lbl = lv_label_create(parent);
     lv_label_set_text(lbl, label);
     lv_obj_set_style_text_color(lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_pos(lbl, 12, y);
 
-    // Percentage right-aligned
     char pct_buf[16];
     format_percentage(utilization, pct_buf, sizeof(pct_buf));
     lv_obj_t *pct = lv_label_create(parent);
@@ -74,7 +71,6 @@ static void detail_bar_row(
     lv_obj_set_style_text_font(pct, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(pct, LV_ALIGN_TOP_RIGHT, -12, y);
 
-    // Progress bar
     lv_obj_t *bar = lv_bar_create(parent);
     lv_obj_set_size(bar, bar_w, 10);
     lv_obj_set_pos(bar, 12, y + 20);
@@ -90,7 +86,6 @@ static void detail_bar_row(
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar, 5, LV_PART_INDICATOR);
 
-    // Countdown
     char cd_buf[32];
     format_countdown(reset_epoch, cd_buf, sizeof(cd_buf));
     char reset_line[48];
@@ -129,7 +124,6 @@ void ui_detail_create(const MonitorState &state) {
     lv_obj_set_style_pad_all(header, 0, LV_PART_MAIN);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Back button
     lv_obj_t *btn_back = lv_label_create(header);
     lv_label_set_text(btn_back, LV_SYMBOL_LEFT);
     lv_obj_set_style_text_color(btn_back, UI_COLOR_TEXT, LV_PART_MAIN);
@@ -139,17 +133,24 @@ void ui_detail_create(const MonitorState &state) {
     lv_obj_set_ext_click_area(btn_back, 15);
     lv_obj_add_event_cb(btn_back, on_back_tap, LV_EVENT_CLICKED, scr);
 
-    // Provider name
     lv_obj_t *lbl_prov = lv_label_create(header);
     lv_label_set_text(lbl_prov, provider_name);
     lv_obj_set_style_text_color(lbl_prov, brand_color, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_prov, &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_set_pos(lbl_prov, 34, 10);
 
-    // Time
+    // Time — uses getLocalTime() (works after settimeofday)
     lv_obj_t *lbl_time = lv_label_create(header);
-    String t = ntp_get_time();
-    lv_label_set_text(lbl_time, (t.length() >= 5) ? t.substring(0, 5).c_str() : "--:--");
+    {
+        struct tm timeinfo;
+        if (getLocalTime(&timeinfo, 0)) {
+            char tbuf[6];
+            strftime(tbuf, sizeof(tbuf), "%H:%M", &timeinfo);
+            lv_label_set_text(lbl_time, tbuf);
+        } else {
+            lv_label_set_text(lbl_time, "--:--");
+        }
+    }
     lv_obj_set_style_text_color(lbl_time, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_time, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(lbl_time, LV_ALIGN_TOP_RIGHT, -8, 11);
@@ -190,7 +191,7 @@ void ui_detail_create(const MonitorState &state) {
         content_y += 60;
     }
 
-    // ---- Token info footer ----
+    // ---- Footer ----
     int16_t footer_y = sh - 44;
     ui_create_divider(scr, footer_y - 2);
 
@@ -198,10 +199,7 @@ void ui_detail_create(const MonitorState &state) {
     if (!data.valid && strlen(data.error) > 0) {
         lv_label_set_text(lbl_footer, data.error);
     } else {
-        char status_buf[48];
-        snprintf(status_buf, sizeof(status_buf),
-                 state.token_valid ? "Token: valid" : "Token: expired");
-        lv_label_set_text(lbl_footer, status_buf);
+        lv_label_set_text(lbl_footer, "Source: USB Serial");
     }
     lv_obj_set_style_text_color(lbl_footer, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_footer, &lv_font_montserrat_14, LV_PART_MAIN);

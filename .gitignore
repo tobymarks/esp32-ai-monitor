@@ -5,5 +5,8 @@
 *.swo
 *~
 
-# Installer binary (built by CI)
+# Installer binary (built locally or by CI)
 installer/bin/*.bin
+
+# Mac companion app build output
+companion-v2/build/

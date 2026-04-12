@@ -1,6 +1,6 @@
 {
-  "name": "AI Usage Monitor",
-  "version": "0.4.0",
+  "name": "AI Monitor",
+  "version": "2.0.0",
   "home_assistant_domain": "",
   "builds": [
     {

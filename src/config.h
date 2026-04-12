@@ -1,12 +1,14 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include <stdint.h>
+
 // ============================================================
 // ESP32-2432S028R (CYD 2.8") Pin Configuration
 // ============================================================
 
 // App version
-#define APP_VERSION "1.0.0"
+#define APP_VERSION "2.0.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---
@@ -53,13 +55,6 @@ extern uint16_t SCREEN_HEIGHT;
 #define TOUCH_MAX_Y  3800
 
 // ============================================================
-// WiFi / Network Configuration
-// ============================================================
-#define WIFI_AP_NAME             "AI-Monitor-Setup"
-#define WIFIMANAGER_TIMEOUT_SEC  180
-#define MDNS_HOSTNAME            "ai-monitor"
-
-// ============================================================
 // NVS (Non-Volatile Storage) Configuration
 // ============================================================
 #define NVS_NAMESPACE      "aim_config"    // Max 15 chars
@@ -77,23 +72,15 @@ extern uint16_t SCREEN_HEIGHT;
 #define PROVIDER_OPENAI   1
 
 // ============================================================
-// OAuth / API endpoints
-// ============================================================
-#define CLAUDE_USAGE_ENDPOINT   "https://api.anthropic.com/api/oauth/usage"
-#define CLAUDE_OAUTH_BETA       "oauth-2025-04-20"
-
-// ============================================================
 // Orientation options
 // ============================================================
-#define ORIENTATION_PORTRAIT   0   // setRotation(2): 240x320, USB at bottom
-#define ORIENTATION_LANDSCAPE  1   // setRotation(1): 320x240, USB at left
+#define ORIENTATION_PORTRAIT   0   // setRotation(0): 240x320, USB at bottom
+#define ORIENTATION_LANDSCAPE  1   // setRotation(3): 320x240, USB at left
 
 // ============================================================
 // Application Configuration Struct
 // ============================================================
 struct AppConfig {
-    char     access_token[512];       // OAuth access token (pushed from Mac, read-only)
-    uint8_t  provider;                // PROVIDER_CLAUDE(0) or PROVIDER_OPENAI(1)
     uint16_t poll_interval_sec;       // Default 120
     uint8_t  orientation;             // ORIENTATION_PORTRAIT(0) or ORIENTATION_LANDSCAPE(1)
 };

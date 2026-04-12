@@ -1,0 +1,312 @@
+/**
+ * Serial Receiver - USB-Serial JSON data receiver
+ *
+ * Reads single-line JSON from Serial (Mac sends via USB).
+ * Parses usage data and updates MonitorState.
+ * Sets ESP32 system clock from the "time" field.
+ *
+ * Expected JSON format (one line, terminated with \n):
+ * {"time":"2026-04-12T15:30:00Z","data":[{"source":"oauth","usage":{...},"provider":"claude"}]}
+ */
+
+#include "serial_receiver.h"
+#include "api_common.h"
+#include "config.h"
+#include "config_store.h"
+
+#include <Arduino.h>
+#include <ArduinoJson.h>
+
+// ============================================================
+// Constants
+// ============================================================
+static const size_t SERIAL_BUF_SIZE = 2048;
+static const unsigned long DATA_TIMEOUT_MS = 300000;  // 5 minutes
+
+// ============================================================
+// State
+// ============================================================
+static char serial_buf[SERIAL_BUF_SIZE];
+static size_t serial_buf_pos = 0;
+
+static MonitorState state;
+static bool new_data_flag = false;
+static char display_time[6] = "--:--";
+
+// ============================================================
+// Getter: display time string sent by Mac companion app
+// ============================================================
+const char* serial_get_display_time() {
+    return display_time;
+}
+
+// ============================================================
+// Helper: parse and execute serial commands
+// Returns true if a command was handled (caller should skip
+// usage-data parsing).
+// ============================================================
+static bool parse_command(JsonDocument &doc) {
+    if (!doc["cmd"].is<const char*>()) return false;
+
+    const char *cmd = doc["cmd"];
+    Serial.printf("[Serial] Command received: %s\n", cmd);
+
+    // --- set_orientation ---
+    if (strcmp(cmd, "set_orientation") == 0) {
+        const char *val = doc["value"];
+        if (!val) {
+            Serial.println("{\"type\":\"error\",\"message\":\"set_orientation: missing value\"}");
+            return true;
+        }
+        if (strcmp(val, "landscape") == 0) {
+            g_config.orientation = ORIENTATION_LANDSCAPE;
+        } else if (strcmp(val, "portrait") == 0) {
+            g_config.orientation = ORIENTATION_PORTRAIT;
+        } else {
+            Serial.printf("{\"type\":\"error\",\"message\":\"set_orientation: invalid value '%s'\"}\n", val);
+            return true;
+        }
+        config_save(g_config);
+        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_orientation\",\"value\":\"%s\"}\n", val);
+        delay(200);
+        ESP.restart();
+        return true;
+    }
+
+    // --- set_brightness ---
+    if (strcmp(cmd, "set_brightness") == 0) {
+        if (!doc["value"].is<int>()) {
+            Serial.println("{\"type\":\"error\",\"message\":\"set_brightness: missing or invalid value\"}");
+            return true;
+        }
+        int val = doc["value"];
+        if (val < 0) val = 0;
+        if (val > 255) val = 255;
+        analogWrite(PIN_TFT_BL, val);
+        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_brightness\",\"value\":%d}\n", val);
+        return true;
+    }
+
+    // --- get_info ---
+    if (strcmp(cmd, "get_info") == 0) {
+        const char *orient = (g_config.orientation == ORIENTATION_LANDSCAPE)
+                             ? "landscape" : "portrait";
+        Serial.printf("{\"type\":\"info\",\"version\":\"%s\",\"orientation\":\"%s\","
+                      "\"uptime\":%lu,\"heap\":%u}\n",
+                      APP_VERSION, orient,
+                      (unsigned long)(millis() / 1000),
+                      (unsigned)ESP.getFreeHeap());
+        return true;
+    }
+
+    // --- reboot ---
+    if (strcmp(cmd, "reboot") == 0) {
+        Serial.println("{\"type\":\"ok\",\"cmd\":\"reboot\"}");
+        delay(200);
+        ESP.restart();
+        return true;
+    }
+
+    // --- unknown command ---
+    Serial.printf("{\"type\":\"error\",\"message\":\"Unknown command: %s\"}\n", cmd);
+    return true;
+}
+
+// ============================================================
+// Helper: parse JSON and update state
+// ============================================================
+static void parse_json(const char *json_str) {
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, json_str);
+
+    if (err) {
+        Serial.printf("[Serial] JSON parse error: %s\n", err.c_str());
+        strlcpy(state.status, "JSON Error", sizeof(state.status));
+        strlcpy(state.usage.error, err.c_str(), sizeof(state.usage.error));
+        state.usage.valid = false;
+        return;
+    }
+
+    // Check for command — if handled, skip usage-data parsing
+    if (parse_command(doc)) return;
+
+    // Read display time from Mac companion app
+    const char *dtime = doc["displayTime"];
+    if (dtime) {
+        strlcpy(display_time, dtime, sizeof(display_time));
+    }
+
+    // Navigate to data[0].usage
+    JsonObject data0 = doc["data"][0];
+    if (data0.isNull()) {
+        Serial.println("[Serial] No data[0] in JSON");
+        strlcpy(state.status, "JSON Error", sizeof(state.status));
+        strlcpy(state.usage.error, "Missing data[0]", sizeof(state.usage.error));
+        state.usage.valid = false;
+        return;
+    }
+
+    JsonObject usage = data0["usage"];
+    if (usage.isNull()) {
+        Serial.println("[Serial] No usage object in data[0]");
+        strlcpy(state.status, "JSON Error", sizeof(state.status));
+        strlcpy(state.usage.error, "Missing usage", sizeof(state.usage.error));
+        state.usage.valid = false;
+        return;
+    }
+
+    // --- Primary (Session / 5h) ---
+    JsonObject primary = usage["primary"];
+    if (!primary.isNull()) {
+        float usedPct = primary["usedPercent"] | 0.0f;
+        state.usage.five_hour_utilization = usedPct / 100.0f;
+
+        const char *resetsAt = primary["resetsAt"];
+        if (resetsAt) {
+            strlcpy(state.usage.five_hour_resets_at, resetsAt, sizeof(state.usage.five_hour_resets_at));
+            state.usage.five_hour_reset_epoch = iso8601_to_epoch(resetsAt);
+        }
+    }
+
+    // --- Weekly: find field with windowMinutes >= 10080 ---
+    // Check secondary first, then tertiary
+    JsonObject weekly_source;
+    int sec_window = usage["secondary"]["windowMinutes"] | 0;
+    int ter_window = usage["tertiary"]["windowMinutes"] | 0;
+
+    if (sec_window >= 10080) {
+        weekly_source = usage["secondary"];
+    } else if (ter_window >= 10080) {
+        weekly_source = usage["tertiary"];
+    } else {
+        // Fallback: use secondary
+        weekly_source = usage["secondary"];
+    }
+
+    if (!weekly_source.isNull()) {
+        float usedPct = weekly_source["usedPercent"] | 0.0f;
+        state.usage.seven_day_utilization = usedPct / 100.0f;
+
+        const char *resetsAt = weekly_source["resetsAt"];
+        if (resetsAt) {
+            strlcpy(state.usage.seven_day_resets_at, resetsAt, sizeof(state.usage.seven_day_resets_at));
+            state.usage.seven_day_reset_epoch = iso8601_to_epoch(resetsAt);
+        }
+    }
+
+    // --- Extra usage (providerCost) ---
+    JsonObject cost = usage["providerCost"];
+    if (!cost.isNull()) {
+        float used  = cost["used"] | 0.0f;
+        float limit = cost["limit"] | 0.0f;
+
+        if (limit > 0) {
+            state.usage.has_extra_usage    = true;
+            state.usage.extra_used_credits = used;
+            state.usage.extra_monthly_limit = limit;
+            state.usage.extra_utilization  = used / limit;
+        } else {
+            state.usage.has_extra_usage = false;
+        }
+    }
+
+    // --- Login method as provider info ---
+    const char *loginMethod = usage["loginMethod"];
+    if (loginMethod) {
+        Serial.printf("[Serial] Login: %s\n", loginMethod);
+    }
+
+    // Mark data as valid
+    state.usage.valid = true;
+    state.usage.last_fetch = millis();
+    state.usage.error[0] = '\0';
+    state.token_valid = true;
+    state.is_fetching = false;
+    state.provider = PROVIDER_CLAUDE;
+    strlcpy(state.status, "OK (USB)", sizeof(state.status));
+    new_data_flag = true;
+
+    Serial.printf("[Serial] Parsed: Session=%.0f%% Weekly=%.0f%%\n",
+                  state.usage.five_hour_utilization * 100.0f,
+                  state.usage.seven_day_utilization * 100.0f);
+}
+
+// ============================================================
+// Init
+// ============================================================
+void serial_receiver_init() {
+    serial_buf_pos = 0;
+    memset(&state, 0, sizeof(state));
+    usage_data_clear(state.usage);
+    state.is_fetching = false;
+    state.token_valid = false;
+    state.provider = PROVIDER_CLAUDE;
+    strlcpy(state.status, "Waiting for data...", sizeof(state.status));
+    new_data_flag = false;
+    strlcpy(display_time, "--:--", sizeof(display_time));
+
+    Serial.println("[Serial] Receiver initialized — waiting for USB data");
+}
+
+// ============================================================
+// Tick — call from loop()
+// ============================================================
+void serial_receiver_tick() {
+    while (Serial.available()) {
+        char c = Serial.read();
+
+        if (c == '\n') {
+            // Terminate and parse
+            if (serial_buf_pos > 0) {
+                serial_buf[serial_buf_pos] = '\0';
+                parse_json(serial_buf);
+            }
+            serial_buf_pos = 0;
+        } else if (c != '\r') {
+            // Accumulate (guard overflow)
+            if (serial_buf_pos < SERIAL_BUF_SIZE - 1) {
+                serial_buf[serial_buf_pos++] = c;
+            } else {
+                // Buffer overflow — discard and reset
+                Serial.println("[Serial] Buffer overflow — discarding");
+                serial_buf_pos = 0;
+            }
+        }
+    }
+
+    // Check for data timeout
+    if (state.usage.valid && state.usage.last_fetch > 0) {
+        unsigned long elapsed = millis() - state.usage.last_fetch;
+        if (elapsed > DATA_TIMEOUT_MS) {
+            strlcpy(state.status, "No data (timeout)", sizeof(state.status));
+        }
+    }
+}
+
+// ============================================================
+// Get state copy
+// ============================================================
+MonitorState serial_get_state() {
+    MonitorState copy;
+    memcpy(&copy, &state, sizeof(MonitorState));
+    return copy;
+}
+
+// ============================================================
+// Recent data check (< 5 minutes)
+// ============================================================
+bool serial_has_recent_data() {
+    if (!state.usage.valid || state.usage.last_fetch == 0) return false;
+    return (millis() - state.usage.last_fetch) < DATA_TIMEOUT_MS;
+}
+
+// ============================================================
+// New data flag (auto-resets on read)
+// ============================================================
+bool serial_has_new_data() {
+    if (new_data_flag) {
+        new_data_flag = false;
+        return true;
+    }
+    return false;
+}

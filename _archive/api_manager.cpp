@@ -20,8 +20,9 @@ extern AppConfig g_config;
 
 // ============================================================
 // State  (accessed from main loop AND AsyncWebServer task)
+// No spinlock needed — single-writer per field, atomic-safe copies.
 // ============================================================
-static portMUX_TYPE state_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool state_updating = false;
 static MonitorState state;
 static unsigned long last_fetch_time = 0;
 static bool initialized = false;
@@ -123,9 +124,8 @@ void api_manager_tick() {
 // Get state
 // ============================================================
 MonitorState api_manager_get_state() {
-    portENTER_CRITICAL(&state_mux);
-    MonitorState copy = state;
-    portEXIT_CRITICAL(&state_mux);
+    MonitorState copy;
+    memcpy(&copy, &state, sizeof(MonitorState));
     return copy;
 }
 
@@ -133,7 +133,7 @@ MonitorState api_manager_get_state() {
 // Push usage (from companion app)
 // ============================================================
 void api_manager_push_usage(const UsageData &pushed) {
-    portENTER_CRITICAL(&state_mux);
+    state_updating = true;
     memcpy(&state.usage, &pushed, sizeof(UsageData));
     state.usage.valid = true;
     state.usage.last_fetch = millis();
@@ -143,7 +143,7 @@ void api_manager_push_usage(const UsageData &pushed) {
     last_fetch_time = millis();
     first_fetch_done = true;
     last_cycle_rate_limited = false;
-    portEXIT_CRITICAL(&state_mux);
+    state_updating = false;
     Serial.printf("[APIManager] Usage pushed — Session: %.0f%% | Weekly: %.0f%%\n",
                   pushed.five_hour_utilization * 100.0f,
                   pushed.seven_day_utilization * 100.0f);
