@@ -3,6 +3,7 @@ name: Build & Deploy Installer
 on:
   push:
     branches: [main]
+    tags: ['v*']
     paths:
       - 'src/**'
       - 'platformio.ini'
@@ -10,12 +11,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
 concurrency:
-  group: pages
+  group: ${{ github.ref_type == 'tag' && format('release-{0}', github.ref_name) || 'pages' }}
   cancel-in-progress: true
 
 jobs:
@@ -70,12 +71,23 @@ jobs:
           "
 
       - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: installer
 
+      - name: Upload build artifacts for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-binaries
+          path: |
+            installer/bin/ai-monitor.bin
+            installer/bin/firmware-ota.bin
+
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -84,3 +96,23 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download firmware binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-binaries
+          path: release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            release-assets/installer/bin/ai-monitor.bin
+            release-assets/installer/bin/firmware-ota.bin
