@@ -25,6 +25,7 @@ void config_load(AppConfig &cfg) {
     cfg.poll_interval_sec = prefs.getUInt("poll_sec", DEFAULT_POLL_INTERVAL_SEC);
     cfg.orientation       = prefs.getUChar("orient", ORIENTATION_PORTRAIT);
     cfg.theme             = prefs.getUChar("theme", THEME_DARK);
+    cfg.language          = prefs.getUChar("lang", LANG_DE);
 
     prefs.end();
 
@@ -34,6 +35,8 @@ void config_load(AppConfig &cfg) {
                   cfg.orientation == ORIENTATION_LANDSCAPE ? "landscape" : "portrait");
     Serial.printf("[Config] Theme: %s\n",
                   cfg.theme == THEME_LIGHT ? "light" : "dark");
+    Serial.printf("[Config] Language: %s\n",
+                  cfg.language == LANG_EN ? "en" : "de");
 }
 
 // ============================================================
@@ -45,6 +48,7 @@ void config_save(const AppConfig &cfg) {
     prefs.putUInt("poll_sec", cfg.poll_interval_sec);
     prefs.putUChar("orient",  cfg.orientation);
     prefs.putUChar("theme",   cfg.theme);
+    prefs.putUChar("lang",    cfg.language);
 
     prefs.end();
     Serial.println("[Config] Saved to NVS");

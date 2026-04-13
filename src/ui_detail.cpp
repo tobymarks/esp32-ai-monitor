@@ -9,6 +9,7 @@
 #include "ui_common.h"
 #include "ui_dashboard.h"
 #include "config.h"
+#include "localization.h"
 
 #include <lvgl.h>
 #include <stdio.h>
@@ -89,7 +90,7 @@ static void detail_bar_row(
     char cd_buf[32];
     format_countdown(reset_epoch, cd_buf, sizeof(cd_buf));
     char reset_line[48];
-    snprintf(reset_line, sizeof(reset_line), "Resets in %s", cd_buf);
+    snprintf(reset_line, sizeof(reset_line), L(STR_RESETS_IN), cd_buf);
     lv_obj_t *cd = lv_label_create(parent);
     lv_label_set_text(cd, reset_line);
     lv_obj_set_style_text_color(cd, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
@@ -161,7 +162,7 @@ void ui_detail_create(const MonitorState &state) {
     // ---- Usage bars ----
     int16_t content_y = 44;
 
-    detail_bar_row(scr, "Session (5h)",
+    detail_bar_row(scr, L(STR_SESSION_5H),
                    data.five_hour_utilization,
                    data.five_hour_reset_epoch,
                    content_y);
@@ -170,7 +171,7 @@ void ui_detail_create(const MonitorState &state) {
     ui_create_divider(scr, content_y);
     content_y += 8;
 
-    detail_bar_row(scr, "Weekly (7d)",
+    detail_bar_row(scr, L(STR_WEEKLY_7D),
                    data.seven_day_utilization,
                    data.seven_day_reset_epoch,
                    content_y);
@@ -184,7 +185,7 @@ void ui_detail_create(const MonitorState &state) {
         char extra_buf[48];
         snprintf(extra_buf, sizeof(extra_buf), "%.0f / %.0f credits",
                  data.extra_used_credits, data.extra_monthly_limit);
-        detail_bar_row(scr, "Extra (monthly)",
+        detail_bar_row(scr, L(STR_EXTRA_MONTHLY),
                        data.extra_utilization,
                        0,
                        content_y);
@@ -199,7 +200,9 @@ void ui_detail_create(const MonitorState &state) {
     if (!data.valid && strlen(data.error) > 0) {
         lv_label_set_text(lbl_footer, data.error);
     } else {
-        lv_label_set_text(lbl_footer, "Source: USB Serial");
+        char source_buf[48];
+        snprintf(source_buf, sizeof(source_buf), "%s %s", L(STR_SOURCE), L(STR_SOURCE_USB));
+        lv_label_set_text(lbl_footer, source_buf);
     }
     lv_obj_set_style_text_color(lbl_footer, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_footer, &lv_font_montserrat_14, LV_PART_MAIN);

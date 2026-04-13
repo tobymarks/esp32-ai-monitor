@@ -13,6 +13,7 @@
 #include "api_common.h"
 #include "config.h"
 #include "config_store.h"
+#include "localization.h"
 #include "ui_common.h"
 #include "ui_dashboard.h"
 
@@ -115,14 +116,39 @@ static bool parse_command(JsonDocument &doc) {
         return true;
     }
 
+    // --- set_language ---
+    if (strcmp(cmd, "set_language") == 0) {
+        const char *val = doc["value"];
+        if (!val) {
+            Serial.println("{\"type\":\"error\",\"message\":\"set_language: missing value\"}");
+            return true;
+        }
+        uint8_t new_lang;
+        if (strcmp(val, "de") == 0) {
+            new_lang = LANG_DE;
+        } else if (strcmp(val, "en") == 0) {
+            new_lang = LANG_EN;
+        } else {
+            Serial.printf("{\"type\":\"error\",\"message\":\"set_language: invalid value '%s'\"}\n", val);
+            return true;
+        }
+        g_language = new_lang;
+        g_config.language = new_lang;
+        config_save(g_config);
+        ui_dashboard_recreate();
+        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_language\",\"value\":\"%s\"}\n", val);
+        return true;
+    }
+
     // --- get_info ---
     if (strcmp(cmd, "get_info") == 0) {
         const char *orient = (g_config.orientation == ORIENTATION_LANDSCAPE)
                              ? "landscape" : "portrait";
         const char *theme = (g_config.theme == THEME_LIGHT) ? "light" : "dark";
+        const char *lang = (g_config.language == LANG_EN) ? "en" : "de";
         Serial.printf("{\"type\":\"info\",\"version\":\"%s\",\"orientation\":\"%s\","
-                      "\"theme\":\"%s\",\"uptime\":%lu,\"heap\":%u}\n",
-                      APP_VERSION, orient, theme,
+                      "\"theme\":\"%s\",\"language\":\"%s\",\"uptime\":%lu,\"heap\":%u}\n",
+                      APP_VERSION, orient, theme, lang,
                       (unsigned long)(millis() / 1000),
                       (unsigned)ESP.getFreeHeap());
         return true;
@@ -283,8 +309,9 @@ void serial_receiver_init() {
     // Set timezone for localtime_r() — CET/CEST (Germany)
     setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
     tzset();
+    g_language = g_config.language;  // Apply saved language
     state.provider = PROVIDER_CLAUDE;
-    strlcpy(state.status, "Waiting for data...", sizeof(state.status));
+    strlcpy(state.status, L(STR_WAITING), sizeof(state.status));
     new_data_flag = false;
     strlcpy(display_time, "--:--", sizeof(display_time));
 

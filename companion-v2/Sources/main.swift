@@ -61,6 +61,236 @@ let kAppAssetName = "AIMonitor.zip"
 let kAppUpdateCheckInterval: TimeInterval = 24 * 3600  // 24 hours
 
 // ============================================================
+// MARK: - Localization
+// ============================================================
+
+struct Strings {
+    // Menu items
+    let sessionPrefix: String
+    let weeklyPrefix: String
+    let planPrefix: String
+    let displayNotConnected: String
+    let lastUpdate: String
+    let refreshNow: String
+    let firmware: String
+    let flashFirmware: String
+    let searchAppUpdates: String
+    let launchAtLogin: String
+    let about: String
+    let quit: String
+
+    // Status messages
+    let tokenExpired: String
+    let noToken: String
+    let offline: String
+    let serverError: String
+    let noData: String
+    let rateLimited: String
+    let pleaseWait: String
+    let rateLimitedRemaining: String
+
+    // Display status
+    let displayConnected: String
+
+    // Firmware
+    let noReleaseFound: String
+    let couldNotLoadRelease: String
+    let downloadFailed: String
+    let noESP32Connected: String
+    let connectESP32: String
+    let flashFirmwareQuestion: String
+    let flash: String
+    let cancel: String
+    let flashSuccess: String
+    let flashFailed: String
+    let preparing: String
+    let flashing: String
+    let downloading: String
+
+    // App update
+    let noUpdateAvailable: String
+    let appUpdateAvailable: String
+    let download: String
+    let openInBrowser: String
+    let later: String
+    let skipVersion: String
+    let updateFailed: String
+    let install: String
+
+    // Dynamic format strings
+    let connectedFormat: String
+    let firmwareCurrent: String
+    let firmwareAvailable: String
+    let remainingMinutes: String
+    let errorPrefix: String
+
+    // Language menu
+    let language: String
+    let german: String
+    let english: String
+
+    // Time formatting
+    let timeAgoSeconds: String   // "vor %ds" / "%ds ago"
+    let timeAgoMinutes: String   // "vor %dm" / "%dm ago"
+    let timeNow: String          // "jetzt" / "now"
+    let timeInDaysHours: String  // "in %dd %dh"
+    let timeInHoursMinutes: String // "in %dh %dm"
+    let timeInMinutes: String    // "in %dm"
+
+    // Flash completion
+    let flashSuccessMessage: String  // "Firmware erfolgreich geflasht!" / "Firmware flashed successfully!"
+    let flashFailedPrefix: String    // "Flash fehlgeschlagen:" / "Flash failed:"
+
+    // About
+    let aboutInfoText: String
+
+    // App update details
+    let appIsCurrentSuffix: String   // "ist aktuell." / "is up to date."
+    let installQuestion: String      // "Update auf %@ installieren?" / "Install update %@?"
+    let restartInfo: String          // "Die App wird kurz neu gestartet." / "The app will restart briefly."
+    let downloadRunning: String      // "Download läuft..." / "Downloading..."
+    let updateDownload: String       // "Update herunterladen..." / "Download update..."
+}
+
+let stringsDE = Strings(
+    sessionPrefix: "Session:",
+    weeklyPrefix: "Weekly:",
+    planPrefix: "Plan:",
+    displayNotConnected: "Display: \u{25CB} Nicht verbunden",
+    lastUpdate: "Letztes Update:",
+    refreshNow: "Jetzt aktualisieren",
+    firmware: "Firmware:",
+    flashFirmware: "Firmware flashen...",
+    searchAppUpdates: "Nach App-Updates suchen...",
+    launchAtLogin: "Bei Login starten",
+    about: "Über AI Monitor",
+    quit: "Beenden",
+    tokenExpired: "Token abgelaufen - Claude Code öffnen",
+    noToken: "Kein Token gefunden — Claude Code starten",
+    offline: "Offline",
+    serverError: "Server-Fehler",
+    noData: "Keine Daten",
+    rateLimited: "Rate-limited",
+    pleaseWait: "Bitte %ds warten",
+    rateLimitedRemaining: "Rate-limited (%ds)",
+    displayConnected: "Display: \u{25CF} Verbunden",
+    noReleaseFound: "Kein Release gefunden",
+    couldNotLoadRelease: "Konnte kein Firmware-Release von GitHub laden.",
+    downloadFailed: "Download fehlgeschlagen",
+    noESP32Connected: "Kein ESP32 verbunden",
+    connectESP32: "Bitte ESP32 per USB verbinden.",
+    flashFirmwareQuestion: "Firmware flashen?",
+    flash: "Flashen",
+    cancel: "Abbrechen",
+    flashSuccess: "Flash erfolgreich",
+    flashFailed: "Flash fehlgeschlagen",
+    preparing: "Vorbereitung...",
+    flashing: "Flash läuft...",
+    downloading: "Download...",
+    noUpdateAvailable: "Kein Update verfügbar",
+    appUpdateAvailable: "App-Update verfügbar",
+    download: "Herunterladen",
+    openInBrowser: "Im Browser öffnen",
+    later: "Später",
+    skipVersion: "Version überspringen",
+    updateFailed: "Update fehlgeschlagen",
+    install: "Installieren",
+    connectedFormat: "Display: \u{25CF} Verbunden (%@)%@",
+    firmwareCurrent: "(aktuell)",
+    firmwareAvailable: "verfügbar",
+    remainingMinutes: "Rate-limited (%dm verbleibend)",
+    errorPrefix: "Fehler:",
+    language: "Sprache",
+    german: "Deutsch",
+    english: "Englisch",
+    timeAgoSeconds: "vor %ds",
+    timeAgoMinutes: "vor %dm",
+    timeNow: "jetzt",
+    timeInDaysHours: "in %dd %dh",
+    timeInHoursMinutes: "in %dh %dm",
+    timeInMinutes: "in %dm",
+    flashSuccessMessage: "Firmware erfolgreich geflasht!",
+    flashFailedPrefix: "Flash fehlgeschlagen:",
+    aboutInfoText: "macOS Menubar App für ESP32 AI Usage Monitor Display.\n\nLiest Claude OAuth Usage und sendet Daten per USB-Serial an das ESP32 Display.",
+    appIsCurrentSuffix: "ist aktuell.",
+    installQuestion: "Update auf %@ installieren?",
+    restartInfo: "Die App wird kurz neu gestartet.",
+    downloadRunning: "Download läuft...",
+    updateDownload: "Update herunterladen..."
+)
+
+let stringsEN = Strings(
+    sessionPrefix: "Session:",
+    weeklyPrefix: "Weekly:",
+    planPrefix: "Plan:",
+    displayNotConnected: "Display: \u{25CB} Not connected",
+    lastUpdate: "Last update:",
+    refreshNow: "Refresh now",
+    firmware: "Firmware:",
+    flashFirmware: "Flash firmware...",
+    searchAppUpdates: "Check for app updates...",
+    launchAtLogin: "Launch at login",
+    about: "About AI Monitor",
+    quit: "Quit",
+    tokenExpired: "Token expired - open Claude Code",
+    noToken: "No token found — start Claude Code",
+    offline: "Offline",
+    serverError: "Server error",
+    noData: "No data",
+    rateLimited: "Rate-limited",
+    pleaseWait: "Please wait %ds",
+    rateLimitedRemaining: "Rate-limited (%ds)",
+    displayConnected: "Display: \u{25CF} Connected",
+    noReleaseFound: "No release found",
+    couldNotLoadRelease: "Could not load firmware release from GitHub.",
+    downloadFailed: "Download failed",
+    noESP32Connected: "No ESP32 connected",
+    connectESP32: "Please connect ESP32 via USB.",
+    flashFirmwareQuestion: "Flash firmware?",
+    flash: "Flash",
+    cancel: "Cancel",
+    flashSuccess: "Flash successful",
+    flashFailed: "Flash failed",
+    preparing: "Preparing...",
+    flashing: "Flashing...",
+    downloading: "Download...",
+    noUpdateAvailable: "No update available",
+    appUpdateAvailable: "App update available",
+    download: "Download",
+    openInBrowser: "Open in browser",
+    later: "Later",
+    skipVersion: "Skip version",
+    updateFailed: "Update failed",
+    install: "Install",
+    connectedFormat: "Display: \u{25CF} Connected (%@)%@",
+    firmwareCurrent: "(current)",
+    firmwareAvailable: "available",
+    remainingMinutes: "Rate-limited (%dm remaining)",
+    errorPrefix: "Error:",
+    language: "Language",
+    german: "German",
+    english: "English",
+    timeAgoSeconds: "%ds ago",
+    timeAgoMinutes: "%dm ago",
+    timeNow: "now",
+    timeInDaysHours: "in %dd %dh",
+    timeInHoursMinutes: "in %dh %dm",
+    timeInMinutes: "in %dm",
+    flashSuccessMessage: "Firmware flashed successfully!",
+    flashFailedPrefix: "Flash failed:",
+    aboutInfoText: "macOS Menubar App for ESP32 AI Usage Monitor Display.\n\nReads Claude OAuth Usage and sends data via USB-Serial to the ESP32 display.",
+    appIsCurrentSuffix: "is up to date.",
+    installQuestion: "Install update %@?",
+    restartInfo: "The app will restart briefly.",
+    downloadRunning: "Downloading...",
+    updateDownload: "Download update..."
+)
+
+func S() -> Strings {
+    return Settings.shared.language == "en" ? stringsEN : stringsDE
+}
+
+// ============================================================
 // MARK: - Usage Data Model
 // ============================================================
 
@@ -136,6 +366,12 @@ class Settings {
     var skippedAppVersion: String? {
         get { defaults.string(forKey: "skippedAppVersion") }
         set { defaults.set(newValue, forKey: "skippedAppVersion") }
+    }
+
+    /// UI language ("de" or "en"), default "de"
+    var language: String {
+        get { defaults.string(forKey: "language") ?? "de" }
+        set { defaults.set(newValue, forKey: "language") }
     }
 
     private init() {
@@ -600,19 +836,19 @@ class AppUpdateManager {
             // No direct asset — open the release page in browser instead
             if let htmlUrl = release.html_url, let url = URL(string: htmlUrl) {
                 NSWorkspace.shared.open(url)
-                completion(true, "Release-Seite im Browser geöffnet")
+                completion(true, S().openInBrowser)
             } else {
                 let repoUrl = "https://github.com/\(kGitHubRepo)/releases/tag/\(release.tag_name)"
                 if let url = URL(string: repoUrl) {
                     NSWorkspace.shared.open(url)
                 }
-                completion(true, "Release-Seite im Browser geöffnet")
+                completion(true, S().openInBrowser)
             }
             return
         }
 
         guard let downloadUrl = URL(string: asset.browser_download_url) else {
-            completion(false, "Ungültige Download-URL")
+            completion(false, "Invalid download URL")
             return
         }
 
@@ -635,7 +871,7 @@ class AppUpdateManager {
             guard let tempUrl = tempUrl else {
                 DispatchQueue.main.async {
                     self.onUpdate?()
-                    completion(false, "Download fehlgeschlagen")
+                    completion(false, S().downloadFailed)
                 }
                 return
             }
@@ -690,7 +926,7 @@ class AppUpdateManager {
                 NSLog("[AppUpdate] File operation error: %@", error.localizedDescription)
                 DispatchQueue.main.async {
                     self.onUpdate?()
-                    completion(false, "Fehler: \(error.localizedDescription)")
+                    completion(false, "\(S().errorPrefix) \(error.localizedDescription)")
                 }
             }
         }
@@ -802,7 +1038,7 @@ class AppUpdateManager {
             }
         } catch {
             NSLog("[AppUpdate] Fehler beim Erstellen/Starten des Update-Scripts: %@", error.localizedDescription)
-            completion(false, "Update-Script konnte nicht gestartet werden: \(error.localizedDescription)")
+            completion(false, "Update script failed: \(error.localizedDescription)")
         }
     }
 
@@ -991,17 +1227,17 @@ class FirmwareManager {
     /// Download firmware binary from GitHub release
     func downloadFirmware(completion: @escaping (Bool, String?) -> Void) {
         guard let release = latestRelease else {
-            completion(false, "Kein Release gefunden")
+            completion(false, S().noReleaseFound)
             return
         }
 
         guard let asset = release.assets.first(where: { $0.name == kFirmwareAssetName }) else {
-            completion(false, "Kein \(kFirmwareAssetName) im Release \(release.tag_name)")
+            completion(false, "No \(kFirmwareAssetName) in release \(release.tag_name)")
             return
         }
 
         guard let url = URL(string: asset.browser_download_url) else {
-            completion(false, "Ungültige Download-URL")
+            completion(false, "Invalid download URL")
             return
         }
 
@@ -1009,7 +1245,7 @@ class FirmwareManager {
         do {
             try FileManager.default.createDirectory(atPath: firmwareDir, withIntermediateDirectories: true)
         } catch {
-            completion(false, "Kann Firmware-Verzeichnis nicht erstellen: \(error.localizedDescription)")
+            completion(false, "Cannot create firmware directory: \(error.localizedDescription)")
             return
         }
 
@@ -1042,7 +1278,7 @@ class FirmwareManager {
 
             guard let tempURL = tempURL else {
                 DispatchQueue.main.async { self.onUpdate?() }
-                completion(false, "Kein Download-Ergebnis")
+                completion(false, S().downloadFailed)
                 return
             }
 
@@ -1079,7 +1315,7 @@ class FirmwareManager {
         }
 
         isFlashing = true
-        flashProgress = "Vorbereitung..."
+        flashProgress = S().preparing
         DispatchQueue.main.async { self.onUpdate?() }
 
         // Serial already disconnected by stopScanning() before this call
@@ -1182,7 +1418,7 @@ class FirmwareManager {
                     }
 
                     NSLog("[Firmware] Flash successful")
-                    completion(true, "Firmware erfolgreich geflasht!")
+                    completion(true, S().flashSuccessMessage)
                 } else {
                     let combinedOutput = outputText + "\n" + errorText
                     NSLog("[Firmware] Flash failed:\n%@", combinedOutput)
@@ -1195,7 +1431,7 @@ class FirmwareManager {
 
                     let shortError = errorText.isEmpty ? "esptool Exit-Code \(exitCode)" :
                         errorText.components(separatedBy: "\n").last(where: { !$0.isEmpty }) ?? errorText
-                    completion(false, "Flash fehlgeschlagen: \(shortError)")
+                    completion(false, "\(S().flashFailedPrefix) \(shortError)")
                 }
             } catch {
                 NSLog("[Firmware] Failed to start esptool: %@", error.localizedDescription)
@@ -1524,8 +1760,9 @@ class UsageMonitor {
             // Firmware version already queried in connect() before this callback
             self?.onUpdate?()
 
-            // Sync macOS appearance to ESP32 on connect
+            // Sync macOS appearance and language to ESP32 on connect
             self?.sendThemeToESP32()
+            self?.sendLanguageToESP32()
 
             if !ClaudeAPI.isRateLimited {
                 NSLog("[Monitor] Serial connected — triggering immediate poll")
@@ -1541,7 +1778,7 @@ class UsageMonitor {
             let remaining = ClaudeAPI.rateLimitRemaining
             NSLog("[Monitor] Resuming with active rate-limit cooldown: %ds remaining (#%d)", remaining, ClaudeAPI.consecutive429Count)
             status = .rateLimited
-            lastError = "Rate-limited (\(remaining)s)"
+            lastError = String(format: S().rateLimitedRemaining, remaining)
         } else if let lastPoll = Settings.shared.lastPollDate,
                   Date().timeIntervalSince(lastPoll) < kPollInterval {
             let elapsed = Int(Date().timeIntervalSince(lastPoll))
@@ -1582,7 +1819,7 @@ class UsageMonitor {
             if elapsed < kMinPollInterval {
                 let remaining = Int(kMinPollInterval - elapsed)
                 NSLog("[Monitor] Manual refresh blocked - %d sec cooldown remaining", remaining)
-                lastError = "Bitte \(remaining)s warten"
+                lastError = String(format: S().pleaseWait, remaining)
                 DispatchQueue.main.async { self.onUpdate?() }
                 return
             }
@@ -1596,7 +1833,7 @@ class UsageMonitor {
 
         // 1. Read token
         guard let token = KeychainReader.readAccessToken() else {
-            lastError = "Kein Token gefunden — Claude Code starten"
+            lastError = S().noToken
             status = .tokenExpired
             DispatchQueue.main.async { self.onUpdate?() }
             return
@@ -1619,7 +1856,7 @@ class UsageMonitor {
                                 if let usage2 = usage2 {
                                     self.handleSuccess(usage: usage2)
                                 } else {
-                                    self.lastError = "Token abgelaufen - Claude Code öffnen"
+                                    self.lastError = S().tokenExpired
                                     self.status = .tokenExpired
                                     DispatchQueue.main.async { self.onUpdate?() }
                                 }
@@ -1627,12 +1864,12 @@ class UsageMonitor {
                             return
                         }
                     }
-                    self.lastError = "Token abgelaufen - Claude Code öffnen"
+                    self.lastError = S().tokenExpired
                     self.status = .tokenExpired
                     DispatchQueue.main.async { self.onUpdate?() }
                     return
                 } else {
-                    self.lastError = "Token abgelaufen - Claude Code öffnen"
+                    self.lastError = S().tokenExpired
                     self.status = .tokenExpired
                     DispatchQueue.main.async { self.onUpdate?() }
                     return
@@ -1641,7 +1878,7 @@ class UsageMonitor {
 
             if let statusCode = statusCode, statusCode == 429 {
                 self.status = .rateLimited
-                self.lastError = "Rate-limited (\(ClaudeAPI.rateLimitRemaining)s)"
+                self.lastError = String(format: S().rateLimitedRemaining, ClaudeAPI.rateLimitRemaining)
                 // Still send cached data with current time to keep display clock alive
                 self.resendCachedData()
                 DispatchQueue.main.async { self.onUpdate?() }
@@ -1652,10 +1889,10 @@ class UsageMonitor {
                 let nsError = error as NSError
                 if nsError.domain == NSURLErrorDomain {
                     self.status = .offline
-                    self.lastError = "Offline"
+                    self.lastError = S().offline
                 } else if let statusCode = statusCode, statusCode >= 500 {
                     self.status = .error
-                    self.lastError = "Server-Fehler (\(statusCode))"
+                    self.lastError = "\(S().serverError) (\(statusCode))"
                 } else {
                     self.status = .error
                     self.lastError = error.localizedDescription
@@ -1665,7 +1902,7 @@ class UsageMonitor {
             }
 
             guard let usage = usage else {
-                self.lastError = "Keine Daten"
+                self.lastError = S().noData
                 self.status = .error
                 DispatchQueue.main.async { self.onUpdate?() }
                 return
@@ -1703,6 +1940,16 @@ class UsageMonitor {
         let cmd = "{\"cmd\":\"set_theme\",\"value\":\"\(theme)\"}"
         if serialPort.sendJSON(cmd) {
             NSLog("[Serial] Sent set_theme: %@", theme)
+        }
+    }
+
+    func sendLanguageToESP32() {
+        guard serialPort.isConnected else { return }
+
+        let lang = Settings.shared.language
+        let cmd = "{\"cmd\":\"set_language\",\"value\":\"\(lang)\"}"
+        if serialPort.sendJSON(cmd) {
+            NSLog("[Serial] Sent set_language: %@", lang)
         }
     }
 
@@ -1789,6 +2036,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let kTagFirmwareFlash = 201
     let kTagAppUpdateStatus = 300
     let kTagAppUpdateAction = 301
+    let kTagLaunchAtLogin = 400
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Setup menubar
@@ -1925,19 +2173,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
 
         // Session
-        let sessionItem = NSMenuItem(title: "Session: --", action: nil, keyEquivalent: "")
+        let sessionItem = NSMenuItem(title: "\(S().sessionPrefix) --", action: nil, keyEquivalent: "")
         sessionItem.tag = kTagSession
         sessionItem.isEnabled = false
         menu.addItem(sessionItem)
 
         // Weekly
-        let weeklyItem = NSMenuItem(title: "Weekly:  --", action: nil, keyEquivalent: "")
+        let weeklyItem = NSMenuItem(title: "\(S().weeklyPrefix)  --", action: nil, keyEquivalent: "")
         weeklyItem.tag = kTagWeekly
         weeklyItem.isEnabled = false
         menu.addItem(weeklyItem)
 
         // Plan
-        let planItem = NSMenuItem(title: "Plan:    --", action: nil, keyEquivalent: "")
+        let planItem = NSMenuItem(title: "\(S().planPrefix)    --", action: nil, keyEquivalent: "")
         planItem.tag = kTagPlan
         planItem.isEnabled = false
         menu.addItem(planItem)
@@ -1945,13 +2193,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // Display status
-        let displayItem = NSMenuItem(title: "Display: -- Nicht verbunden", action: nil, keyEquivalent: "")
+        let displayItem = NSMenuItem(title: S().displayNotConnected, action: nil, keyEquivalent: "")
         displayItem.tag = kTagDisplay
         displayItem.isEnabled = false
         menu.addItem(displayItem)
 
         // Last update
-        let updateItem = NSMenuItem(title: "Letztes Update: --", action: nil, keyEquivalent: "")
+        let updateItem = NSMenuItem(title: "\(S().lastUpdate) --", action: nil, keyEquivalent: "")
         updateItem.tag = kTagLastUpdate
         updateItem.isEnabled = false
         menu.addItem(updateItem)
@@ -1959,19 +2207,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // Refresh
-        let refreshItem = NSMenuItem(title: "Jetzt aktualisieren", action: #selector(refreshNow), keyEquivalent: "r")
+        let refreshItem = NSMenuItem(title: S().refreshNow, action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.tag = kTagRefresh
         menu.addItem(refreshItem)
 
         menu.addItem(NSMenuItem.separator())
 
         // Firmware section
-        let fwStatusItem = NSMenuItem(title: "Firmware: --", action: nil, keyEquivalent: "")
+        let fwStatusItem = NSMenuItem(title: "\(S().firmware) --", action: nil, keyEquivalent: "")
         fwStatusItem.tag = kTagFirmwareStatus
         fwStatusItem.isEnabled = false
         menu.addItem(fwStatusItem)
 
-        let fwFlashItem = NSMenuItem(title: "Firmware flashen...", action: #selector(flashFirmware), keyEquivalent: "")
+        let fwFlashItem = NSMenuItem(title: S().flashFirmware, action: #selector(flashFirmware), keyEquivalent: "")
         fwFlashItem.tag = kTagFirmwareFlash
         fwFlashItem.isEnabled = false
         menu.addItem(fwFlashItem)
@@ -1984,24 +2232,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appUpdateStatusItem.isEnabled = false
         menu.addItem(appUpdateStatusItem)
 
-        let appUpdateActionItem = NSMenuItem(title: "Nach App-Updates suchen...", action: #selector(checkForAppUpdate), keyEquivalent: "")
+        let appUpdateActionItem = NSMenuItem(title: S().searchAppUpdates, action: #selector(checkForAppUpdate), keyEquivalent: "")
         appUpdateActionItem.tag = kTagAppUpdateAction
         menu.addItem(appUpdateActionItem)
 
         menu.addItem(NSMenuItem.separator())
 
+        // Language submenu
+        let langMenu = NSMenu()
+        let langDE = NSMenuItem(title: S().german, action: #selector(setLanguageDE), keyEquivalent: "")
+        let langEN = NSMenuItem(title: S().english, action: #selector(setLanguageEN), keyEquivalent: "")
+        if Settings.shared.language == "de" { langDE.state = .on }
+        if Settings.shared.language == "en" { langEN.state = .on }
+        langMenu.addItem(langDE)
+        langMenu.addItem(langEN)
+        let langItem = NSMenuItem(title: S().language, action: nil, keyEquivalent: "")
+        langItem.submenu = langMenu
+        menu.addItem(langItem)
+
         // Launch at login
-        let loginItem = NSMenuItem(title: "Bei Login starten", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        let loginItem = NSMenuItem(title: S().launchAtLogin, action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        loginItem.tag = kTagLaunchAtLogin
         loginItem.state = Settings.shared.launchAtLogin ? .on : .off
         menu.addItem(loginItem)
 
         menu.addItem(NSMenuItem.separator())
 
         // About
-        menu.addItem(withTitle: "Über AI Monitor", action: #selector(showAbout), keyEquivalent: "")
+        menu.addItem(withTitle: S().about, action: #selector(showAbout), keyEquivalent: "")
 
         // Quit
-        menu.addItem(withTitle: "Beenden", action: #selector(quit), keyEquivalent: "q")
+        menu.addItem(withTitle: S().quit, action: #selector(quit), keyEquivalent: "q")
 
         statusItem.menu = menu
     }
@@ -2020,8 +2281,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let sessionReset = formatCountdown(usage.five_hour?.resets_at)
             let weeklyReset = formatCountdown(usage.seven_day?.resets_at)
 
-            let sessionText = sessionReset.isEmpty ? "Session: \(sp)%" : "Session: \(sp)%  (Reset \(sessionReset))"
-            let weeklyText = weeklyReset.isEmpty ? "Weekly:  \(wp)%" : "Weekly:  \(wp)%  (Reset \(weeklyReset))"
+            let sessionText = sessionReset.isEmpty ? "\(S().sessionPrefix) \(sp)%" : "\(S().sessionPrefix) \(sp)%  (Reset \(sessionReset))"
+            let weeklyText = weeklyReset.isEmpty ? "\(S().weeklyPrefix)  \(wp)%" : "\(S().weeklyPrefix)  \(wp)%  (Reset \(weeklyReset))"
 
             menu.item(withTag: kTagSession)?.title = sessionText
             menu.item(withTag: kTagWeekly)?.title = weeklyText
@@ -2031,9 +2292,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // API returns costs in cents
                 let used = (extra.used_credits ?? 0) / 100.0
                 let limit = (extra.monthly_limit ?? 0) / 100.0
-                menu.item(withTag: kTagPlan)?.title = "Plan:    Claude Max ($\(formatCurrency(used))/$\(formatCurrency(limit)))"
+                menu.item(withTag: kTagPlan)?.title = "\(S().planPrefix)    Claude Max ($\(formatCurrency(used))/$\(formatCurrency(limit)))"
             } else {
-                menu.item(withTag: kTagPlan)?.title = "Plan:    Claude Pro"
+                menu.item(withTag: kTagPlan)?.title = "\(S().planPrefix)    Claude Pro"
             }
         }
 
@@ -2041,9 +2302,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if monitor.status == .rateLimited {
                 let remaining = ClaudeAPI.rateLimitRemaining
                 let minutes = remaining / 60
-                menu.item(withTag: kTagSession)?.title = "Rate-limited (\(minutes)m verbleibend)"
+                menu.item(withTag: kTagSession)?.title = String(format: S().remainingMinutes, minutes)
             } else if monitor.lastUsage == nil {
-                menu.item(withTag: kTagSession)?.title = "Fehler: \(error)"
+                menu.item(withTag: kTagSession)?.title = "\(S().errorPrefix) \(error)"
             }
         }
 
@@ -2051,9 +2312,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if monitor.serialPort.isConnected, let port = monitor.serialPort.connectedPort {
             let shortPort = (port as NSString).lastPathComponent
             let fwVersion = monitor.serialPort.deviceFirmwareVersion.map { " · FW v\($0)" } ?? ""
-            menu.item(withTag: kTagDisplay)?.title = "Display: \u{25CF} Verbunden (\(shortPort))\(fwVersion)"
+            menu.item(withTag: kTagDisplay)?.title = String(format: S().connectedFormat, shortPort, fwVersion)
         } else {
-            menu.item(withTag: kTagDisplay)?.title = "Display: \u{25CB} Nicht verbunden"
+            menu.item(withTag: kTagDisplay)?.title = S().displayNotConnected
         }
 
         // Last update
@@ -2061,57 +2322,57 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let elapsed = Int(Date().timeIntervalSince(lastUpdate))
             let text: String
             if elapsed < 60 {
-                text = "vor \(elapsed)s"
+                text = String(format: S().timeAgoSeconds, elapsed)
             } else {
-                text = "vor \(elapsed / 60)m"
+                text = String(format: S().timeAgoMinutes, elapsed / 60)
             }
-            menu.item(withTag: kTagLastUpdate)?.title = "Letztes Update: \(text)"
+            menu.item(withTag: kTagLastUpdate)?.title = "\(S().lastUpdate) \(text)"
         }
 
         // Firmware status
         let fw = FirmwareManager.shared
         if fw.isFlashing {
-            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: \(fw.flashProgress)"
+            menu.item(withTag: kTagFirmwareStatus)?.title = "\(S().firmware) \(fw.flashProgress)"
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
-            menu.item(withTag: kTagFirmwareFlash)?.title = "Flash läuft..."
+            menu.item(withTag: kTagFirmwareFlash)?.title = S().flashing
         } else if fw.isDownloading {
-            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: Download..."
+            menu.item(withTag: kTagFirmwareStatus)?.title = "\(S().firmware) \(S().downloading)"
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
         } else if fw.hasUpdate {
-            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware Update: \(fw.latestVersionDisplay) verfügbar"
-            menu.item(withTag: kTagFirmwareFlash)?.title = "Firmware flashen..."
+            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware Update: \(fw.latestVersionDisplay) \(S().firmwareAvailable)"
+            menu.item(withTag: kTagFirmwareFlash)?.title = S().flashFirmware
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = fw.canFlash(serialConnected: monitor.serialPort.isConnected)
         } else if fw.latestRelease != nil {
-            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: \(fw.installedVersionDisplay) (aktuell)"
-            menu.item(withTag: kTagFirmwareFlash)?.title = "Firmware flashen..."
+            menu.item(withTag: kTagFirmwareStatus)?.title = "\(S().firmware) \(fw.installedVersionDisplay) \(S().firmwareCurrent)"
+            menu.item(withTag: kTagFirmwareFlash)?.title = S().flashFirmware
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = fw.canFlash(serialConnected: monitor.serialPort.isConnected)
         } else {
-            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: \(fw.installedVersionDisplay)"
+            menu.item(withTag: kTagFirmwareStatus)?.title = "\(S().firmware) \(fw.installedVersionDisplay)"
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
         }
 
         // App update status
         let appMgr = AppUpdateManager.shared
         if appMgr.isDownloading {
-            menu.item(withTag: kTagAppUpdateStatus)?.title = "App: Download..."
+            menu.item(withTag: kTagAppUpdateStatus)?.title = "App: \(S().downloading)"
             menu.item(withTag: kTagAppUpdateAction)?.isEnabled = false
-            menu.item(withTag: kTagAppUpdateAction)?.title = "Download läuft..."
+            menu.item(withTag: kTagAppUpdateAction)?.title = S().downloadRunning
         } else if appMgr.hasUpdate {
-            menu.item(withTag: kTagAppUpdateStatus)?.title = "App Update: \(appMgr.latestVersionDisplay) verfügbar"
+            menu.item(withTag: kTagAppUpdateStatus)?.title = "App Update: \(appMgr.latestVersionDisplay) \(S().firmwareAvailable)"
             menu.item(withTag: kTagAppUpdateAction)?.isEnabled = true
-            menu.item(withTag: kTagAppUpdateAction)?.title = "Update herunterladen..."
+            menu.item(withTag: kTagAppUpdateAction)?.title = S().updateDownload
         } else if appMgr.latestRelease != nil {
-            menu.item(withTag: kTagAppUpdateStatus)?.title = "App: v\(kAppVersion) (aktuell)"
+            menu.item(withTag: kTagAppUpdateStatus)?.title = "App: v\(kAppVersion) \(S().firmwareCurrent)"
             menu.item(withTag: kTagAppUpdateAction)?.isEnabled = true
-            menu.item(withTag: kTagAppUpdateAction)?.title = "Nach App-Updates suchen..."
+            menu.item(withTag: kTagAppUpdateAction)?.title = S().searchAppUpdates
         } else {
             menu.item(withTag: kTagAppUpdateStatus)?.title = "App: v\(kAppVersion)"
             menu.item(withTag: kTagAppUpdateAction)?.isEnabled = true
-            menu.item(withTag: kTagAppUpdateAction)?.title = "Nach App-Updates suchen..."
+            menu.item(withTag: kTagAppUpdateAction)?.title = S().searchAppUpdates
         }
 
         // Update launch at login checkmark
-        if let loginItem = menu.items.first(where: { $0.title == "Bei Login starten" }) {
+        if let loginItem = menu.item(withTag: kTagLaunchAtLogin) {
             loginItem.state = Settings.shared.launchAtLogin ? .on : .off
         }
     }
@@ -2129,7 +2390,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let diff = resetDate.timeIntervalSinceNow
-        if diff <= 0 { return "jetzt" }
+        if diff <= 0 { return S().timeNow }
 
         let hours = Int(diff) / 3600
         let minutes = (Int(diff) % 3600) / 60
@@ -2137,11 +2398,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if hours >= 24 {
             let days = hours / 24
             let remainHours = hours % 24
-            return "in \(days)d \(remainHours)h"
+            return String(format: S().timeInDaysHours, days, remainHours)
         } else if hours > 0 {
-            return "in \(hours)h \(minutes)m"
+            return String(format: S().timeInHoursMinutes, hours, minutes)
         } else {
-            return "in \(minutes)m"
+            return String(format: S().timeInMinutes, minutes)
         }
     }
 
@@ -2171,8 +2432,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if fw.downloadedBinPath == nil {
             guard fw.latestRelease != nil else {
                 let alert = NSAlert()
-                alert.messageText = "Kein Release gefunden"
-                alert.informativeText = "Konnte kein Firmware-Release von GitHub laden."
+                alert.messageText = S().noReleaseFound
+                alert.informativeText = S().couldNotLoadRelease
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
@@ -2185,8 +2446,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         self?.flashFirmware()  // Retry with downloaded firmware
                     } else {
                         let alert = NSAlert()
-                        alert.messageText = "Download fehlgeschlagen"
-                        alert.informativeText = error ?? "Unbekannter Fehler"
+                        alert.messageText = S().downloadFailed
+                        alert.informativeText = error ?? "Unknown error"
                         alert.alertStyle = .warning
                         alert.addButton(withTitle: "OK")
                         alert.runModal()
@@ -2198,8 +2459,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard let port = monitor.serialPort.connectedPort else {
             let alert = NSAlert()
-            alert.messageText = "Kein ESP32 verbunden"
-            alert.informativeText = "Bitte ESP32 per USB verbinden."
+            alert.messageText = S().noESP32Connected
+            alert.informativeText = S().connectESP32
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
             alert.runModal()
@@ -2210,11 +2471,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let version = fw.latestRelease?.tag_name ?? fw.installedVersionDisplay
         let shortPort = (port as NSString).lastPathComponent
         let confirm = NSAlert()
-        confirm.messageText = "Firmware flashen?"
-        confirm.informativeText = "ESP32 auf \(shortPort) mit Firmware \(version) flashen?\n\nDie serielle Verbindung wird während des Flash-Vorgangs unterbrochen."
+        confirm.messageText = S().flashFirmwareQuestion
+        confirm.informativeText = "ESP32 \(shortPort) — Firmware \(version)"
         confirm.alertStyle = .warning
-        confirm.addButton(withTitle: "Flashen")
-        confirm.addButton(withTitle: "Abbrechen")
+        confirm.addButton(withTitle: S().flash)
+        confirm.addButton(withTitle: S().cancel)
 
         let response = confirm.runModal()
         guard response == .alertFirstButtonReturn else { return }
@@ -2228,7 +2489,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.monitor.serialPort.startScanning()
 
                 let alert = NSAlert()
-                alert.messageText = success ? "Flash erfolgreich" : "Flash fehlgeschlagen"
+                alert.messageText = success ? S().flashSuccess : S().flashFailed
                 alert.informativeText = message
                 alert.alertStyle = success ? .informational : .critical
                 alert.addButton(withTitle: "OK")
@@ -2253,8 +2514,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.showAppUpdateAlert()
                 } else {
                     let alert = NSAlert()
-                    alert.messageText = "Kein Update verfügbar"
-                    alert.informativeText = "AI Monitor v\(kAppVersion) ist aktuell."
+                    alert.messageText = S().noUpdateAvailable
+                    alert.informativeText = "AI Monitor v\(kAppVersion) \(S().appIsCurrentSuffix)"
                     alert.alertStyle = .informational
                     alert.addButton(withTitle: "OK")
                     alert.runModal()
@@ -2268,9 +2529,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard appMgr.hasUpdate else { return }
 
         let alert = NSAlert()
-        alert.messageText = "App-Update verfügbar"
+        alert.messageText = S().appUpdateAvailable
 
-        var info = "Eine neue Version \(appMgr.latestVersionDisplay) ist verfügbar.\nInstalliert: v\(kAppVersion)"
+        var info = "\(appMgr.latestVersionDisplay) \(S().firmwareAvailable)\nInstalled: v\(kAppVersion)"
         if let body = appMgr.latestRelease?.body, !body.isEmpty {
             // Strip Markdown formatting for plain-text display
             let plain = body
@@ -2288,12 +2549,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Check if there's a downloadable asset
         let hasAsset = appMgr.latestRelease?.assets.contains { $0.name == kAppAssetName } ?? false
         if hasAsset {
-            alert.addButton(withTitle: "Herunterladen")
+            alert.addButton(withTitle: S().download)
         } else {
-            alert.addButton(withTitle: "Im Browser öffnen")
+            alert.addButton(withTitle: S().openInBrowser)
         }
-        alert.addButton(withTitle: "Später")
-        alert.addButton(withTitle: "Version überspringen")
+        alert.addButton(withTitle: S().later)
+        alert.addButton(withTitle: S().skipVersion)
 
         let response = alert.runModal()
         switch response {
@@ -2325,7 +2586,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard success else {
                     // Download or extraction failed
                     let alert = NSAlert()
-                    alert.messageText = "Update fehlgeschlagen"
+                    alert.messageText = S().updateFailed
                     alert.informativeText = extractedPathOrError
                     alert.alertStyle = .critical
                     alert.addButton(withTitle: "OK")
@@ -2335,11 +2596,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 // Download successful — ask user to confirm install + restart
                 let alert = NSAlert()
-                alert.messageText = "Update auf \(appMgr.latestVersionDisplay) installieren?"
-                alert.informativeText = "Die App wird kurz neu gestartet."
+                alert.messageText = String(format: S().installQuestion, appMgr.latestVersionDisplay)
+                alert.informativeText = S().restartInfo
                 alert.alertStyle = .informational
-                alert.addButton(withTitle: "Installieren")
-                alert.addButton(withTitle: "Später")
+                alert.addButton(withTitle: S().install)
+                alert.addButton(withTitle: S().later)
 
                 let response = alert.runModal()
                 if response == .alertFirstButtonReturn {
@@ -2347,7 +2608,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     appMgr.performAutoUpdate(extractedAppPath: extractedPathOrError) { _, errorMessage in
                         DispatchQueue.main.async {
                             let errAlert = NSAlert()
-                            errAlert.messageText = "Update fehlgeschlagen"
+                            errAlert.messageText = S().updateFailed
                             errAlert.informativeText = errorMessage
                             errAlert.alertStyle = .critical
                             errAlert.addButton(withTitle: "OK")
@@ -2355,17 +2616,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         }
                     }
                 } else {
-                    // User chose "Spaeter" — leave downloaded app in temp for next time
-                    NSLog("[AppUpdate] User verschiebt Update auf spaeter, neue App liegt in: %@", extractedPathOrError)
+                    NSLog("[AppUpdate] User deferred update, new app at: %@", extractedPathOrError)
                 }
             }
         }
     }
 
+    @objc func setLanguageDE() {
+        Settings.shared.language = "de"
+        monitor.sendLanguageToESP32()
+        buildMenu()
+        updateMenu()
+    }
+
+    @objc func setLanguageEN() {
+        Settings.shared.language = "en"
+        monitor.sendLanguageToESP32()
+        buildMenu()
+        updateMenu()
+    }
+
     @objc func showAbout() {
         let alert = NSAlert()
-        alert.messageText = "AI Monitor v\(kAppVersion)"
-        alert.informativeText = "macOS Menubar App für ESP32 AI Usage Monitor Display.\n\nLiest Claude OAuth Usage und sendet Daten per USB-Serial an das ESP32 Display."
+        alert.messageText = "\(S().about) v\(kAppVersion)"
+        alert.informativeText = S().aboutInfoText
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()

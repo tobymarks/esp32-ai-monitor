@@ -8,7 +8,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.2.0"
+#define APP_VERSION "2.3.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---
@@ -84,12 +84,19 @@ extern uint16_t SCREEN_HEIGHT;
 #define THEME_LIGHT  1
 
 // ============================================================
+// Language options
+// ============================================================
+#define LANG_DE  0
+#define LANG_EN  1
+
+// ============================================================
 // Application Configuration Struct
 // ============================================================
 struct AppConfig {
     uint16_t poll_interval_sec;       // Default 120
     uint8_t  orientation;             // ORIENTATION_PORTRAIT(0) or ORIENTATION_LANDSCAPE(1)
     uint8_t  theme;                   // THEME_DARK(0) or THEME_LIGHT(1)
+    uint8_t  language;                // LANG_DE(0) or LANG_EN(1)
 };
 
 // ============================================================

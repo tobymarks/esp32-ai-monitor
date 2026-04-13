@@ -25,6 +25,7 @@
 #include <Preferences.h>
 #include "config.h"
 #include "config_store.h"
+#include "localization.h"
 #include "serial_receiver.h"
 #include "ui_common.h"
 #include "ui_dashboard.h"
@@ -217,7 +218,7 @@ void setup()
 
     // --- Serial receiver init ---
     serial_receiver_init();
-    update_boot_status("USB verbunden...");
+    update_boot_status(L(STR_USB_CONNECTED));
     delay(1000);
 
     // --- Enter dashboard ---

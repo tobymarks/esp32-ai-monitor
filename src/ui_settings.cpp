@@ -12,6 +12,7 @@
 #include "ui_dashboard.h"
 #include "config.h"
 #include "config_store.h"
+#include "localization.h"
 #include "serial_receiver.h"
 
 #include <lvgl.h>
@@ -107,7 +108,7 @@ void ui_settings_create() {
     lv_obj_add_event_cb(btn_back, on_back_tap, LV_EVENT_CLICKED, scr);
 
     lv_obj_t *lbl_title = lv_label_create(header);
-    lv_label_set_text(lbl_title, "SETTINGS");
+    lv_label_set_text(lbl_title, L(STR_SETTINGS));
     lv_obj_set_style_text_color(lbl_title, UI_COLOR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_set_pos(lbl_title, 34, 8);
@@ -135,7 +136,7 @@ void ui_settings_create() {
     int16_t y = 40;
 
     // Source
-    create_info_row(scr, "Source:", "USB Serial", y);
+    create_info_row(scr, L(STR_SOURCE), L(STR_SOURCE_USB), y);
     y += 18;
 
     // Last data
@@ -145,27 +146,31 @@ void ui_settings_create() {
         if (ms.usage.valid && ms.usage.last_fetch > 0) {
             unsigned long ago_sec = (millis() - ms.usage.last_fetch) / 1000;
             if (ago_sec < 60) {
-                snprintf(data_buf, sizeof(data_buf), "just now");
+                snprintf(data_buf, sizeof(data_buf), "%s", L(STR_JUST_NOW));
             } else {
-                snprintf(data_buf, sizeof(data_buf), "%lum ago", ago_sec / 60);
+                if (g_language == LANG_DE) {
+                    snprintf(data_buf, sizeof(data_buf), "vor %lum", ago_sec / 60);
+                } else {
+                    snprintf(data_buf, sizeof(data_buf), "%lum ago", ago_sec / 60);
+                }
             }
         } else {
-            snprintf(data_buf, sizeof(data_buf), "no data");
+            snprintf(data_buf, sizeof(data_buf), "%s", L(STR_NO_DATA));
         }
-        create_info_row(scr, "Last data:", data_buf, y);
+        create_info_row(scr, L(STR_LAST_DATA), data_buf, y);
     }
     y += 18;
 
     // Status
     {
         MonitorState ms = serial_get_state();
-        create_info_row(scr, "Status:", ms.status, y);
+        create_info_row(scr, L(STR_STATUS), ms.status, y);
     }
     y += 18;
 
     // Orientation
-    create_info_row(scr, "Orient.:",
-                    g_config.orientation == ORIENTATION_LANDSCAPE ? "Landscape" : "Portrait", y);
+    create_info_row(scr, L(STR_ORIENTATION),
+                    g_config.orientation == ORIENTATION_LANDSCAPE ? L(STR_LANDSCAPE) : L(STR_PORTRAIT), y);
     y += 18;
 
     // ---- Divider ----
@@ -176,17 +181,17 @@ void ui_settings_create() {
     char heap_buf[48];
     snprintf(heap_buf, sizeof(heap_buf), "%u KB / Min: %u KB",
              ESP.getFreeHeap() / 1024, ESP.getMinFreeHeap() / 1024);
-    create_info_row(scr, "Heap:", heap_buf, y);
+    create_info_row(scr, L(STR_HEAP), heap_buf, y);
     y += 18;
 
     char uptime_buf[32];
     format_uptime(uptime_buf, sizeof(uptime_buf));
-    create_info_row(scr, "Uptime:", uptime_buf, y);
+    create_info_row(scr, L(STR_UPTIME), uptime_buf, y);
     y += 18;
 
     char poll_buf[32];
     snprintf(poll_buf, sizeof(poll_buf), "%us", (unsigned)g_config.poll_interval_sec);
-    create_info_row(scr, "Poll:", poll_buf, y);
+    create_info_row(scr, L(STR_POLL), poll_buf, y);
 
     // ---- Divider above footer ----
     int16_t footer_div_y = sh - 42;

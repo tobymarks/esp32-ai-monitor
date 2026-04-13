@@ -4,6 +4,7 @@
 
 #include "ui_common.h"
 #include "config.h"
+#include "localization.h"
 #include <Arduino.h>
 #include <stdio.h>
 #include <time.h>
@@ -156,7 +157,7 @@ void format_cost(float cost, char *buf, size_t len) {
 // ============================================================
 void format_time_ago(unsigned long last_fetch_ms, char *buf, size_t len) {
     if (last_fetch_ms == 0) {
-        snprintf(buf, len, "never");
+        snprintf(buf, len, "%s", L(STR_NEVER));
         return;
     }
 
@@ -165,18 +166,34 @@ void format_time_ago(unsigned long last_fetch_ms, char *buf, size_t len) {
     unsigned long elapsed_sec = elapsed_ms / 1000;
 
     if (elapsed_sec < 30) {
-        snprintf(buf, len, "just now");
+        snprintf(buf, len, "%s", L(STR_JUST_NOW));
     } else if (elapsed_sec < 60) {
-        snprintf(buf, len, "%lus ago", elapsed_sec);
+        if (g_language == LANG_DE) {
+            snprintf(buf, len, "vor %lus", elapsed_sec);
+        } else {
+            snprintf(buf, len, "%lus ago", elapsed_sec);
+        }
     } else if (elapsed_sec < 3600) {
         unsigned long mins = elapsed_sec / 60;
-        snprintf(buf, len, "%lum ago", mins);
+        if (g_language == LANG_DE) {
+            snprintf(buf, len, "vor %lum", mins);
+        } else {
+            snprintf(buf, len, "%lum ago", mins);
+        }
     } else if (elapsed_sec < 86400) {
         unsigned long hours = elapsed_sec / 3600;
-        snprintf(buf, len, "%luh ago", hours);
+        if (g_language == LANG_DE) {
+            snprintf(buf, len, "vor %luh", hours);
+        } else {
+            snprintf(buf, len, "%luh ago", hours);
+        }
     } else {
         unsigned long days = elapsed_sec / 86400;
-        snprintf(buf, len, "%lud ago", days);
+        if (g_language == LANG_DE) {
+            snprintf(buf, len, "vor %lud", days);
+        } else {
+            snprintf(buf, len, "%lud ago", days);
+        }
     }
 }
 

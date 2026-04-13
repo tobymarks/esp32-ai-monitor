@@ -28,6 +28,7 @@
 #include "ui_detail.h"
 #include "ui_settings.h"
 #include "config.h"
+#include "localization.h"
 #include "serial_receiver.h"
 
 #include <lvgl.h>
@@ -202,7 +203,7 @@ void ui_dashboard_create() {
     // ---- Session block ----
     int16_t session_y = 44;
     int16_t after_session = create_usage_block(
-        scr_dashboard, "Session",
+        scr_dashboard, L(STR_SESSION),
         session_y,
         &lbl_session_pct, &bar_session, &lbl_session_reset
     );
@@ -212,7 +213,7 @@ void ui_dashboard_create() {
     // ---- Weekly block ----
     int16_t weekly_y = after_session + 12;
     create_usage_block(
-        scr_dashboard, "Weekly",
+        scr_dashboard, L(STR_WEEKLY),
         weekly_y,
         &lbl_weekly_pct, &bar_weekly, &lbl_weekly_reset
     );
@@ -271,7 +272,7 @@ void ui_dashboard_create() {
 
     // Title: "AI Monitor"
     lv_obj_t *splash_title = lv_label_create(splash_overlay);
-    lv_label_set_text(splash_title, "AI Monitor");
+    lv_label_set_text(splash_title, L(STR_AI_MONITOR));
     lv_obj_set_style_text_color(splash_title, UI_COLOR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(splash_title, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_align(splash_title, LV_ALIGN_CENTER, 0, -40);
@@ -288,7 +289,7 @@ void ui_dashboard_create() {
 
     // "Verbinde..." text
     lv_obj_t *splash_status = lv_label_create(splash_overlay);
-    lv_label_set_text(splash_status, "Verbinde...");
+    lv_label_set_text(splash_status, L(STR_CONNECTING));
     lv_obj_set_style_text_color(splash_status, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
     lv_obj_set_style_text_font(splash_status, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(splash_status, LV_ALIGN_CENTER, 0, 50);
@@ -349,7 +350,7 @@ void ui_dashboard_update(const MonitorState &state) {
 
         format_countdown(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
         char reset_buf[48];
-        snprintf(reset_buf, sizeof(reset_buf), "Resets in %s", buf);
+        snprintf(reset_buf, sizeof(reset_buf), L(STR_RESETS_IN), buf);
         lv_label_set_text(lbl_session_reset, reset_buf);
 
         format_percentage(state.usage.seven_day_utilization, buf, sizeof(buf));
@@ -363,7 +364,7 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_obj_set_style_bg_color(bar_weekly, weekly_color, LV_PART_INDICATOR);
 
         format_countdown(state.usage.seven_day_reset_epoch, buf, sizeof(buf));
-        snprintf(reset_buf, sizeof(reset_buf), "Resets in %s", buf);
+        snprintf(reset_buf, sizeof(reset_buf), L(STR_RESETS_IN), buf);
         lv_label_set_text(lbl_weekly_reset, reset_buf);
 
     } else if (strlen(state.usage.error) > 0) {
@@ -396,7 +397,7 @@ void ui_dashboard_update(const MonitorState &state) {
     char ago_buf[24];
     format_time_ago(state.usage.last_fetch, ago_buf, sizeof(ago_buf));
     char refresh_line[40];
-    snprintf(refresh_line, sizeof(refresh_line), "Updated %s", ago_buf);
+    snprintf(refresh_line, sizeof(refresh_line), L(STR_UPDATED), ago_buf);
     lv_label_set_text(lbl_refresh, refresh_line);
 }
 
