@@ -1227,6 +1227,83 @@ class SerialPortManager {
         guard let data = (jsonString + "\n").data(using: .utf8) else { return false }
         return send(data: data)
     }
+
+    /// Read a line from serial (blocking, with timeout in seconds)
+    /// Returns nil on timeout or error. Must be called from background thread.
+    func readLine(timeout: TimeInterval = 2.0) -> String? {
+        guard fileDescriptor >= 0 else { return nil }
+
+        var buffer = [UInt8]()
+        let deadline = Date().addingTimeInterval(timeout)
+        var byte: UInt8 = 0
+
+        while Date() < deadline {
+            var pfd = pollfd(fd: fileDescriptor, events: Int16(POLLIN), revents: 0)
+            let pollResult = Darwin.poll(&pfd, 1, 100) // 100ms timeout
+
+            if pollResult > 0 && (pfd.revents & Int16(POLLIN)) != 0 {
+                let readResult = Darwin.read(fileDescriptor, &byte, 1)
+                if readResult == 1 {
+                    if byte == 0x0A { // newline
+                        return String(bytes: buffer, encoding: .utf8)
+                    }
+                    if byte != 0x0D { // skip CR
+                        buffer.append(byte)
+                    }
+                } else {
+                    return nil
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Drain any pending bytes from serial input
+    private func drainInput() {
+        var byte: UInt8 = 0
+        while true {
+            var pfd = pollfd(fd: fileDescriptor, events: Int16(POLLIN), revents: 0)
+            if Darwin.poll(&pfd, 1, 10) > 0 && (pfd.revents & Int16(POLLIN)) != 0 {
+                _ = Darwin.read(fileDescriptor, &byte, 1)
+            } else {
+                break
+            }
+        }
+    }
+
+    /// Query ESP32 device info (version, orientation, uptime, heap)
+    /// Must be called from a background thread (readLine is blocking)
+    var deviceFirmwareVersion: String?
+
+    func queryDeviceInfo() {
+        guard isConnected else { return }
+
+        drainInput()
+
+        guard sendJSON("{\"cmd\":\"get_info\"}") else {
+            NSLog("[Serial] Failed to send get_info")
+            return
+        }
+
+        guard let response = readLine(timeout: 2.0) else {
+            NSLog("[Serial] No response to get_info")
+            return
+        }
+
+        NSLog("[Serial] Device info: %@", response)
+
+        guard let data = response.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String, type == "info",
+              let version = json["version"] as? String else {
+            NSLog("[Serial] Failed to parse device info")
+            return
+        }
+
+        deviceFirmwareVersion = version
+        Settings.shared.installedFirmwareVersion = "v\(version)"
+        NSLog("[Serial] ESP32 firmware version: %@", version)
+    }
 }
 
 // ============================================================
@@ -1259,6 +1336,11 @@ class UsageMonitor {
     func start() {
         // When a USB serial device connects, poll only if not rate-limited
         serialPort.onConnect = { [weak self] in
+            // Query ESP32 firmware version on connect (background thread — readLine blocks)
+            DispatchQueue.global(qos: .utility).async {
+                self?.serialPort.queryDeviceInfo()
+                DispatchQueue.main.async { self?.onUpdate?() }
+            }
             if !ClaudeAPI.isRateLimited {
                 NSLog("[Monitor] Serial connected — triggering immediate poll")
                 self?.poll()
@@ -1770,7 +1852,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Display status
         if monitor.serialPort.isConnected, let port = monitor.serialPort.connectedPort {
             let shortPort = (port as NSString).lastPathComponent
-            menu.item(withTag: kTagDisplay)?.title = "Display: \u{25CF} Verbunden (\(shortPort))"
+            let fwVersion = monitor.serialPort.deviceFirmwareVersion.map { " · FW v\($0)" } ?? ""
+            menu.item(withTag: kTagDisplay)?.title = "Display: \u{25CF} Verbunden (\(shortPort))\(fwVersion)"
         } else {
             menu.item(withTag: kTagDisplay)?.title = "Display: \u{25CB} Nicht verbunden"
         }
