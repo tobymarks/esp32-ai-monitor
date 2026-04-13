@@ -54,13 +54,12 @@ let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 let kUserDefaultsSuite = "de.aimonitor.app"
 let kGitHubRepo = "tobymarks/esp32-ai-monitor"
-let kGitHubReleasesAPI = "https://api.github.com/repos/tobymarks/esp32-ai-monitor/releases/latest"
+let kGitHubReleasesAPI = "https://api.github.com/repos/tobymarks/esp32-ai-monitor/releases"
 let kFirmwareAssetName = "ai-monitor.bin"
 let kFirmwareCheckInterval: TimeInterval = 6 * 3600  // 6 hours
 let kFlashBaudRate = 460800
 let kAppAssetName = "AIMonitor.zip"
 let kAppUpdateCheckInterval: TimeInterval = 24 * 3600  // 24 hours
-let kAppReleasesAPI = "https://api.github.com/repos/tobymarks/esp32-ai-monitor/releases"
 
 // ============================================================
 // MARK: - Usage Data Model
@@ -447,7 +446,7 @@ class AppUpdateManager {
     /// Check GitHub for the latest app release
     /// We look for releases with a tag starting with "app-v" or a .zip asset named AIMonitor.zip
     func checkForUpdate(completion: @escaping (Bool) -> Void) {
-        guard let url = URL(string: kAppReleasesAPI) else {
+        guard let url = URL(string: kGitHubReleasesAPI) else {
             completion(false)
             return
         }
@@ -480,16 +479,9 @@ class AppUpdateManager {
             do {
                 let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
 
-                // Find latest release that has an app asset (AIMonitor.zip)
-                // or a tag starting with "app-v" or just a semver tag
+                // Find latest release with "app-v" tag prefix (firmware uses plain "v" prefix)
                 let appRelease = releases.first { release in
-                    // Check for app-specific asset
-                    let hasAppAsset = release.assets.contains { $0.name == kAppAssetName }
-                    // Check for app-specific tag like "app-v1.2.0"
-                    let isAppTag = release.tag_name.hasPrefix("app-v")
-                    // Check for generic semver tag (not firmware-specific)
-                    let isGenericTag = release.tag_name.hasPrefix("v") && !release.tag_name.contains("firmware")
-                    return hasAppAsset || isAppTag || isGenericTag
+                    release.tag_name.hasPrefix("app-v")
                 }
 
                 if let release = appRelease {
@@ -789,7 +781,21 @@ class FirmwareManager {
             }
 
             do {
-                let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+                let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+
+                // Only consider firmware releases: tags like "v2.0.0" but NOT "app-v1.1.0"
+                let firmwareRelease = releases.first { release in
+                    release.tag_name.hasPrefix("v") && !release.tag_name.hasPrefix("app-")
+                }
+
+                guard let release = firmwareRelease else {
+                    NSLog("[Firmware] No firmware release found in %d releases", releases.count)
+                    Settings.shared.lastFirmwareCheck = Date()
+                    DispatchQueue.main.async { self.onUpdate?() }
+                    completion(false)
+                    return
+                }
+
                 self.latestRelease = release
                 Settings.shared.lastFirmwareCheck = Date()
 
