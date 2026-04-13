@@ -16,6 +16,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <sys/time.h>
 
 // ============================================================
 // Constants
@@ -136,6 +137,16 @@ static void parse_json(const char *json_str) {
         strlcpy(display_time, dtime, sizeof(display_time));
     }
 
+    // Set system clock from ISO "time" field (needed for countdown calculations)
+    const char *time_str = doc["time"];
+    if (time_str) {
+        time_t epoch = iso8601_to_epoch(time_str);
+        if (epoch > 0) {
+            struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+            settimeofday(&tv, nullptr);
+        }
+    }
+
     // Navigate to data[0].usage
     JsonObject data0 = doc["data"][0];
     if (data0.isNull()) {
@@ -240,6 +251,10 @@ void serial_receiver_init() {
     usage_data_clear(state.usage);
     state.is_fetching = false;
     state.token_valid = false;
+
+    // Set timezone for localtime_r() — CET/CEST (Germany)
+    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+    tzset();
     state.provider = PROVIDER_CLAUDE;
     strlcpy(state.status, "Waiting for data...", sizeof(state.status));
     new_data_flag = false;

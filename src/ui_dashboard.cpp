@@ -319,9 +319,18 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_label_set_text(lbl_provider, state.provider == 1 ? "OPENAI" : "CLAUDE");
     }
 
-    // ---- Clock (display time sent by Mac companion app) ----
+    // ---- Clock (system time set via settimeofday from Mac's UTC) ----
     if (lbl_time != nullptr) {
-        lv_label_set_text(lbl_time, serial_get_display_time());
+        time_t now = time(nullptr);
+        if (now > 1700000000) {  // system clock has been set (post-2023)
+            struct tm local;
+            localtime_r(&now, &local);
+            char tbuf[6];
+            strftime(tbuf, sizeof(tbuf), "%H:%M", &local);
+            lv_label_set_text(lbl_time, tbuf);
+        } else {
+            lv_label_set_text(lbl_time, serial_get_display_time());
+        }
     }
 
     // ---- Session block ----

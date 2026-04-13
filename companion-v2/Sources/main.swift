@@ -28,7 +28,26 @@ let kKeychainService = "Claude Code-credentials"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 let kOAuthBeta = "oauth-2025-04-20"
-let kUserAgent = "AI-Monitor/1.0.0"
+// Match Claude Code CLI user-agent to avoid aggressive rate-limiting on unknown agents
+let kUserAgent: String = {
+    // Try to detect installed Claude Code version
+    let pipe = Pipe()
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["claude", "--version"]
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    do {
+        try process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if let version = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !version.isEmpty {
+            return "claude-code/\(version)"
+        }
+    } catch {}
+    return "claude-code/2.1.0"  // fallback
+}()
 let kPollInterval: TimeInterval = 60
 let kMinPollInterval: TimeInterval = 60
 let kSerialBaudRate: speed_t = 115200
@@ -552,6 +571,8 @@ class UsageMonitor {
             if let statusCode = statusCode, statusCode == 429 {
                 self.status = .rateLimited
                 self.lastError = "Rate-limited (\(ClaudeAPI.rateLimitRemaining)s)"
+                // Still send cached data with current time to keep display clock alive
+                self.resendCachedData()
                 DispatchQueue.main.async { self.onUpdate?() }
                 return
             }
@@ -593,6 +614,12 @@ class UsageMonitor {
         sendToESP32(usage: usage)
 
         DispatchQueue.main.async { self.onUpdate?() }
+    }
+
+    /// Re-send cached data with current time to keep display clock updated
+    private func resendCachedData() {
+        guard let usage = lastUsage else { return }
+        sendToESP32(usage: usage)
     }
 
     private func sendToESP32(usage: UsageResponse) {
