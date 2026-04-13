@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.5.4 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.5.5 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.5.4"
+let kAppVersion = "1.5.5"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 let kOAuthBeta = "oauth-2025-04-20"
@@ -1067,14 +1067,9 @@ class FirmwareManager {
     }
 
     /// Flash firmware to ESP32 via esptool
-    func flashFirmware(serialPort: SerialPortManager, completion: @escaping (Bool, String) -> Void) {
+    func flashFirmware(port: String, completion: @escaping (Bool, String) -> Void) {
         guard let binPath = downloadedBinPath, FileManager.default.fileExists(atPath: binPath) else {
             completion(false, "Keine Firmware-Datei vorhanden")
-            return
-        }
-
-        guard let port = serialPort.connectedPort else {
-            completion(false, "Kein ESP32 verbunden")
             return
         }
 
@@ -1087,11 +1082,8 @@ class FirmwareManager {
         flashProgress = "Vorbereitung..."
         DispatchQueue.main.async { self.onUpdate?() }
 
-        // Disconnect serial before flashing
-        NSLog("[Firmware] Disconnecting serial for flash...")
-        serialPort.disconnect()
-
-        // Small delay to ensure port is released
+        // Serial already disconnected by stopScanning() before this call
+        // Small delay to ensure port is released by OS
         usleep(500_000)  // 500ms
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -1189,14 +1181,7 @@ class FirmwareManager {
                         self.onUpdate?()
                     }
 
-                    NSLog("[Firmware] Flash successful, waiting 3s before reconnect...")
-                    sleep(3)
-
-                    // Reconnect serial
-                    DispatchQueue.main.async {
-                        serialPort.scanForPort()
-                    }
-
+                    NSLog("[Firmware] Flash successful")
                     completion(true, "Firmware erfolgreich geflasht!")
                 } else {
                     let combinedOutput = outputText + "\n" + errorText
@@ -1206,12 +1191,6 @@ class FirmwareManager {
                         self.isFlashing = false
                         self.flashProgress = ""
                         self.onUpdate?()
-                    }
-
-                    // Try to reconnect serial even on failure
-                    sleep(2)
-                    DispatchQueue.main.async {
-                        serialPort.scanForPort()
                     }
 
                     let shortError = errorText.isEmpty ? "esptool Exit-Code \(exitCode)" :
@@ -1225,12 +1204,6 @@ class FirmwareManager {
                     self.isFlashing = false
                     self.flashProgress = ""
                     self.onUpdate?()
-                }
-
-                // Try to reconnect
-                sleep(1)
-                DispatchQueue.main.async {
-                    serialPort.scanForPort()
                 }
 
                 completion(false, "esptool konnte nicht gestartet werden: \(error.localizedDescription)")
@@ -2246,10 +2219,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let response = confirm.runModal()
         guard response == .alertFirstButtonReturn else { return }
 
-        // Stop serial scanning during flash
+        // Stop serial scanning during flash (saves port path before disconnect)
         monitor.serialPort.stopScanning()
 
-        fw.flashFirmware(serialPort: monitor.serialPort) { [weak self] success, message in
+        fw.flashFirmware(port: port) { [weak self] success, message in
             DispatchQueue.main.async {
                 // Restart serial scanning
                 self?.monitor.serialPort.startScanning()
