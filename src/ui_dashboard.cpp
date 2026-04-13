@@ -53,9 +53,8 @@ static lv_obj_t *lbl_weekly_pct     = nullptr;
 static lv_obj_t *bar_weekly         = nullptr;
 static lv_obj_t *lbl_weekly_reset   = nullptr;
 
-// Footer
+// Header status icon (connection indicator)
 static lv_obj_t *lbl_status_dot     = nullptr;
-static lv_obj_t *lbl_refresh        = nullptr;
 
 // Last known state (for detail screen)
 static MonitorState last_state;
@@ -82,8 +81,7 @@ static inline bool widgets_ready() {
         && lbl_weekly_pct   != nullptr
         && bar_weekly       != nullptr
         && lbl_weekly_reset != nullptr
-        && lbl_status_dot   != nullptr
-        && lbl_refresh      != nullptr;
+        && lbl_status_dot   != nullptr;
 }
 
 // ============================================================
@@ -183,6 +181,13 @@ void ui_dashboard_create() {
     lv_obj_set_style_pad_all(header, 0, LV_PART_MAIN);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Connection status icon (top-left, same style as clock)
+    lbl_status_dot = lv_label_create(header);
+    lv_label_set_text(lbl_status_dot, LV_SYMBOL_DUMMY);
+    lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_status_dot, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_pos(lbl_status_dot, 8, 11);
+
     lbl_provider = lv_label_create(header);
     lv_label_set_text(lbl_provider, "CLAUDE");
     lv_obj_set_style_text_color(lbl_provider, UI_COLOR_TEXT, LV_PART_MAIN);
@@ -217,32 +222,6 @@ void ui_dashboard_create() {
         weekly_y,
         &lbl_weekly_pct, &bar_weekly, &lbl_weekly_reset
     );
-
-    // ---- Divider above footer ----
-    int16_t footer_h  = 38;
-    int16_t footer_y  = sh - footer_h;
-    ui_create_divider(scr_dashboard, footer_y - 2);
-
-    // ---- Footer ----
-    lv_obj_t *footer = lv_obj_create(scr_dashboard);
-    lv_obj_set_size(footer, sw, footer_h);
-    lv_obj_set_pos(footer, 0, footer_y);
-    lv_obj_set_style_bg_opa(footer, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(footer, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(footer, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
-
-    lbl_status_dot = lv_label_create(footer);
-    lv_label_set_text(lbl_status_dot, LV_SYMBOL_OK);
-    lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_status_dot, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(lbl_status_dot, 10, 12);
-
-    lbl_refresh = lv_label_create(footer);
-    lv_label_set_text(lbl_refresh, "never");
-    lv_obj_set_style_text_color(lbl_refresh, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_refresh, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(lbl_refresh, LV_ALIGN_TOP_RIGHT, -10, 12);
 
     // ---- Full-screen overlay for touch events ----
     long_press_overlay = lv_obj_create(scr_dashboard);
@@ -376,7 +355,7 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_bar_set_value(bar_weekly, 0, LV_ANIM_OFF);
     }
 
-    // ---- Footer: status dot ----
+    // ---- Header: connection status icon ----
     bool has_data = serial_has_recent_data();
     if (state.is_fetching) {
         lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_FETCHING, LV_PART_MAIN);
@@ -392,13 +371,6 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
         lv_label_set_text(lbl_status_dot, LV_SYMBOL_DUMMY);
     }
-
-    // ---- Footer: time ago ----
-    char ago_buf[24];
-    format_time_ago(state.usage.last_fetch, ago_buf, sizeof(ago_buf));
-    char refresh_line[40];
-    snprintf(refresh_line, sizeof(refresh_line), L(STR_UPDATED), ago_buf);
-    lv_label_set_text(lbl_refresh, refresh_line);
 }
 
 // ============================================================
@@ -458,7 +430,6 @@ void ui_dashboard_recreate() {
         bar_weekly         = nullptr;
         lbl_weekly_reset   = nullptr;
         lbl_status_dot     = nullptr;
-        lbl_refresh        = nullptr;
         long_press_overlay = nullptr;
         splash_overlay     = nullptr;
         splash_spinner     = nullptr;
