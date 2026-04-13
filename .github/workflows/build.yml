@@ -114,5 +114,5 @@ jobs:
           name: ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            release-assets/installer/bin/ai-monitor.bin
-            release-assets/installer/bin/firmware-ota.bin
+            release-assets/ai-monitor.bin
+            release-assets/firmware-ota.bin
