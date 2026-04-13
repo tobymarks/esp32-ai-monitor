@@ -92,6 +92,22 @@ class Settings {
         }
     }
 
+    /// Persisted rate-limit state — survives app restarts
+    var rateLimitUntil: Date? {
+        get { defaults.object(forKey: "rateLimitUntil") as? Date }
+        set { defaults.set(newValue, forKey: "rateLimitUntil") }
+    }
+
+    var rateLimitConsecutive: Int {
+        get { defaults.integer(forKey: "rateLimitConsecutive") }
+        set { defaults.set(newValue, forKey: "rateLimitConsecutive") }
+    }
+
+    var lastPollDate: Date? {
+        get { defaults.object(forKey: "lastPollDate") as? Date }
+        set { defaults.set(newValue, forKey: "lastPollDate") }
+    }
+
     private init() {
         defaults = UserDefaults(suiteName: kUserDefaultsSuite) ?? UserDefaults.standard
     }
@@ -216,12 +232,18 @@ class KeychainReader {
 // ============================================================
 
 class ClaudeAPI {
-    /// Retry-After until date from last 429 response
-    static var retryAfterUntil: Date?
+    /// Retry-After until date — persisted across restarts via Settings
+    static var retryAfterUntil: Date? {
+        get { Settings.shared.rateLimitUntil }
+        set { Settings.shared.rateLimitUntil = newValue }
+    }
     /// Whether a token refresh has been attempted for this cycle
     static var tokenRefreshAttempted = false
-    /// Consecutive 429 count for exponential backoff (resets on success)
-    static var consecutive429Count: Int = 0
+    /// Consecutive 429 count — persisted across restarts via Settings
+    static var consecutive429Count: Int {
+        get { Settings.shared.rateLimitConsecutive }
+        set { Settings.shared.rateLimitConsecutive = newValue }
+    }
 
     // Exponential backoff constants
     static let kBackoffBase: Double = 60       // first 429 → wait 60s
@@ -512,13 +534,30 @@ class UsageMonitor {
     }
 
     func start() {
-        // When a USB serial device connects, immediately fetch & send fresh data
+        // When a USB serial device connects, poll only if not rate-limited
         serialPort.onConnect = { [weak self] in
-            NSLog("[Monitor] Serial connected — triggering immediate poll")
-            self?.poll()
+            if !ClaudeAPI.isRateLimited {
+                NSLog("[Monitor] Serial connected — triggering immediate poll")
+                self?.poll()
+            } else {
+                NSLog("[Monitor] Serial connected — skipping poll (rate-limited, %ds remaining)", ClaudeAPI.rateLimitRemaining)
+            }
         }
         serialPort.startScanning()
-        poll()
+
+        // Check persisted state — don't poll if still in cooldown or polled recently
+        if ClaudeAPI.isRateLimited {
+            let remaining = ClaudeAPI.rateLimitRemaining
+            NSLog("[Monitor] Resuming with active rate-limit cooldown: %ds remaining (#%d)", remaining, ClaudeAPI.consecutive429Count)
+            status = .rateLimited
+            lastError = "Rate-limited (\(remaining)s)"
+        } else if let lastPoll = Settings.shared.lastPollDate,
+                  Date().timeIntervalSince(lastPoll) < kPollInterval {
+            let elapsed = Int(Date().timeIntervalSince(lastPoll))
+            NSLog("[Monitor] Last poll was %ds ago — skipping initial poll", elapsed)
+        } else {
+            poll()
+        }
         scheduleTimer()
     }
 
@@ -562,6 +601,7 @@ class UsageMonitor {
 
     func poll() {
         lastPollDate = Date()
+        Settings.shared.lastPollDate = lastPollDate
 
         // 1. Read token
         guard let token = KeychainReader.readAccessToken() else {
@@ -665,9 +705,9 @@ class UsageMonitor {
     private func sendToESP32(usage: UsageResponse) {
         guard serialPort.isConnected else { return }
 
-        // API returns utilization as fraction (0.0-1.0), convert to percentage
-        let primaryPercent = Int(round((usage.five_hour?.utilization ?? 0) * 100))
-        let secondaryPercent = Int(round((usage.seven_day?.utilization ?? 0) * 100))
+        // API returns utilization as percentage (0-100)
+        let primaryPercent = Int(round((usage.five_hour?.utilization ?? 0)))
+        let secondaryPercent = Int(round((usage.seven_day?.utilization ?? 0)))
         let primaryResetsAt = usage.five_hour?.resets_at ?? ""
         let secondaryResetsAt = usage.seven_day?.resets_at ?? ""
         // API returns costs in cents, convert to dollars/euros
@@ -776,7 +816,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let usage = usage, status == .ok {
-            let sp = Int(round((usage.five_hour?.utilization ?? 0) * 100))
+            let sp = Int(round((usage.five_hour?.utilization ?? 0)))
             button.title = " \(sp)%"
         } else {
             switch status {
@@ -869,8 +909,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenubarTitle(status: monitor.status, usage: monitor.lastUsage)
 
         if let usage = monitor.lastUsage {
-            let sp = Int(round((usage.five_hour?.utilization ?? 0) * 100))
-            let wp = Int(round((usage.seven_day?.utilization ?? 0) * 100))
+            let sp = Int(round((usage.five_hour?.utilization ?? 0)))
+            let wp = Int(round((usage.seven_day?.utilization ?? 0)))
 
             let sessionReset = formatCountdown(usage.five_hour?.resets_at)
             let weeklyReset = formatCountdown(usage.seven_day?.resets_at)
