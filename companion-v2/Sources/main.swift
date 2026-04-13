@@ -48,8 +48,8 @@ let kUserAgent: String = {
     } catch {}
     return "claude-code/2.1.0"  // fallback
 }()
-let kPollInterval: TimeInterval = 60
-let kMinPollInterval: TimeInterval = 60
+let kPollInterval: TimeInterval = 90
+let kMinPollInterval: TimeInterval = 30
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 let kUserDefaultsSuite = "de.aimonitor.app"
@@ -220,6 +220,14 @@ class ClaudeAPI {
     static var retryAfterUntil: Date?
     /// Whether a token refresh has been attempted for this cycle
     static var tokenRefreshAttempted = false
+    /// Consecutive 429 count for exponential backoff (resets on success)
+    static var consecutive429Count: Int = 0
+
+    // Exponential backoff constants
+    static let kBackoffBase: Double = 60       // first 429 → wait 60s
+    static let kBackoffMultiplier: Double = 2  // double each consecutive 429
+    static let kBackoffMax: Double = 600       // cap at 10 minutes
+    static let kBackoffJitter: Double = 0.25   // ±25% randomization
 
     static var rateLimitRemaining: Int {
         guard let until = retryAfterUntil else { return 0 }
@@ -232,14 +240,36 @@ class ClaudeAPI {
         return Date() < until
     }
 
+    /// Calculate backoff with exponential increase and jitter
+    static func calculateBackoff(consecutive: Int, serverRetryAfter: Int) -> Int {
+        // If server gives a meaningful Retry-After, respect it
+        if serverRetryAfter > 0 {
+            let jitter = Double.random(in: -kBackoffJitter...kBackoffJitter)
+            return Int(Double(serverRetryAfter) * (1.0 + jitter))
+        }
+        // Exponential backoff: base * 2^(n-1), capped at max
+        let exponent = Double(max(0, consecutive - 1))
+        let delay = min(kBackoffBase * pow(kBackoffMultiplier, exponent), kBackoffMax)
+        // Add jitter (±25%) to desynchronize from other clients
+        let jitter = Double.random(in: -kBackoffJitter...kBackoffJitter)
+        let finalDelay = delay * (1.0 + jitter)
+        return Int(max(finalDelay, kBackoffBase * 0.75))  // never less than 45s
+    }
+
     static func fetchUsage(token: String, completion: @escaping (UsageResponse?, Int?, Error?) -> Void) {
         // Respect Retry-After from previous 429
-        if let until = retryAfterUntil, Date() < until {
-            let remaining = Int(until.timeIntervalSinceNow)
-            NSLog("[API] Rate-limit cooldown: %d sec remaining", remaining)
-            completion(nil, 429, NSError(domain: "API", code: 429,
-                userInfo: [NSLocalizedDescriptionKey: "Rate-limited (\(remaining)s)"]))
-            return
+        if let until = retryAfterUntil {
+            if Date() < until {
+                let remaining = Int(until.timeIntervalSinceNow)
+                NSLog("[API] Rate-limit cooldown: %d sec remaining (attempt #%d)", remaining, consecutive429Count)
+                completion(nil, 429, NSError(domain: "API", code: 429,
+                    userInfo: [NSLocalizedDescriptionKey: "Rate-limited (\(remaining)s)"]))
+                return
+            } else {
+                // Cooldown expired — proceed with real request
+                retryAfterUntil = nil
+                NSLog("[API] Rate-limit cooldown expired, retrying (attempt #%d)", consecutive429Count + 1)
+            }
         }
 
         guard let url = URL(string: kUsageEndpoint) else {
@@ -270,13 +300,16 @@ class ClaudeAPI {
             let statusCode = httpResponse.statusCode
 
             if statusCode == 429 {
+                consecutive429Count += 1
                 let headerVal = httpResponse.value(forHTTPHeaderField: "Retry-After")
-                    .flatMap { Int($0) } ?? 120
-                let retryAfter = max(headerVal, 60)  // minimum 60s backoff
-                retryAfterUntil = Date().addingTimeInterval(TimeInterval(retryAfter))
-                NSLog("[API] 429 Rate Limited - backing off %d sec (header: %d)", retryAfter, headerVal)
+                    .flatMap { Int($0) } ?? 0
+                let backoff = calculateBackoff(consecutive: consecutive429Count, serverRetryAfter: headerVal)
+                retryAfterUntil = Date().addingTimeInterval(TimeInterval(backoff))
+                NSLog("[API] 429 Rate Limited (#%d) - backing off %d sec (header: %d, base: %.0f)",
+                      consecutive429Count, backoff, headerVal,
+                      min(kBackoffBase * pow(kBackoffMultiplier, Double(max(0, consecutive429Count - 1))), kBackoffMax))
                 completion(nil, 429, NSError(domain: "API", code: 429,
-                    userInfo: [NSLocalizedDescriptionKey: "Rate limited (\(retryAfter)s)"]))
+                    userInfo: [NSLocalizedDescriptionKey: "Rate limited (\(backoff)s)"]))
                 return
             }
 
@@ -291,6 +324,10 @@ class ClaudeAPI {
             // Clear rate-limit on success
             retryAfterUntil = nil
             tokenRefreshAttempted = false
+            if consecutive429Count > 0 {
+                NSLog("[API] Success after %d consecutive 429s - backoff reset", consecutive429Count)
+            }
+            consecutive429Count = 0
 
             guard let data = data else {
                 completion(nil, statusCode, NSError(domain: "API", code: -3,
@@ -307,6 +344,7 @@ class ClaudeAPI {
             }
         }.resume()
     }
+
 }
 
 // ============================================================
@@ -493,16 +531,18 @@ class UsageMonitor {
     func scheduleTimer() {
         timer?.invalidate()
 
-        // Align to next full minute so displayTime updates on the dot
+        // Add jitter (0-15s) to avoid collision with other apps polling the same endpoint
+        let jitter = Double.random(in: 0...15)
         let now = Date()
         let calendar = Calendar.current
         let seconds = calendar.component(.second, from: now)
-        let fireDate = now.addingTimeInterval(TimeInterval(60 - seconds))
+        let fireDate = now.addingTimeInterval(TimeInterval(60 - seconds) + jitter)
 
         timer = Timer(fire: fireDate, interval: kPollInterval, repeats: true) { [weak self] _ in
             self?.poll()
         }
         RunLoop.current.add(timer!, forMode: .common)
+        NSLog("[Monitor] Next poll in %.0fs (incl. %.0fs jitter)", fireDate.timeIntervalSinceNow, jitter)
     }
 
     /// Manual refresh with minimum interval enforcement
@@ -625,9 +665,9 @@ class UsageMonitor {
     private func sendToESP32(usage: UsageResponse) {
         guard serialPort.isConnected else { return }
 
-        // API returns utilization as percentage (0-100), not fraction (0-1)
-        let primaryPercent = Int(round(usage.five_hour?.utilization ?? 0))
-        let secondaryPercent = Int(round(usage.seven_day?.utilization ?? 0))
+        // API returns utilization as fraction (0.0-1.0), convert to percentage
+        let primaryPercent = Int(round((usage.five_hour?.utilization ?? 0) * 100))
+        let secondaryPercent = Int(round((usage.seven_day?.utilization ?? 0) * 100))
         let primaryResetsAt = usage.five_hour?.resets_at ?? ""
         let secondaryResetsAt = usage.seven_day?.resets_at ?? ""
         // API returns costs in cents, convert to dollars/euros
@@ -736,7 +776,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let usage = usage, status == .ok {
-            let sp = Int(round(usage.five_hour?.utilization ?? 0))
+            let sp = Int(round((usage.five_hour?.utilization ?? 0) * 100))
             button.title = " \(sp)%"
         } else {
             switch status {
@@ -829,8 +869,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenubarTitle(status: monitor.status, usage: monitor.lastUsage)
 
         if let usage = monitor.lastUsage {
-            let sp = Int(round(usage.five_hour?.utilization ?? 0))
-            let wp = Int(round(usage.seven_day?.utilization ?? 0))
+            let sp = Int(round((usage.five_hour?.utilization ?? 0) * 100))
+            let wp = Int(round((usage.seven_day?.utilization ?? 0) * 100))
 
             let sessionReset = formatCountdown(usage.five_hour?.resets_at)
             let weeklyReset = formatCountdown(usage.seven_day?.resets_at)

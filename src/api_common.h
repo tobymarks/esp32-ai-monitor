@@ -6,21 +6,30 @@
 
 // ============================================================
 // timegm replacement for ESP32 (newlib doesn't have timegm)
-// Converts struct tm (UTC) to time_t without timezone adjustment
+// Converts struct tm (UTC) to time_t without timezone adjustment.
+// Pure arithmetic — no TZ manipulation needed.
 // ============================================================
 inline time_t timegm_compat(struct tm *tm) {
-    // Save and override TZ to UTC
-    const char *tz = getenv("TZ");
-    setenv("TZ", "UTC0", 1);
-    tzset();
-    time_t t = mktime(tm);
-    if (tz) {
-        setenv("TZ", tz, 1);
-    } else {
-        unsetenv("TZ");
+    // Days from 1970-01-01 to the start of each month (non-leap year)
+    static const int mdays[12] = {0,31,59,90,120,151,181,212,243,273,304,334};
+    int y = tm->tm_year + 1900;
+    int m = tm->tm_mon;        // 0-11
+    int d = tm->tm_mday;       // 1-31
+
+    // Years since 1970
+    long days = (y - 1970) * 365L;
+    // Add leap days for years before this one
+    // Leap year if divisible by 4, not by 100, or by 400
+    for (int i = 1970; i < y; i++) {
+        if ((i % 4 == 0 && i % 100 != 0) || i % 400 == 0) days++;
     }
-    tzset();
-    return t;
+    // Add days for months in this year
+    days += mdays[m];
+    // Add leap day if after Feb in a leap year
+    if (m > 1 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) days++;
+    days += d - 1;
+
+    return (time_t)(days * 86400L + tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec);
 }
 
 // ============================================================
