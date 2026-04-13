@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>AI Monitor Updates</title>
+        <link>https://tobymarks.github.io/esp32-ai-monitor/appcast.xml</link>
+        <description>App-Updates fuer AI Monitor</description>
+        <language>de</language>
+
+        <!--
+            TEMPLATE: Neuen <item> Block fuer jedes Release hinzufuegen.
+
+            Workflow (manuell):
+            1. App bauen: cd companion-v2 && ./build.sh
+            2. ZIP erstellen: cd build && zip -r AIMonitor.zip "AI Monitor.app"
+            3. GitHub Release erstellen mit Tag "app-vX.Y.Z"
+            4. AIMonitor.zip als Release-Asset hochladen
+            5. Diesen appcast.xml aktualisieren (Version, URL, Groesse, Datum)
+
+            Workflow (CI/CD - spaeter):
+            1. GitHub Action baut die App auf macOS Runner
+            2. ZIP wird automatisch erstellt und als Release-Asset hochgeladen
+            3. appcast.xml wird automatisch aktualisiert und auf GitHub Pages deployed
+
+            Sparkle EdDSA Signierung (optional, fuer spaetere Sparkle-Migration):
+            - Key generieren: ./Sparkle.framework/Resources/bin/generate_keys
+            - Signatur: ./Sparkle.framework/Resources/bin/sign_update AIMonitor.zip
+            - sparkle:edSignature Attribut im enclosure Tag hinzufuegen
+        -->
+
+        <item>
+            <title>AI Monitor v1.1.0</title>
+            <description><![CDATA[
+                <h2>AI Monitor v1.1.0</h2>
+                <ul>
+                    <li>App-Update Check via GitHub Releases</li>
+                    <li>Firmware OTA Update</li>
+                    <li>Menubar-Anzeige mit Session/Weekly Usage</li>
+                </ul>
+            ]]></description>
+            <pubDate>Sun, 13 Apr 2026 12:00:00 +0200</pubDate>
+            <sparkle:version>1.1.0</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure
+                url="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.1.0/AIMonitor.zip"
+                length="0"
+                type="application/octet-stream"
+            />
+            <!-- sparkle:edSignature="SIGNATURE_HERE" fuer spaetere Sparkle-Integration -->
+        </item>
+
+    </channel>
+</rss>

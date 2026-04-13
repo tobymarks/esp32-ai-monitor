@@ -25,5 +25,11 @@
         <key>NSAllowsArbitraryLoads</key>
         <false/>
     </dict>
+    <!-- App Auto-Update: GitHub-based update check via AppUpdateManager -->
+    <!-- SUFeedURL prepared for future Sparkle migration -->
+    <key>SUFeedURL</key>
+    <string>https://tobymarks.github.io/esp32-ai-monitor/appcast.xml</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
 </dict>
 </plist>

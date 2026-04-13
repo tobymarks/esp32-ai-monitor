@@ -58,6 +58,9 @@ let kGitHubReleasesAPI = "https://api.github.com/repos/tobymarks/esp32-ai-monito
 let kFirmwareAssetName = "ai-monitor.bin"
 let kFirmwareCheckInterval: TimeInterval = 6 * 3600  // 6 hours
 let kFlashBaudRate = 460800
+let kAppAssetName = "AIMonitor.zip"
+let kAppUpdateCheckInterval: TimeInterval = 24 * 3600  // 24 hours
+let kAppReleasesAPI = "https://api.github.com/repos/tobymarks/esp32-ai-monitor/releases"
 
 // ============================================================
 // MARK: - Usage Data Model
@@ -123,6 +126,18 @@ class Settings {
     var lastFirmwareCheck: Date? {
         get { defaults.object(forKey: "lastFirmwareCheck") as? Date }
         set { defaults.set(newValue, forKey: "lastFirmwareCheck") }
+    }
+
+    /// Last app update check timestamp
+    var lastAppUpdateCheck: Date? {
+        get { defaults.object(forKey: "lastAppUpdateCheck") as? Date }
+        set { defaults.set(newValue, forKey: "lastAppUpdateCheck") }
+    }
+
+    /// App version the user chose to skip
+    var skippedAppVersion: String? {
+        get { defaults.string(forKey: "skippedAppVersion") }
+        set { defaults.set(newValue, forKey: "skippedAppVersion") }
     }
 
     private init() {
@@ -393,6 +408,8 @@ class ClaudeAPI {
 struct GitHubRelease: Codable {
     let tag_name: String
     let name: String?
+    let html_url: String?
+    let body: String?
     let assets: [GitHubAsset]
 }
 
@@ -400,6 +417,259 @@ struct GitHubAsset: Codable {
     let name: String
     let browser_download_url: String
     let size: Int
+}
+
+// ============================================================
+// MARK: - App Update Manager
+// ============================================================
+
+class AppUpdateManager {
+    static let shared = AppUpdateManager()
+
+    var latestRelease: GitHubRelease?
+    var isDownloading = false
+    var onUpdate: (() -> Void)?
+
+    /// Whether an app update is available (newer version on GitHub)
+    var hasUpdate: Bool {
+        guard let release = latestRelease else { return false }
+        let latest = normalizeVersion(release.tag_name)
+        let current = normalizeVersion(kAppVersion)
+        return compareVersions(latest, current) == .orderedDescending
+    }
+
+    /// Display string for the latest version
+    var latestVersionDisplay: String {
+        guard let release = latestRelease else { return "unbekannt" }
+        return release.tag_name.hasPrefix("v") ? release.tag_name : "v\(release.tag_name)"
+    }
+
+    /// Check GitHub for the latest app release
+    /// We look for releases with a tag starting with "app-v" or a .zip asset named AIMonitor.zip
+    func checkForUpdate(completion: @escaping (Bool) -> Void) {
+        guard let url = URL(string: kAppReleasesAPI) else {
+            completion(false)
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+
+            if let error = error {
+                NSLog("[AppUpdate] GitHub API error: %@", error.localizedDescription)
+                completion(false)
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                NSLog("[AppUpdate] GitHub API HTTP %d", status)
+                completion(false)
+                return
+            }
+
+            guard let data = data else {
+                completion(false)
+                return
+            }
+
+            do {
+                let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+
+                // Find latest release that has an app asset (AIMonitor.zip)
+                // or a tag starting with "app-v" or just a semver tag
+                let appRelease = releases.first { release in
+                    // Check for app-specific asset
+                    let hasAppAsset = release.assets.contains { $0.name == kAppAssetName }
+                    // Check for app-specific tag like "app-v1.2.0"
+                    let isAppTag = release.tag_name.hasPrefix("app-v")
+                    // Check for generic semver tag (not firmware-specific)
+                    let isGenericTag = release.tag_name.hasPrefix("v") && !release.tag_name.contains("firmware")
+                    return hasAppAsset || isAppTag || isGenericTag
+                }
+
+                if let release = appRelease {
+                    self.latestRelease = release
+                    Settings.shared.lastAppUpdateCheck = Date()
+
+                    let latest = self.normalizeVersion(release.tag_name)
+                    let current = self.normalizeVersion(kAppVersion)
+                    let isNewer = self.compareVersions(latest, current) == .orderedDescending
+
+                    NSLog("[AppUpdate] Latest: %@ | Current: v%@ | Update: %@",
+                          release.tag_name, kAppVersion, isNewer ? "YES" : "no")
+
+                    DispatchQueue.main.async { self.onUpdate?() }
+                    completion(isNewer)
+                } else {
+                    NSLog("[AppUpdate] No suitable app release found in %d releases", releases.count)
+                    Settings.shared.lastAppUpdateCheck = Date()
+                    DispatchQueue.main.async { self.onUpdate?() }
+                    completion(false)
+                }
+            } catch {
+                NSLog("[AppUpdate] JSON decode error: %@", error.localizedDescription)
+                completion(false)
+            }
+        }.resume()
+    }
+
+    /// Download the app update ZIP, extract, and open in Finder
+    func downloadAndInstall(completion: @escaping (Bool, String) -> Void) {
+        guard let release = latestRelease else {
+            completion(false, "Kein Release gefunden")
+            return
+        }
+
+        guard let asset = release.assets.first(where: { $0.name == kAppAssetName }) else {
+            // No direct asset — open the release page in browser instead
+            if let htmlUrl = release.html_url, let url = URL(string: htmlUrl) {
+                NSWorkspace.shared.open(url)
+                completion(true, "Release-Seite im Browser geoeffnet")
+            } else {
+                let repoUrl = "https://github.com/\(kGitHubRepo)/releases/tag/\(release.tag_name)"
+                if let url = URL(string: repoUrl) {
+                    NSWorkspace.shared.open(url)
+                }
+                completion(true, "Release-Seite im Browser geoeffnet")
+            }
+            return
+        }
+
+        guard let downloadUrl = URL(string: asset.browser_download_url) else {
+            completion(false, "Ungueltige Download-URL")
+            return
+        }
+
+        isDownloading = true
+        DispatchQueue.main.async { self.onUpdate?() }
+
+        let task = URLSession.shared.downloadTask(with: downloadUrl) { [weak self] tempUrl, response, error in
+            guard let self = self else { return }
+            self.isDownloading = false
+
+            if let error = error {
+                NSLog("[AppUpdate] Download error: %@", error.localizedDescription)
+                DispatchQueue.main.async {
+                    self.onUpdate?()
+                    completion(false, "Download fehlgeschlagen: \(error.localizedDescription)")
+                }
+                return
+            }
+
+            guard let tempUrl = tempUrl else {
+                DispatchQueue.main.async {
+                    self.onUpdate?()
+                    completion(false, "Download fehlgeschlagen")
+                }
+                return
+            }
+
+            // Move to a persistent temp location
+            let downloadDir = NSTemporaryDirectory() + "AIMonitor-Update"
+            let zipPath = downloadDir + "/\(kAppAssetName)"
+            let fm = FileManager.default
+
+            do {
+                // Clean up old downloads
+                if fm.fileExists(atPath: downloadDir) {
+                    try fm.removeItem(atPath: downloadDir)
+                }
+                try fm.createDirectory(atPath: downloadDir, withIntermediateDirectories: true)
+                try fm.moveItem(at: tempUrl, to: URL(fileURLWithPath: zipPath))
+
+                // Unzip using ditto (macOS built-in, handles .zip properly)
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                process.arguments = ["-xk", zipPath, downloadDir]
+                try process.run()
+                process.waitUntilExit()
+
+                guard process.terminationStatus == 0 else {
+                    DispatchQueue.main.async {
+                        self.onUpdate?()
+                        completion(false, "Entpacken fehlgeschlagen (exit \(process.terminationStatus))")
+                    }
+                    return
+                }
+
+                // Find the .app in the extracted directory
+                let contents = try fm.contentsOfDirectory(atPath: downloadDir)
+                if let appName = contents.first(where: { $0.hasSuffix(".app") }) {
+                    let extractedAppPath = downloadDir + "/\(appName)"
+
+                    // Reveal in Finder
+                    NSWorkspace.shared.selectFile(extractedAppPath,
+                                                  inFileViewerRootedAtPath: downloadDir)
+
+                    NSLog("[AppUpdate] Downloaded and extracted to: %@", extractedAppPath)
+                    DispatchQueue.main.async {
+                        self.onUpdate?()
+                        completion(true,
+                            "Update \(self.latestVersionDisplay) heruntergeladen.\n\n" +
+                            "Die neue App wurde im Finder angezeigt.\n" +
+                            "Bitte die alte App in /Applications ersetzen und neu starten.")
+                    }
+                } else {
+                    // No .app found, just reveal the folder
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: downloadDir)
+                    DispatchQueue.main.async {
+                        self.onUpdate?()
+                        completion(true, "Update entpackt nach: \(downloadDir)")
+                    }
+                }
+            } catch {
+                NSLog("[AppUpdate] File operation error: %@", error.localizedDescription)
+                DispatchQueue.main.async {
+                    self.onUpdate?()
+                    completion(false, "Fehler: \(error.localizedDescription)")
+                }
+            }
+        }
+        task.resume()
+    }
+
+    /// Open the GitHub releases page in browser
+    func openReleasePage() {
+        let urlStr: String
+        if let release = latestRelease, let htmlUrl = release.html_url {
+            urlStr = htmlUrl
+        } else {
+            urlStr = "https://github.com/\(kGitHubRepo)/releases"
+        }
+        if let url = URL(string: urlStr) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - Version Comparison Helpers
+
+    /// Strip "v", "app-v", or "app-" prefix from version string
+    private func normalizeVersion(_ version: String) -> String {
+        var v = version
+        if v.hasPrefix("app-v") { v = String(v.dropFirst(5)) }
+        else if v.hasPrefix("app-") { v = String(v.dropFirst(4)) }
+        else if v.hasPrefix("v") { v = String(v.dropFirst(1)) }
+        return v
+    }
+
+    /// Compare semver strings (e.g. "1.2.0" vs "1.1.0")
+    private func compareVersions(_ a: String, _ b: String) -> ComparisonResult {
+        let aParts = a.split(separator: ".").compactMap { Int($0) }
+        let bParts = b.split(separator: ".").compactMap { Int($0) }
+        let count = max(aParts.count, bParts.count)
+        for i in 0..<count {
+            let av = i < aParts.count ? aParts[i] : 0
+            let bv = i < bParts.count ? bParts[i] : 0
+            if av > bv { return .orderedDescending }
+            if av < bv { return .orderedAscending }
+        }
+        return .orderedSame
+    }
 }
 
 class FirmwareManager {
@@ -1229,6 +1499,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let kTagRefresh = 105
     let kTagFirmwareStatus = 200
     let kTagFirmwareFlash = 201
+    let kTagAppUpdateStatus = 300
+    let kTagAppUpdateAction = 301
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Setup menubar
@@ -1249,6 +1521,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         checkFirmwareUpdate()
         scheduleFirmwareCheckTimer()
+
+        // Setup app update manager
+        AppUpdateManager.shared.onUpdate = { [weak self] in
+            self?.updateMenu()
+        }
+        checkAppUpdate()
+        scheduleAppUpdateCheckTimer()
 
         NSLog("[App] AI Monitor v%@ started - polling every %.0fs", kAppVersion, kPollInterval)
     }
@@ -1276,6 +1555,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         FirmwareManager.shared.checkForUpdate { hasUpdate in
             if hasUpdate {
                 NSLog("[Firmware] Update available: %@", FirmwareManager.shared.latestVersionDisplay)
+            }
+        }
+    }
+
+    // ---- App Update Check Timer ----
+
+    var appUpdateCheckTimer: Timer?
+
+    func scheduleAppUpdateCheckTimer() {
+        appUpdateCheckTimer = Timer.scheduledTimer(withTimeInterval: kAppUpdateCheckInterval, repeats: true) { [weak self] _ in
+            self?.checkAppUpdate()
+        }
+    }
+
+    func checkAppUpdate() {
+        // Skip if checked recently (within interval)
+        if let lastCheck = Settings.shared.lastAppUpdateCheck,
+           Date().timeIntervalSince(lastCheck) < kAppUpdateCheckInterval {
+            NSLog("[AppUpdate] Skipping check — last check %.0fm ago", Date().timeIntervalSince(lastCheck) / 60)
+            return
+        }
+
+        AppUpdateManager.shared.checkForUpdate { hasUpdate in
+            if hasUpdate {
+                NSLog("[AppUpdate] Update available: %@", AppUpdateManager.shared.latestVersionDisplay)
             }
         }
     }
@@ -1388,6 +1692,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // App update section
+        let appUpdateStatusItem = NSMenuItem(title: "App: v\(kAppVersion)", action: nil, keyEquivalent: "")
+        appUpdateStatusItem.tag = kTagAppUpdateStatus
+        appUpdateStatusItem.isEnabled = false
+        menu.addItem(appUpdateStatusItem)
+
+        let appUpdateActionItem = NSMenuItem(title: "Nach App-Updates suchen...", action: #selector(checkForAppUpdate), keyEquivalent: "")
+        appUpdateActionItem.tag = kTagAppUpdateAction
+        menu.addItem(appUpdateActionItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // Launch at login
         let loginItem = NSMenuItem(title: "Bei Login starten", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
         loginItem.state = Settings.shared.launchAtLogin ? .on : .off
@@ -1485,6 +1801,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: \(fw.installedVersionDisplay)"
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
+        }
+
+        // App update status
+        let appMgr = AppUpdateManager.shared
+        if appMgr.isDownloading {
+            menu.item(withTag: kTagAppUpdateStatus)?.title = "App: Download..."
+            menu.item(withTag: kTagAppUpdateAction)?.isEnabled = false
+            menu.item(withTag: kTagAppUpdateAction)?.title = "Download laeuft..."
+        } else if appMgr.hasUpdate {
+            menu.item(withTag: kTagAppUpdateStatus)?.title = "App Update: \(appMgr.latestVersionDisplay) verfuegbar"
+            menu.item(withTag: kTagAppUpdateAction)?.isEnabled = true
+            menu.item(withTag: kTagAppUpdateAction)?.title = "Update herunterladen..."
+        } else if appMgr.latestRelease != nil {
+            menu.item(withTag: kTagAppUpdateStatus)?.title = "App: v\(kAppVersion) (aktuell)"
+            menu.item(withTag: kTagAppUpdateAction)?.isEnabled = true
+            menu.item(withTag: kTagAppUpdateAction)?.title = "Nach App-Updates suchen..."
+        } else {
+            menu.item(withTag: kTagAppUpdateStatus)?.title = "App: v\(kAppVersion)"
+            menu.item(withTag: kTagAppUpdateAction)?.isEnabled = true
+            menu.item(withTag: kTagAppUpdateAction)?.title = "Nach App-Updates suchen..."
         }
 
         // Update launch at login checkmark
@@ -1610,6 +1946,102 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 alert.alertStyle = success ? .informational : .critical
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
+            }
+        }
+    }
+
+    @objc func checkForAppUpdate() {
+        let appMgr = AppUpdateManager.shared
+
+        // If we already know there's an update, download it
+        if appMgr.hasUpdate {
+            downloadAppUpdate()
+            return
+        }
+
+        // Otherwise, check for updates (force check regardless of timer)
+        appMgr.checkForUpdate { [weak self] hasUpdate in
+            DispatchQueue.main.async {
+                if hasUpdate {
+                    self?.showAppUpdateAlert()
+                } else {
+                    let alert = NSAlert()
+                    alert.messageText = "Kein Update verfuegbar"
+                    alert.informativeText = "AI Monitor v\(kAppVersion) ist aktuell."
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
+    func showAppUpdateAlert() {
+        let appMgr = AppUpdateManager.shared
+        guard appMgr.hasUpdate else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "App-Update verfuegbar"
+
+        var info = "Eine neue Version \(appMgr.latestVersionDisplay) ist verfuegbar.\nInstalliert: v\(kAppVersion)"
+        if let body = appMgr.latestRelease?.body, !body.isEmpty {
+            // Show first 200 chars of release notes
+            let truncated = body.count > 200 ? String(body.prefix(200)) + "..." : body
+            info += "\n\nRelease Notes:\n\(truncated)"
+        }
+        alert.informativeText = info
+        alert.alertStyle = .informational
+
+        // Check if there's a downloadable asset
+        let hasAsset = appMgr.latestRelease?.assets.contains { $0.name == kAppAssetName } ?? false
+        if hasAsset {
+            alert.addButton(withTitle: "Herunterladen")
+        } else {
+            alert.addButton(withTitle: "Im Browser oeffnen")
+        }
+        alert.addButton(withTitle: "Spaeter")
+        alert.addButton(withTitle: "Version ueberspringen")
+
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            downloadAppUpdate()
+        case .alertThirdButtonReturn:
+            // Skip this version
+            if let tag = appMgr.latestRelease?.tag_name {
+                Settings.shared.skippedAppVersion = tag
+                NSLog("[AppUpdate] User skipped version %@", tag)
+            }
+        default:
+            break
+        }
+    }
+
+    func downloadAppUpdate() {
+        let appMgr = AppUpdateManager.shared
+
+        let hasAsset = appMgr.latestRelease?.assets.contains { $0.name == kAppAssetName } ?? false
+        if !hasAsset {
+            // No downloadable asset — open release page
+            appMgr.openReleasePage()
+            return
+        }
+
+        appMgr.downloadAndInstall { [weak self] success, message in
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = success ? "Update bereit" : "Update fehlgeschlagen"
+                alert.informativeText = message
+                alert.alertStyle = success ? .informational : .critical
+                alert.addButton(withTitle: "OK")
+                if success {
+                    alert.addButton(withTitle: "Jetzt beenden")
+                }
+                let response = alert.runModal()
+                if success && response == .alertSecondButtonReturn {
+                    // Quit so user can replace the app
+                    self?.quit()
+                }
             }
         }
     }
