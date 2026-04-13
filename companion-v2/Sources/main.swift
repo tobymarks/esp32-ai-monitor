@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.0.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.1.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.0.0"
+let kAppVersion = "1.1.0"
 let kKeychainService = "Claude Code-credentials"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
@@ -53,6 +53,11 @@ let kMinPollInterval: TimeInterval = 30
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 let kUserDefaultsSuite = "de.aimonitor.app"
+let kGitHubRepo = "tobymarks/esp32-ai-monitor"
+let kGitHubReleasesAPI = "https://api.github.com/repos/tobymarks/esp32-ai-monitor/releases/latest"
+let kFirmwareAssetName = "ai-monitor.bin"
+let kFirmwareCheckInterval: TimeInterval = 6 * 3600  // 6 hours
+let kFlashBaudRate = 460800
 
 // ============================================================
 // MARK: - Usage Data Model
@@ -106,6 +111,18 @@ class Settings {
     var lastPollDate: Date? {
         get { defaults.object(forKey: "lastPollDate") as? Date }
         set { defaults.set(newValue, forKey: "lastPollDate") }
+    }
+
+    /// Currently installed/flashed firmware version (tag name from GitHub)
+    var installedFirmwareVersion: String? {
+        get { defaults.string(forKey: "installedFirmwareVersion") }
+        set { defaults.set(newValue, forKey: "installedFirmwareVersion") }
+    }
+
+    /// Last firmware check timestamp
+    var lastFirmwareCheck: Date? {
+        get { defaults.object(forKey: "lastFirmwareCheck") as? Date }
+        set { defaults.set(newValue, forKey: "lastFirmwareCheck") }
     }
 
     private init() {
@@ -367,6 +384,436 @@ class ClaudeAPI {
         }.resume()
     }
 
+}
+
+// ============================================================
+// MARK: - Firmware Manager
+// ============================================================
+
+struct GitHubRelease: Codable {
+    let tag_name: String
+    let name: String?
+    let assets: [GitHubAsset]
+}
+
+struct GitHubAsset: Codable {
+    let name: String
+    let browser_download_url: String
+    let size: Int
+}
+
+class FirmwareManager {
+    static let shared = FirmwareManager()
+
+    var latestRelease: GitHubRelease?
+    var downloadedBinPath: String?
+    var isDownloading = false
+    var isFlashing = false
+    var downloadProgress: Double = 0
+    var flashProgress: String = ""
+    var onUpdate: (() -> Void)?
+
+    /// Directory for downloaded firmware files
+    private var firmwareDir: String {
+        let appSupport = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first!
+        return (appSupport as NSString).appendingPathComponent("AI Monitor/firmware")
+    }
+
+    /// Check if a firmware binary is already downloaded for the given version
+    func localBinPath(for version: String) -> String {
+        return (firmwareDir as NSString).appendingPathComponent("ai-monitor-\(version).bin")
+    }
+
+    /// Resolve esptool path — tries bundled resource first, then PlatformIO, then system pip
+    /// Returns (python3_path, esptool_mode) where esptool_mode is:
+    ///   - "module" → use python3 -m esptool
+    ///   - "bundled:/path" → use python3 /path/esptool.py (with PYTHONPATH set)
+    ///   - "platformio:/path" → use python3 /path/esptool.py
+    func resolveEsptool() -> (python: String, mode: String)? {
+        guard let python = findPython3() else {
+            NSLog("[Firmware] No python3 found")
+            return nil
+        }
+
+        // 1. Bundled esptool package in app Resources
+        if let resourcePath = Bundle.main.resourcePath {
+            let bundledDir = (resourcePath as NSString).appendingPathComponent("esptool-pkg")
+            let bundledScript = (bundledDir as NSString).appendingPathComponent("esptool.py")
+            if FileManager.default.fileExists(atPath: bundledScript) {
+                NSLog("[Firmware] Using bundled esptool: %@", bundledScript)
+                return (python: python, mode: "bundled:\(bundledDir)")
+            }
+        }
+
+        // 2. PlatformIO esptool.py (uses its own _contrib for deps)
+        let platformioScript = NSString("~/.platformio/packages/tool-esptoolpy/esptool.py").expandingTildeInPath
+        if FileManager.default.fileExists(atPath: platformioScript) {
+            NSLog("[Firmware] Using PlatformIO esptool: %@", platformioScript)
+            return (python: python, mode: "platformio:\(platformioScript)")
+        }
+
+        // 3. System esptool via python3 -m esptool (pip installed)
+        let checkProcess = Process()
+        checkProcess.executableURL = URL(fileURLWithPath: python)
+        checkProcess.arguments = ["-m", "esptool", "version"]
+        checkProcess.standardOutput = Pipe()
+        checkProcess.standardError = Pipe()
+        do {
+            try checkProcess.run()
+            checkProcess.waitUntilExit()
+            if checkProcess.terminationStatus == 0 {
+                NSLog("[Firmware] Using system esptool (pip)")
+                return (python: python, mode: "module")
+            }
+        } catch {}
+
+        NSLog("[Firmware] No esptool found")
+        return nil
+    }
+
+    /// Find python3 binary
+    private func findPython3() -> String? {
+        let candidates = [
+            "/usr/local/bin/python3",
+            "/opt/homebrew/bin/python3",
+            "/usr/bin/python3"
+        ]
+        for path in candidates {
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+        return nil
+    }
+
+    /// Check GitHub for latest release
+    func checkForUpdate(completion: @escaping (Bool) -> Void) {
+        guard let url = URL(string: kGitHubReleasesAPI) else {
+            completion(false)
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+
+            if let error = error {
+                NSLog("[Firmware] GitHub API error: %@", error.localizedDescription)
+                completion(false)
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                NSLog("[Firmware] GitHub API HTTP %d", status)
+                completion(false)
+                return
+            }
+
+            guard let data = data else {
+                completion(false)
+                return
+            }
+
+            do {
+                let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+                self.latestRelease = release
+                Settings.shared.lastFirmwareCheck = Date()
+
+                let installed = Settings.shared.installedFirmwareVersion ?? "unbekannt"
+                let hasUpdate = (release.tag_name != installed)
+
+                // Check if binary is already downloaded
+                let binPath = self.localBinPath(for: release.tag_name)
+                if FileManager.default.fileExists(atPath: binPath) {
+                    self.downloadedBinPath = binPath
+                }
+
+                NSLog("[Firmware] Latest: %@ | Installed: %@ | Update: %@",
+                      release.tag_name, installed, hasUpdate ? "YES" : "no")
+
+                DispatchQueue.main.async { self.onUpdate?() }
+                completion(hasUpdate)
+            } catch {
+                NSLog("[Firmware] JSON decode error: %@", error.localizedDescription)
+                completion(false)
+            }
+        }.resume()
+    }
+
+    /// Download firmware binary from GitHub release
+    func downloadFirmware(completion: @escaping (Bool, String?) -> Void) {
+        guard let release = latestRelease else {
+            completion(false, "Kein Release gefunden")
+            return
+        }
+
+        guard let asset = release.assets.first(where: { $0.name == kFirmwareAssetName }) else {
+            completion(false, "Kein \(kFirmwareAssetName) im Release \(release.tag_name)")
+            return
+        }
+
+        guard let url = URL(string: asset.browser_download_url) else {
+            completion(false, "Ungueltige Download-URL")
+            return
+        }
+
+        // Create firmware directory
+        do {
+            try FileManager.default.createDirectory(atPath: firmwareDir, withIntermediateDirectories: true)
+        } catch {
+            completion(false, "Kann Firmware-Verzeichnis nicht erstellen: \(error.localizedDescription)")
+            return
+        }
+
+        let destPath = localBinPath(for: release.tag_name)
+
+        // Already downloaded?
+        if FileManager.default.fileExists(atPath: destPath) {
+            downloadedBinPath = destPath
+            NSLog("[Firmware] Already downloaded: %@", destPath)
+            completion(true, nil)
+            return
+        }
+
+        isDownloading = true
+        downloadProgress = 0
+        DispatchQueue.main.async { self.onUpdate?() }
+
+        NSLog("[Firmware] Downloading %@ (%d bytes)...", asset.name, asset.size)
+
+        let task = URLSession.shared.downloadTask(with: url) { [weak self] tempURL, response, error in
+            guard let self = self else { return }
+            self.isDownloading = false
+
+            if let error = error {
+                NSLog("[Firmware] Download error: %@", error.localizedDescription)
+                DispatchQueue.main.async { self.onUpdate?() }
+                completion(false, error.localizedDescription)
+                return
+            }
+
+            guard let tempURL = tempURL else {
+                DispatchQueue.main.async { self.onUpdate?() }
+                completion(false, "Kein Download-Ergebnis")
+                return
+            }
+
+            do {
+                // Remove old file if exists
+                if FileManager.default.fileExists(atPath: destPath) {
+                    try FileManager.default.removeItem(atPath: destPath)
+                }
+                try FileManager.default.moveItem(at: tempURL, to: URL(fileURLWithPath: destPath))
+                self.downloadedBinPath = destPath
+                self.downloadProgress = 1.0
+                NSLog("[Firmware] Downloaded to %@", destPath)
+                DispatchQueue.main.async { self.onUpdate?() }
+                completion(true, nil)
+            } catch {
+                NSLog("[Firmware] File move error: %@", error.localizedDescription)
+                DispatchQueue.main.async { self.onUpdate?() }
+                completion(false, error.localizedDescription)
+            }
+        }
+        task.resume()
+    }
+
+    /// Flash firmware to ESP32 via esptool
+    func flashFirmware(serialPort: SerialPortManager, completion: @escaping (Bool, String) -> Void) {
+        guard let binPath = downloadedBinPath, FileManager.default.fileExists(atPath: binPath) else {
+            completion(false, "Keine Firmware-Datei vorhanden")
+            return
+        }
+
+        guard let port = serialPort.connectedPort else {
+            completion(false, "Kein ESP32 verbunden")
+            return
+        }
+
+        guard let tool = resolveEsptool() else {
+            completion(false, "esptool nicht gefunden.\nInstalliere mit: pip3 install esptool")
+            return
+        }
+
+        isFlashing = true
+        flashProgress = "Vorbereitung..."
+        DispatchQueue.main.async { self.onUpdate?() }
+
+        // Disconnect serial before flashing
+        NSLog("[Firmware] Disconnecting serial for flash...")
+        serialPort.disconnect()
+
+        // Small delay to ensure port is released
+        usleep(500_000)  // 500ms
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+
+            let process = Process()
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+
+            let esptoolArgs = [
+                "--chip", "esp32",
+                "--port", port,
+                "--baud", "\(kFlashBaudRate)",
+                "write_flash", "0x0", binPath
+            ]
+
+            process.executableURL = URL(fileURLWithPath: tool.python)
+
+            if tool.mode == "module" {
+                // python3 -m esptool ...
+                process.arguments = ["-m", "esptool"] + esptoolArgs
+            } else if tool.mode.hasPrefix("bundled:") {
+                // python3 esptool.py ... with PYTHONPATH including _contrib
+                let bundledDir = String(tool.mode.dropFirst("bundled:".count))
+                let scriptPath = (bundledDir as NSString).appendingPathComponent("esptool.py")
+                let contribDir = (bundledDir as NSString).appendingPathComponent("_contrib")
+                var env = ProcessInfo.processInfo.environment
+                let existingPythonPath = env["PYTHONPATH"] ?? ""
+                env["PYTHONPATH"] = [bundledDir, contribDir, existingPythonPath]
+                    .filter { !$0.isEmpty }.joined(separator: ":")
+                process.environment = env
+                process.arguments = [scriptPath] + esptoolArgs
+            } else if tool.mode.hasPrefix("platformio:") {
+                // python3 /path/to/esptool.py ...
+                let scriptPath = String(tool.mode.dropFirst("platformio:".count))
+                process.arguments = [scriptPath] + esptoolArgs
+            }
+
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            // Read output for progress
+            var outputText = ""
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if let str = String(data: data, encoding: .utf8), !str.isEmpty {
+                    outputText += str
+                    // Parse progress from esptool output (e.g., "Writing at 0x00010000... (5 %)")
+                    if let range = str.range(of: #"\((\d+)\s*%\)"#, options: .regularExpression) {
+                        let percentStr = str[range].replacingOccurrences(of: "(", with: "")
+                            .replacingOccurrences(of: "%)", with: "")
+                            .trimmingCharacters(in: .whitespaces)
+                        DispatchQueue.main.async {
+                            self.flashProgress = "Flashing... \(percentStr)%"
+                            self.onUpdate?()
+                        }
+                    }
+                }
+            }
+
+            var errorText = ""
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if let str = String(data: data, encoding: .utf8), !str.isEmpty {
+                    errorText += str
+                }
+            }
+
+            do {
+                NSLog("[Firmware] Starting flash: %@ on %@", binPath, port)
+                DispatchQueue.main.async {
+                    self.flashProgress = "Flashing..."
+                    self.onUpdate?()
+                }
+
+                try process.run()
+                process.waitUntilExit()
+
+                // Clean up handlers
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+
+                let exitCode = process.terminationStatus
+                NSLog("[Firmware] esptool exited with code %d", exitCode)
+
+                if exitCode == 0 {
+                    // Save installed version
+                    if let release = self.latestRelease {
+                        Settings.shared.installedFirmwareVersion = release.tag_name
+                    }
+
+                    DispatchQueue.main.async {
+                        self.isFlashing = false
+                        self.flashProgress = ""
+                        self.onUpdate?()
+                    }
+
+                    NSLog("[Firmware] Flash successful, waiting 3s before reconnect...")
+                    sleep(3)
+
+                    // Reconnect serial
+                    DispatchQueue.main.async {
+                        serialPort.scanForPort()
+                    }
+
+                    completion(true, "Firmware erfolgreich geflasht!")
+                } else {
+                    let combinedOutput = outputText + "\n" + errorText
+                    NSLog("[Firmware] Flash failed:\n%@", combinedOutput)
+
+                    DispatchQueue.main.async {
+                        self.isFlashing = false
+                        self.flashProgress = ""
+                        self.onUpdate?()
+                    }
+
+                    // Try to reconnect serial even on failure
+                    sleep(2)
+                    DispatchQueue.main.async {
+                        serialPort.scanForPort()
+                    }
+
+                    let shortError = errorText.isEmpty ? "esptool Exit-Code \(exitCode)" :
+                        errorText.components(separatedBy: "\n").last(where: { !$0.isEmpty }) ?? errorText
+                    completion(false, "Flash fehlgeschlagen: \(shortError)")
+                }
+            } catch {
+                NSLog("[Firmware] Failed to start esptool: %@", error.localizedDescription)
+
+                DispatchQueue.main.async {
+                    self.isFlashing = false
+                    self.flashProgress = ""
+                    self.onUpdate?()
+                }
+
+                // Try to reconnect
+                sleep(1)
+                DispatchQueue.main.async {
+                    serialPort.scanForPort()
+                }
+
+                completion(false, "esptool konnte nicht gestartet werden: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Whether a new firmware version is available
+    var hasUpdate: Bool {
+        guard let release = latestRelease else { return false }
+        let installed = Settings.shared.installedFirmwareVersion
+        return release.tag_name != installed
+    }
+
+    /// Version string for display
+    var installedVersionDisplay: String {
+        return Settings.shared.installedFirmwareVersion ?? "unbekannt"
+    }
+
+    var latestVersionDisplay: String {
+        return latestRelease?.tag_name ?? "?"
+    }
+
+    /// Whether flashing is possible right now
+    func canFlash(serialConnected: Bool) -> Bool {
+        return !isFlashing && !isDownloading && serialConnected && downloadedBinPath != nil
+    }
 }
 
 // ============================================================
@@ -780,6 +1227,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let kTagDisplay = 103
     let kTagLastUpdate = 104
     let kTagRefresh = 105
+    let kTagFirmwareStatus = 200
+    let kTagFirmwareFlash = 201
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Setup menubar
@@ -794,7 +1243,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         monitor.start()
 
+        // Setup firmware manager
+        FirmwareManager.shared.onUpdate = { [weak self] in
+            self?.updateMenu()
+        }
+        checkFirmwareUpdate()
+        scheduleFirmwareCheckTimer()
+
         NSLog("[App] AI Monitor v%@ started - polling every %.0fs", kAppVersion, kPollInterval)
+    }
+
+    // ---- Firmware Check Timer ----
+
+    var firmwareCheckTimer: Timer?
+
+    func scheduleFirmwareCheckTimer() {
+        firmwareCheckTimer = Timer.scheduledTimer(withTimeInterval: kFirmwareCheckInterval, repeats: true) { [weak self] _ in
+            self?.checkFirmwareUpdate()
+        }
+    }
+
+    func checkFirmwareUpdate() {
+        // Skip if checked recently (within interval)
+        if let lastCheck = Settings.shared.lastFirmwareCheck,
+           Date().timeIntervalSince(lastCheck) < kFirmwareCheckInterval {
+            NSLog("[Firmware] Skipping check — last check %.0fm ago", Date().timeIntervalSince(lastCheck) / 60)
+            // Still load cached release info
+            FirmwareManager.shared.checkForUpdate { _ in }
+            return
+        }
+
+        FirmwareManager.shared.checkForUpdate { hasUpdate in
+            if hasUpdate {
+                NSLog("[Firmware] Update available: %@", FirmwareManager.shared.latestVersionDisplay)
+            }
+        }
     }
 
     // ---- Menubar Title ----
@@ -813,6 +1296,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     button.imagePosition = .imageLeft
                 }
             }
+        }
+
+        // Show flashing status in menubar
+        if FirmwareManager.shared.isFlashing {
+            button.title = " \(FirmwareManager.shared.flashProgress)"
+            button.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+            return
         }
 
         if let usage = usage, status == .ok {
@@ -882,6 +1372,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let refreshItem = NSMenuItem(title: "Jetzt aktualisieren", action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.tag = kTagRefresh
         menu.addItem(refreshItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Firmware section
+        let fwStatusItem = NSMenuItem(title: "Firmware: --", action: nil, keyEquivalent: "")
+        fwStatusItem.tag = kTagFirmwareStatus
+        fwStatusItem.isEnabled = false
+        menu.addItem(fwStatusItem)
+
+        let fwFlashItem = NSMenuItem(title: "Firmware flashen...", action: #selector(flashFirmware), keyEquivalent: "")
+        fwFlashItem.tag = kTagFirmwareFlash
+        fwFlashItem.isEnabled = false
+        menu.addItem(fwFlashItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -962,6 +1465,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.item(withTag: kTagLastUpdate)?.title = "Letztes Update: \(text)"
         }
 
+        // Firmware status
+        let fw = FirmwareManager.shared
+        if fw.isFlashing {
+            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: \(fw.flashProgress)"
+            menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
+            menu.item(withTag: kTagFirmwareFlash)?.title = "Flash laeuft..."
+        } else if fw.isDownloading {
+            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: Download..."
+            menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
+        } else if fw.hasUpdate {
+            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware Update: \(fw.latestVersionDisplay) verfuegbar"
+            menu.item(withTag: kTagFirmwareFlash)?.title = "Firmware flashen..."
+            menu.item(withTag: kTagFirmwareFlash)?.isEnabled = fw.canFlash(serialConnected: monitor.serialPort.isConnected)
+        } else if fw.latestRelease != nil {
+            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: \(fw.installedVersionDisplay) (aktuell)"
+            menu.item(withTag: kTagFirmwareFlash)?.title = "Firmware flashen..."
+            menu.item(withTag: kTagFirmwareFlash)?.isEnabled = fw.canFlash(serialConnected: monitor.serialPort.isConnected)
+        } else {
+            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: \(fw.installedVersionDisplay)"
+            menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
+        }
+
         // Update launch at login checkmark
         if let loginItem = menu.items.first(where: { $0.title == "Bei Login starten" }) {
             loginItem.state = Settings.shared.launchAtLogin ? .on : .off
@@ -1014,6 +1539,79 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let newValue = !Settings.shared.launchAtLogin
         Settings.shared.launchAtLogin = newValue
         sender.state = newValue ? .on : .off
+    }
+
+    @objc func flashFirmware() {
+        let fw = FirmwareManager.shared
+
+        // If no firmware downloaded yet, download first
+        if fw.downloadedBinPath == nil {
+            guard fw.latestRelease != nil else {
+                let alert = NSAlert()
+                alert.messageText = "Kein Release gefunden"
+                alert.informativeText = "Konnte kein Firmware-Release von GitHub laden."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+                return
+            }
+
+            fw.downloadFirmware { [weak self] success, error in
+                DispatchQueue.main.async {
+                    if success {
+                        self?.flashFirmware()  // Retry with downloaded firmware
+                    } else {
+                        let alert = NSAlert()
+                        alert.messageText = "Download fehlgeschlagen"
+                        alert.informativeText = error ?? "Unbekannter Fehler"
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        alert.runModal()
+                    }
+                }
+            }
+            return
+        }
+
+        guard let port = monitor.serialPort.connectedPort else {
+            let alert = NSAlert()
+            alert.messageText = "Kein ESP32 verbunden"
+            alert.informativeText = "Bitte ESP32 per USB verbinden."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        // Confirmation dialog
+        let version = fw.latestRelease?.tag_name ?? fw.installedVersionDisplay
+        let shortPort = (port as NSString).lastPathComponent
+        let confirm = NSAlert()
+        confirm.messageText = "Firmware flashen?"
+        confirm.informativeText = "ESP32 auf \(shortPort) mit Firmware \(version) flashen?\n\nDie serielle Verbindung wird waehrend des Flash-Vorgangs unterbrochen."
+        confirm.alertStyle = .warning
+        confirm.addButton(withTitle: "Flashen")
+        confirm.addButton(withTitle: "Abbrechen")
+
+        let response = confirm.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        // Stop serial scanning during flash
+        monitor.serialPort.stopScanning()
+
+        fw.flashFirmware(serialPort: monitor.serialPort) { [weak self] success, message in
+            DispatchQueue.main.async {
+                // Restart serial scanning
+                self?.monitor.serialPort.startScanning()
+
+                let alert = NSAlert()
+                alert.messageText = success ? "Flash erfolgreich" : "Flash fehlgeschlagen"
+                alert.informativeText = message
+                alert.alertStyle = success ? .informational : .critical
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
     }
 
     @objc func showAbout() {
