@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.5.2 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.5.3 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -10,7 +10,6 @@
  */
 
 import Cocoa
-import Security
 import ServiceManagement
 import Foundation
 
@@ -23,8 +22,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.5.2"
-let kKeychainService = "Claude Code-credentials"
+let kAppVersion = "1.5.3"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 let kOAuthBeta = "oauth-2025-04-20"
@@ -164,43 +162,9 @@ class Settings {
 // ============================================================
 
 class KeychainReader {
-    /// Read Claude Code OAuth access token from credentials file (primary) or Keychain (fallback)
+    /// Read Claude Code OAuth access token from credentials file
     static func readAccessToken() -> String? {
-        // Primary: credentials file (no Keychain password prompt)
-        if let token = readFromFile() {
-            return token
-        }
-        // Fallback: Keychain (triggers macOS password dialog)
-        NSLog("[Auth] Credentials file not found, trying Keychain")
-        return readFromKeychain()
-    }
-
-    private static func readFromKeychain() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: kKeychainService,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess else {
-            if status == errSecItemNotFound {
-                NSLog("[Keychain] No entry for '%@'", kKeychainService)
-            } else {
-                NSLog("[Keychain] Error: %d", status)
-            }
-            return nil
-        }
-
-        guard let data = result as? Data else {
-            NSLog("[Keychain] Result is not Data")
-            return nil
-        }
-
-        return extractToken(from: data)
+        return readFromFile()
     }
 
     private static func readFromFile() -> String? {
