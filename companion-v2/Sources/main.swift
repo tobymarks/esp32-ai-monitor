@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.5.1 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.5.2 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.5.1"
+let kAppVersion = "1.5.2"
 let kKeychainService = "Claude Code-credentials"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
@@ -164,15 +164,15 @@ class Settings {
 // ============================================================
 
 class KeychainReader {
-    /// Read Claude Code OAuth access token from macOS Keychain
+    /// Read Claude Code OAuth access token from credentials file (primary) or Keychain (fallback)
     static func readAccessToken() -> String? {
-        // Primary: Keychain
-        if let token = readFromKeychain() {
+        // Primary: credentials file (no Keychain password prompt)
+        if let token = readFromFile() {
             return token
         }
-        // Fallback: credentials file
-        NSLog("[Keychain] Trying fallback credentials file")
-        return readFromFile()
+        // Fallback: Keychain (triggers macOS password dialog)
+        NSLog("[Auth] Credentials file not found, trying Keychain")
+        return readFromKeychain()
     }
 
     private static func readFromKeychain() -> String? {
