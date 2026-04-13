@@ -53,7 +53,8 @@ static void detail_bar_row(
     const char *label,
     float utilization,
     time_t reset_epoch,
-    int16_t y
+    int16_t y,
+    bool use_date_format = false
 ) {
     int16_t sw  = SCREEN_WIDTH;
     int16_t bar_w = sw - 24;
@@ -87,14 +88,19 @@ static void detail_bar_row(
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar, 5, LV_PART_INDICATOR);
 
-    char cd_buf[32];
-    format_countdown(reset_epoch, cd_buf, sizeof(cd_buf));
-    char reset_line[48];
-    snprintf(reset_line, sizeof(reset_line), L(STR_RESETS_IN), cd_buf);
+    char cd_buf[48];
     lv_obj_t *cd = lv_label_create(parent);
-    lv_label_set_text(cd, reset_line);
+    if (use_date_format) {
+        format_reset_date(reset_epoch, cd_buf, sizeof(cd_buf));
+        lv_label_set_text(cd, cd_buf);
+    } else {
+        format_countdown_long(reset_epoch, cd_buf, sizeof(cd_buf));
+        char reset_line[64];
+        snprintf(reset_line, sizeof(reset_line), L(STR_RESETS_IN), cd_buf);
+        lv_label_set_text(cd, reset_line);
+    }
     lv_obj_set_style_text_color(cd, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
-    lv_obj_set_style_text_font(cd, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(cd, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_pos(cd, 12, y + 36);
 }
 
@@ -165,7 +171,8 @@ void ui_detail_create(const MonitorState &state) {
     detail_bar_row(scr, L(STR_SESSION_5H),
                    data.five_hour_utilization,
                    data.five_hour_reset_epoch,
-                   content_y);
+                   content_y,
+                   false);
     content_y += 60;
 
     ui_create_divider(scr, content_y);
@@ -174,7 +181,8 @@ void ui_detail_create(const MonitorState &state) {
     detail_bar_row(scr, L(STR_WEEKLY_7D),
                    data.seven_day_utilization,
                    data.seven_day_reset_epoch,
-                   content_y);
+                   content_y,
+                   true);
     content_y += 60;
 
     // ---- Extra usage (if present) ----

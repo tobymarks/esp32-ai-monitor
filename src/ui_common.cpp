@@ -235,6 +235,80 @@ void format_countdown(time_t reset_epoch, char *buf, size_t len) {
 }
 
 // ============================================================
+// Countdown long: "2 Stunden 14 Minuten" / "2 Hours 14 Minutes"
+// ============================================================
+void format_countdown_long(time_t reset_epoch, char *buf, size_t len) {
+    if (reset_epoch <= 0) {
+        snprintf(buf, len, "--");
+        return;
+    }
+    time_t now = time(nullptr);
+    long diff = (long)(reset_epoch - now);
+    if (diff <= 0) {
+        snprintf(buf, len, g_language == LANG_DE ? "bald" : "soon");
+        return;
+    }
+    long hours = diff / 3600;
+    long mins  = (diff % 3600) / 60;
+
+    if (g_language == LANG_DE) {
+        const char *h_unit = (hours == 1) ? "Stunde" : "Stunden";
+        const char *m_unit = (mins == 1) ? "Minute" : "Minuten";
+        if (hours > 0 && mins > 0) {
+            snprintf(buf, len, "%ld %s %ld %s", hours, h_unit, mins, m_unit);
+        } else if (hours > 0) {
+            snprintf(buf, len, "%ld %s", hours, h_unit);
+        } else {
+            snprintf(buf, len, "%ld %s", mins, m_unit);
+        }
+    } else {
+        const char *h_unit = (hours == 1) ? "Hour" : "Hours";
+        const char *m_unit = (mins == 1) ? "Minute" : "Minutes";
+        if (hours > 0 && mins > 0) {
+            snprintf(buf, len, "%ld %s %ld %s", hours, h_unit, mins, m_unit);
+        } else if (hours > 0) {
+            snprintf(buf, len, "%ld %s", hours, h_unit);
+        } else {
+            snprintf(buf, len, "%ld %s", mins, m_unit);
+        }
+    }
+}
+
+// ============================================================
+// Reset date: "Freitag, 18:00 Uhr" / "Friday, 6:00 PM"
+// ============================================================
+void format_reset_date(time_t reset_epoch, char *buf, size_t len) {
+    if (reset_epoch <= 0) {
+        snprintf(buf, len, "--");
+        return;
+    }
+
+    struct tm reset_tm;
+    localtime_r(&reset_epoch, &reset_tm);
+
+    if (g_language == LANG_DE) {
+        static const char* wochentage[] = {
+            "Sonntag", "Montag", "Dienstag", "Mittwoch",
+            "Donnerstag", "Freitag", "Samstag"
+        };
+        snprintf(buf, len, "%s, %02d:%02d Uhr",
+                 wochentage[reset_tm.tm_wday],
+                 reset_tm.tm_hour, reset_tm.tm_min);
+    } else {
+        static const char* weekdays[] = {
+            "Sunday", "Monday", "Tuesday", "Wednesday",
+            "Thursday", "Friday", "Saturday"
+        };
+        int hour12 = reset_tm.tm_hour % 12;
+        if (hour12 == 0) hour12 = 12;
+        const char *ampm = (reset_tm.tm_hour < 12) ? "AM" : "PM";
+        snprintf(buf, len, "%s, %d:%02d %s",
+                 weekdays[reset_tm.tm_wday],
+                 hour12, reset_tm.tm_min, ampm);
+    }
+}
+
+// ============================================================
 // Bar color based on utilization level
 // ============================================================
 lv_color_t ui_bar_color(float utilization) {

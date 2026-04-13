@@ -45,6 +45,12 @@ void format_percentage(float utilization, char *buf, size_t len);
 // Format countdown from reset epoch to "2h 14m" or "4d 12h"
 void format_countdown(time_t reset_epoch, char *buf, size_t len);
 
+// Format countdown long: "2 Stunden 14 Minuten" / "2 Hours 14 Minutes"
+void format_countdown_long(time_t reset_epoch, char *buf, size_t len);
+
+// Format reset as target date: "Freitag, 18:00 Uhr" / "Friday, 6:00 PM"
+void format_reset_date(time_t reset_epoch, char *buf, size_t len);
+
 // Return bar color based on utilization level
 lv_color_t ui_bar_color(float utilization);
 

@@ -148,7 +148,7 @@ static int16_t create_usage_block(
     *out_reset_lbl = lv_label_create(parent);
     lv_label_set_text(*out_reset_lbl, "Resets in --");
     lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_pos(*out_reset_lbl, 0, y_start + 94);
     lv_obj_set_width(*out_reset_lbl, sw);
     lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -348,7 +348,7 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_color_t session_color = ui_bar_color(state.usage.five_hour_utilization);
         lv_obj_set_style_bg_color(bar_session, session_color, LV_PART_INDICATOR);
 
-        format_countdown(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
+        format_countdown_long(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
         char reset_buf[48];
         snprintf(reset_buf, sizeof(reset_buf), L(STR_RESETS_IN), buf);
         lv_label_set_text(lbl_session_reset, reset_buf);
@@ -363,9 +363,9 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_color_t weekly_color = ui_bar_color(state.usage.seven_day_utilization);
         lv_obj_set_style_bg_color(bar_weekly, weekly_color, LV_PART_INDICATOR);
 
-        format_countdown(state.usage.seven_day_reset_epoch, buf, sizeof(buf));
-        snprintf(reset_buf, sizeof(reset_buf), L(STR_RESETS_IN), buf);
-        lv_label_set_text(lbl_weekly_reset, reset_buf);
+        char wbuf[48];
+        format_reset_date(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
+        lv_label_set_text(lbl_weekly_reset, wbuf);
 
     } else if (strlen(state.usage.error) > 0) {
         lv_label_set_text(lbl_session_pct,   "ERR");
