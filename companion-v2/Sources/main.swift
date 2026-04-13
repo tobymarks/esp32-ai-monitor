@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.1.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.2.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.1.0"
+let kAppVersion = "1.2.0"
 let kKeychainService = "Claude Code-credentials"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
