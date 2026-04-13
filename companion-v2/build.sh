@@ -29,6 +29,7 @@ swiftc "$SRC" \
 cp Resources/Info.plist "$APP/Contents/"
 cp Resources/MenuBarIconTemplate.png "$APP/Contents/Resources/" 2>/dev/null || true
 cp Resources/MenuBarIconTemplate@2x.png "$APP/Contents/Resources/" 2>/dev/null || true
+cp Resources/AppIcon.icns "$APP/Contents/Resources/" 2>/dev/null || true
 
 # Bundle esptool from PlatformIO (full package with dependencies)
 ESPTOOL_DIR="$HOME/.platformio/packages/tool-esptoolpy"
