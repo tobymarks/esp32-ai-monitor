@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.2.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.3.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.2.0"
+let kAppVersion = "1.3.0"
 let kKeychainService = "Claude Code-credentials"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
@@ -1190,7 +1190,31 @@ class SerialPortManager {
         newline.withUnsafeBufferPointer { buf in
             _ = Darwin.write(fd, buf.baseAddress!, 1)
         }
-        usleep(100_000)  // 100ms settle time
+        usleep(500_000)  // 500ms settle time for ESP32 to process
+
+        // Query device info immediately (before any other serial traffic)
+        drainInput()
+        let cmd = "{\"cmd\":\"get_info\"}\n"
+        if let cmdData = cmd.data(using: .utf8) {
+            let writeResult = cmdData.withUnsafeBytes { rawBuffer -> Int in
+                guard let ptr = rawBuffer.baseAddress else { return -1 }
+                return Darwin.write(fd, ptr, rawBuffer.count)
+            }
+            if writeResult > 0 {
+                // Read response synchronously (we're still on the scan timer thread)
+                if let response = readLine(timeout: 2.0),
+                   let jsonData = response.data(using: .utf8),
+                   let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                   let type = json["type"] as? String, type == "info",
+                   let version = json["version"] as? String {
+                    deviceFirmwareVersion = version
+                    Settings.shared.installedFirmwareVersion = "v\(version)"
+                    NSLog("[Serial] ESP32 firmware: v%@", version)
+                } else {
+                    NSLog("[Serial] get_info: no valid response")
+                }
+            }
+        }
 
         // Notify listener so an immediate poll can be triggered
         DispatchQueue.main.async { [weak self] in
@@ -1336,11 +1360,8 @@ class UsageMonitor {
     func start() {
         // When a USB serial device connects, poll only if not rate-limited
         serialPort.onConnect = { [weak self] in
-            // Query ESP32 firmware version on connect (background thread — readLine blocks)
-            DispatchQueue.global(qos: .utility).async {
-                self?.serialPort.queryDeviceInfo()
-                DispatchQueue.main.async { self?.onUpdate?() }
-            }
+            // Firmware version already queried in connect() before this callback
+            self?.onUpdate?()
             if !ClaudeAPI.isRateLimited {
                 NSLog("[Monitor] Serial connected — triggering immediate poll")
                 self?.poll()
