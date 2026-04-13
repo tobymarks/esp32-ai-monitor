@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.5.3 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.5.4 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -10,6 +10,7 @@
  */
 
 import Cocoa
+import Security
 import ServiceManagement
 import Foundation
 
@@ -22,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.5.3"
+let kAppVersion = "1.5.4"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 let kOAuthBeta = "oauth-2025-04-20"
@@ -162,14 +163,117 @@ class Settings {
 // ============================================================
 
 class KeychainReader {
-    /// Read Claude Code OAuth access token from credentials file
+    private static let ownService = "de.aimonitor.token"
+    private static let claudeService = "Claude Code-credentials"
+
+    /// Read OAuth token: own keychain cache → Claude Code keychain → claude CLI
     static func readAccessToken() -> String? {
-        return readFromFile()
+        // 1. Eigener Keychain-Eintrag (kein Passwort-Dialog)
+        if let token = readFromOwnKeychain() {
+            return token
+        }
+
+        // 2. Claude Code Keychain lesen (löst einmalig Passwort-Dialog aus)
+        if let token = readFromClaudeKeychain() {
+            NSLog("[Auth] Token aus Claude Code Keychain gelesen, speichere in eigenem Eintrag")
+            saveToOwnKeychain(token)
+            return token
+        }
+
+        // 3. Credentials-Datei als Fallback
+        if let token = readFromFile() {
+            saveToOwnKeychain(token)
+            return token
+        }
+
+        // 4. claude CLI als letzter Fallback
+        if let token = readFromCLI() {
+            saveToOwnKeychain(token)
+            return token
+        }
+
+        NSLog("[Auth] Kein Token gefunden")
+        return nil
     }
+
+    // MARK: - Own Keychain (no password prompt)
+
+    private static func readFromOwnKeychain() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: ownService,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data,
+              let token = String(data: data, encoding: .utf8), !token.isEmpty else {
+            return nil
+        }
+        return token
+    }
+
+    private static func saveToOwnKeychain(_ token: String) {
+        guard let data = token.data(using: .utf8) else { return }
+        // Alten Eintrag löschen falls vorhanden
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: ownService
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+
+        // Neuen Eintrag anlegen
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: ownService,
+            kSecAttrAccount as String: "oauth-token",
+            kSecValueData as String: data
+        ]
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status == errSecSuccess {
+            NSLog("[Auth] Token im eigenen Keychain gespeichert")
+        } else {
+            NSLog("[Auth] Keychain-Speichern fehlgeschlagen: %d", status)
+        }
+    }
+
+    /// Eigenen gecachten Token löschen (bei 401 / Token-Refresh)
+    static func clearCachedToken() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: ownService
+        ]
+        SecItemDelete(query as CFDictionary)
+        NSLog("[Auth] Gecachter Token gelöscht")
+    }
+
+    // MARK: - Claude Code Keychain (triggers password prompt once)
+
+    private static func readFromClaudeKeychain() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: claudeService,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else {
+            if status == errSecItemNotFound {
+                NSLog("[Auth] Kein Eintrag für '%@' im Keychain", claudeService)
+            } else if status != errSecSuccess {
+                NSLog("[Auth] Keychain-Fehler: %d", status)
+            }
+            return nil
+        }
+        return extractToken(from: data)
+    }
+
+    // MARK: - Credentials File
 
     private static func readFromFile() -> String? {
         guard let data = FileManager.default.contents(atPath: kCredentialsFilePath) else {
-            NSLog("[Keychain] No credentials file at %@", kCredentialsFilePath)
             return nil
         }
         return extractToken(from: data)
@@ -178,47 +282,58 @@ class KeychainReader {
     private static func extractToken(from data: Data) -> String? {
         do {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                NSLog("[Keychain] Top-level JSON is not a dictionary")
                 return nil
             }
-
-            // Try nested format: { "claudeAiOauth": { "accessToken": "..." } }
             if let oauth = json["claudeAiOauth"] as? [String: Any],
                let token = oauth["accessToken"] as? String, !token.isEmpty {
                 return token
             }
-
-            // Try flat format: { "accessToken": "..." }
             if let token = json["accessToken"] as? String, !token.isEmpty {
                 return token
             }
-
-            NSLog("[Keychain] Could not extract accessToken from JSON")
             return nil
         } catch {
-            NSLog("[Keychain] JSON parse error: %@", error.localizedDescription)
             return nil
         }
     }
 
-    /// Attempt token refresh by calling claude CLI
-    static func refreshToken() -> Bool {
-        NSLog("[Keychain] Attempting token refresh via claude CLI")
+    // MARK: - Claude CLI
+
+    private static func readFromCLI() -> String? {
+        NSLog("[Auth] Versuche Token über claude CLI")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/claude")
         process.arguments = ["--print-access-token"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
-
         do {
             try process.run()
             process.waitUntilExit()
-            return process.terminationStatus == 0
+            guard process.terminationStatus == 0 else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (token?.isEmpty == false) ? token : nil
         } catch {
-            NSLog("[Keychain] Token refresh failed: %@", error.localizedDescription)
-            return false
+            NSLog("[Auth] CLI-Fehler: %@", error.localizedDescription)
+            return nil
         }
+    }
+
+    /// Attempt token refresh — clears cache and re-reads
+    static func refreshToken() -> Bool {
+        clearCachedToken()
+        // claude CLI holt neuen Token
+        if let token = readFromCLI() {
+            saveToOwnKeychain(token)
+            return true
+        }
+        // Fallback: Claude Code Keychain neu lesen
+        if let token = readFromClaudeKeychain() {
+            saveToOwnKeychain(token)
+            return true
+        }
+        return false
     }
 }
 
@@ -1508,7 +1623,7 @@ class UsageMonitor {
 
         // 1. Read token
         guard let token = KeychainReader.readAccessToken() else {
-            lastError = "Kein Token im Keychain"
+            lastError = "Kein Token gefunden — Claude Code starten"
             status = .tokenExpired
             DispatchQueue.main.async { self.onUpdate?() }
             return
