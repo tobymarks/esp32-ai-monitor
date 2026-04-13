@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.4.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.4.1 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.4.0"
+let kAppVersion = "1.4.1"
 let kKeychainService = "Claude Code-credentials"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
@@ -2184,9 +2184,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         var info = "Eine neue Version \(appMgr.latestVersionDisplay) ist verfügbar.\nInstalliert: v\(kAppVersion)"
         if let body = appMgr.latestRelease?.body, !body.isEmpty {
-            // Show first 200 chars of release notes
-            let truncated = body.count > 200 ? String(body.prefix(200)) + "..." : body
-            info += "\n\nRelease Notes:\n\(truncated)"
+            // Strip Markdown formatting for plain-text display
+            let plain = body
+                .replacingOccurrences(of: "## ", with: "")
+                .replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "- ", with: "• ")
+                .replacingOccurrences(of: "\\n", with: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let truncated = plain.count > 300 ? String(plain.prefix(300)) + "…" : plain
+            info += "\n\n\(truncated)"
         }
         alert.informativeText = info
         alert.alertStyle = .informational
