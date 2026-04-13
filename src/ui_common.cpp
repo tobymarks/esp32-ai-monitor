@@ -9,6 +9,76 @@
 #include <time.h>
 
 // ============================================================
+// Runtime color variables (default: dark theme)
+// ============================================================
+lv_color_t UI_COLOR_BG         = lv_color_hex(0x1A1A2E);
+lv_color_t UI_COLOR_PANEL      = lv_color_hex(0x16213E);
+lv_color_t UI_COLOR_HEADER_BG  = lv_color_hex(0x16213E);
+lv_color_t UI_COLOR_ACCENT     = lv_color_hex(0xE94560);
+lv_color_t UI_COLOR_TEXT       = lv_color_hex(0xFFFFFF);
+lv_color_t UI_COLOR_TEXT_SEC   = lv_color_hex(0x9090B0);
+lv_color_t UI_COLOR_TEXT_DIM   = lv_color_hex(0x666666);
+lv_color_t UI_COLOR_ANTHROPIC  = lv_color_hex(0xE94560);
+lv_color_t UI_COLOR_OPENAI     = lv_color_hex(0x0ACF83);
+lv_color_t UI_COLOR_BAR_BG     = lv_color_hex(0x2A2A4A);
+lv_color_t UI_COLOR_BAR_GREEN  = lv_color_hex(0x27AE60);
+lv_color_t UI_COLOR_BAR_YELLOW = lv_color_hex(0xF1C40F);
+lv_color_t UI_COLOR_BAR_ORANGE = lv_color_hex(0xE67E22);
+lv_color_t UI_COLOR_BAR_RED    = lv_color_hex(0xE74C3C);
+lv_color_t UI_COLOR_SUCCESS    = lv_color_hex(0x27AE60);
+lv_color_t UI_COLOR_ERROR      = lv_color_hex(0xE74C3C);
+lv_color_t UI_COLOR_FETCHING   = lv_color_hex(0xF1C40F);
+lv_color_t UI_COLOR_DIVIDER    = lv_color_hex(0x2A2A4A);
+
+// ============================================================
+// Theme application — sets all color variables
+// ============================================================
+void ui_apply_theme(uint8_t theme) {
+    if (theme == THEME_LIGHT) {
+        // Light theme — white/light background, dark text
+        UI_COLOR_BG         = lv_color_hex(0xF0F0F5);
+        UI_COLOR_PANEL      = lv_color_hex(0xE0E0EA);
+        UI_COLOR_HEADER_BG  = lv_color_hex(0xE0E0EA);
+        UI_COLOR_ACCENT     = lv_color_hex(0xD63851);
+        UI_COLOR_TEXT       = lv_color_hex(0x1A1A2E);
+        UI_COLOR_TEXT_SEC   = lv_color_hex(0x5A5A70);
+        UI_COLOR_TEXT_DIM   = lv_color_hex(0x8A8A9A);
+        UI_COLOR_ANTHROPIC  = lv_color_hex(0xD63851);
+        UI_COLOR_OPENAI     = lv_color_hex(0x08A868);
+        UI_COLOR_BAR_BG     = lv_color_hex(0xD0D0DE);
+        UI_COLOR_BAR_GREEN  = lv_color_hex(0x219653);
+        UI_COLOR_BAR_YELLOW = lv_color_hex(0xD4AC0D);
+        UI_COLOR_BAR_ORANGE = lv_color_hex(0xCC6D1D);
+        UI_COLOR_BAR_RED    = lv_color_hex(0xCB4335);
+        UI_COLOR_SUCCESS    = lv_color_hex(0x219653);
+        UI_COLOR_ERROR      = lv_color_hex(0xCB4335);
+        UI_COLOR_FETCHING   = lv_color_hex(0xD4AC0D);
+        UI_COLOR_DIVIDER    = lv_color_hex(0xC8C8D4);
+    } else {
+        // Dark theme (default)
+        UI_COLOR_BG         = lv_color_hex(0x1A1A2E);
+        UI_COLOR_PANEL      = lv_color_hex(0x16213E);
+        UI_COLOR_HEADER_BG  = lv_color_hex(0x16213E);
+        UI_COLOR_ACCENT     = lv_color_hex(0xE94560);
+        UI_COLOR_TEXT       = lv_color_hex(0xFFFFFF);
+        UI_COLOR_TEXT_SEC   = lv_color_hex(0x9090B0);
+        UI_COLOR_TEXT_DIM   = lv_color_hex(0x666666);
+        UI_COLOR_ANTHROPIC  = lv_color_hex(0xE94560);
+        UI_COLOR_OPENAI     = lv_color_hex(0x0ACF83);
+        UI_COLOR_BAR_BG     = lv_color_hex(0x2A2A4A);
+        UI_COLOR_BAR_GREEN  = lv_color_hex(0x27AE60);
+        UI_COLOR_BAR_YELLOW = lv_color_hex(0xF1C40F);
+        UI_COLOR_BAR_ORANGE = lv_color_hex(0xE67E22);
+        UI_COLOR_BAR_RED    = lv_color_hex(0xE74C3C);
+        UI_COLOR_SUCCESS    = lv_color_hex(0x27AE60);
+        UI_COLOR_ERROR      = lv_color_hex(0xE74C3C);
+        UI_COLOR_FETCHING   = lv_color_hex(0xF1C40F);
+        UI_COLOR_DIVIDER    = lv_color_hex(0x2A2A4A);
+    }
+    Serial.printf("[UI] Theme applied: %s\n", theme == THEME_LIGHT ? "light" : "dark");
+}
+
+// ============================================================
 // Static styles (must be persistent, not stack-allocated)
 // ============================================================
 static lv_style_t style_panel;
@@ -21,7 +91,7 @@ static bool styles_initialized = false;
 void ui_styles_init() {
     if (styles_initialized) return;
 
-    // Panel style: dark card with rounded corners
+    // Panel style: card with rounded corners
     lv_style_init(&style_panel);
     lv_style_set_bg_color(&style_panel, UI_COLOR_PANEL);
     lv_style_set_bg_opa(&style_panel, LV_OPA_COVER);
@@ -37,6 +107,17 @@ void ui_styles_init() {
     lv_style_set_radius(&style_bar_bg, 6);
 
     styles_initialized = true;
+}
+
+// ============================================================
+// Reset styles (for theme change — forces re-init with new colors)
+// ============================================================
+void ui_styles_reset() {
+    if (styles_initialized) {
+        lv_style_reset(&style_panel);
+        lv_style_reset(&style_bar_bg);
+        styles_initialized = false;
+    }
 }
 
 // ============================================================

@@ -431,3 +431,62 @@ lv_obj_t* ui_dashboard_get_screen() {
 const MonitorState& ui_dashboard_get_last_state() {
     return last_state;
 }
+
+// ============================================================
+// Recreate dashboard (theme change — destroy + create fresh)
+// ============================================================
+void ui_dashboard_recreate() {
+    // Save current state
+    MonitorState saved_state;
+    bool had_state = state_stored;
+    bool had_data  = first_data_received;
+    if (had_state) {
+        memcpy(&saved_state, &last_state, sizeof(MonitorState));
+    }
+
+    // Delete old screen
+    if (scr_dashboard != nullptr) {
+        lv_obj_delete(scr_dashboard);
+        scr_dashboard      = nullptr;
+        lbl_provider       = nullptr;
+        lbl_time           = nullptr;
+        lbl_session_pct    = nullptr;
+        bar_session        = nullptr;
+        lbl_session_reset  = nullptr;
+        lbl_weekly_pct     = nullptr;
+        bar_weekly         = nullptr;
+        lbl_weekly_reset   = nullptr;
+        lbl_status_dot     = nullptr;
+        lbl_refresh        = nullptr;
+        long_press_overlay = nullptr;
+        splash_overlay     = nullptr;
+        splash_spinner     = nullptr;
+    }
+
+    // Reset styles so they pick up new colors
+    ui_styles_reset();
+
+    // Recreate
+    ui_dashboard_create();
+
+    // Restore data state after create (create resets first_data_received)
+    first_data_received = had_data;
+
+    // If we already had data, skip splash and restore state
+    if (had_data && splash_overlay != nullptr) {
+        lv_obj_delete(splash_overlay);
+        splash_overlay = nullptr;
+        splash_spinner = nullptr;
+    }
+
+    // Load and update
+    lv_obj_t *dash_scr = ui_dashboard_get_screen();
+    if (dash_scr) {
+        lv_screen_load(dash_scr);
+    }
+    if (had_state) {
+        ui_dashboard_update(saved_state);
+    }
+
+    Serial.println("[UI] Dashboard recreated with new theme");
+}

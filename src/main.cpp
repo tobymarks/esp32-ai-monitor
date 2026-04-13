@@ -166,8 +166,11 @@ void setup()
     // --- TFT init ---
     tft.init();
 
-    // Load orientation from NVS
+    // Load orientation + theme from NVS
     config_load(g_config);
+
+    // Apply persisted theme before creating UI
+    ui_apply_theme(g_config.theme);
 
     if (g_config.orientation == ORIENTATION_LANDSCAPE) {
         tft.setRotation(3);

@@ -13,6 +13,8 @@
 #include "api_common.h"
 #include "config.h"
 #include "config_store.h"
+#include "ui_common.h"
+#include "ui_dashboard.h"
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -88,13 +90,39 @@ static bool parse_command(JsonDocument &doc) {
         return true;
     }
 
+    // --- set_theme ---
+    if (strcmp(cmd, "set_theme") == 0) {
+        const char *val = doc["value"];
+        if (!val) {
+            Serial.println("{\"type\":\"error\",\"message\":\"set_theme: missing value\"}");
+            return true;
+        }
+        uint8_t new_theme;
+        if (strcmp(val, "light") == 0) {
+            new_theme = THEME_LIGHT;
+        } else if (strcmp(val, "dark") == 0) {
+            new_theme = THEME_DARK;
+        } else {
+            Serial.printf("{\"type\":\"error\",\"message\":\"set_theme: invalid value '%s'\"}\n", val);
+            return true;
+        }
+        g_config.theme = new_theme;
+        config_save(g_config);
+        ui_apply_theme(new_theme);
+        // Recreate dashboard with new colors
+        ui_dashboard_recreate();
+        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_theme\",\"value\":\"%s\"}\n", val);
+        return true;
+    }
+
     // --- get_info ---
     if (strcmp(cmd, "get_info") == 0) {
         const char *orient = (g_config.orientation == ORIENTATION_LANDSCAPE)
                              ? "landscape" : "portrait";
+        const char *theme = (g_config.theme == THEME_LIGHT) ? "light" : "dark";
         Serial.printf("{\"type\":\"info\",\"version\":\"%s\",\"orientation\":\"%s\","
-                      "\"uptime\":%lu,\"heap\":%u}\n",
-                      APP_VERSION, orient,
+                      "\"theme\":\"%s\",\"uptime\":%lu,\"heap\":%u}\n",
+                      APP_VERSION, orient, theme,
                       (unsigned long)(millis() / 1000),
                       (unsigned)ESP.getFreeHeap());
         return true;

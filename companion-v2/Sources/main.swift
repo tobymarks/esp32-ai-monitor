@@ -1471,6 +1471,10 @@ class UsageMonitor {
         serialPort.onConnect = { [weak self] in
             // Firmware version already queried in connect() before this callback
             self?.onUpdate?()
+
+            // Sync macOS appearance to ESP32 on connect
+            self?.sendThemeToESP32()
+
             if !ClaudeAPI.isRateLimited {
                 NSLog("[Monitor] Serial connected — triggering immediate poll")
                 self?.poll()
@@ -1637,6 +1641,19 @@ class UsageMonitor {
         sendToESP32(usage: usage)
     }
 
+    // ---- Theme (Dark/Light Mode) ----
+
+    func sendThemeToESP32() {
+        guard serialPort.isConnected else { return }
+
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let theme = isDark ? "dark" : "light"
+        let cmd = "{\"cmd\":\"set_theme\",\"value\":\"\(theme)\"}"
+        if serialPort.sendJSON(cmd) {
+            NSLog("[Serial] Sent set_theme: %@", theme)
+        }
+    }
+
     private func sendToESP32(usage: UsageResponse) {
         guard serialPort.isConnected else { return }
 
@@ -1706,6 +1723,7 @@ class UsageMonitor {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var monitor: UsageMonitor!
+    var appearanceObservation: NSKeyValueObservation?
 
     // Menu item tags
     let kTagTitle = 10
@@ -1746,6 +1764,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         checkAppUpdate()
         scheduleAppUpdateCheckTimer()
+
+        // Observe macOS appearance changes (Dark/Light Mode) and sync to ESP32
+        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            NSLog("[App] macOS appearance changed — syncing theme to ESP32")
+            self?.monitor.sendThemeToESP32()
+        }
 
         NSLog("[App] AI Monitor v%@ started - polling every %.0fs", kAppVersion, kPollInterval)
     }

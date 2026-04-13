@@ -22,4 +22,7 @@ lv_obj_t* ui_dashboard_get_screen();
 // Get a copy of the last known state (for detail/settings screens)
 const MonitorState& ui_dashboard_get_last_state();
 
+// Recreate dashboard screen (destroys old, creates new with current theme colors)
+void ui_dashboard_recreate();
+
 #endif // UI_DASHBOARD_H

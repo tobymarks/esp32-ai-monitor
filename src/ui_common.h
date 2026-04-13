@@ -5,26 +5,26 @@
 #include "api_common.h"
 
 // ============================================================
-// Color definitions (LVGL-ready)
+// Color definitions — runtime variables for theme switching
 // ============================================================
-#define UI_COLOR_BG            lv_color_hex(0x1A1A2E)
-#define UI_COLOR_PANEL         lv_color_hex(0x16213E)
-#define UI_COLOR_HEADER_BG     lv_color_hex(0x16213E)
-#define UI_COLOR_ACCENT        lv_color_hex(0xE94560)
-#define UI_COLOR_TEXT          lv_color_hex(0xFFFFFF)
-#define UI_COLOR_TEXT_SEC      lv_color_hex(0x9090B0)
-#define UI_COLOR_TEXT_DIM      lv_color_hex(0x666666)
-#define UI_COLOR_ANTHROPIC     lv_color_hex(0xE94560)
-#define UI_COLOR_OPENAI        lv_color_hex(0x0ACF83)
-#define UI_COLOR_BAR_BG        lv_color_hex(0x2A2A4A)
-#define UI_COLOR_BAR_GREEN     lv_color_hex(0x27AE60)
-#define UI_COLOR_BAR_YELLOW    lv_color_hex(0xF1C40F)
-#define UI_COLOR_BAR_ORANGE    lv_color_hex(0xE67E22)
-#define UI_COLOR_BAR_RED       lv_color_hex(0xE74C3C)
-#define UI_COLOR_SUCCESS       lv_color_hex(0x27AE60)
-#define UI_COLOR_ERROR         lv_color_hex(0xE74C3C)
-#define UI_COLOR_FETCHING      lv_color_hex(0xF1C40F)
-#define UI_COLOR_DIVIDER       lv_color_hex(0x2A2A4A)
+extern lv_color_t UI_COLOR_BG;
+extern lv_color_t UI_COLOR_PANEL;
+extern lv_color_t UI_COLOR_HEADER_BG;
+extern lv_color_t UI_COLOR_ACCENT;
+extern lv_color_t UI_COLOR_TEXT;
+extern lv_color_t UI_COLOR_TEXT_SEC;
+extern lv_color_t UI_COLOR_TEXT_DIM;
+extern lv_color_t UI_COLOR_ANTHROPIC;
+extern lv_color_t UI_COLOR_OPENAI;
+extern lv_color_t UI_COLOR_BAR_BG;
+extern lv_color_t UI_COLOR_BAR_GREEN;
+extern lv_color_t UI_COLOR_BAR_YELLOW;
+extern lv_color_t UI_COLOR_BAR_ORANGE;
+extern lv_color_t UI_COLOR_BAR_RED;
+extern lv_color_t UI_COLOR_SUCCESS;
+extern lv_color_t UI_COLOR_ERROR;
+extern lv_color_t UI_COLOR_FETCHING;
+extern lv_color_t UI_COLOR_DIVIDER;
 
 // ============================================================
 // Formatting helpers (static buffers — NOT thread-safe)
@@ -74,5 +74,13 @@ void ui_screen_load_fade(lv_obj_t *scr);
 // Style initialization (call once at startup)
 // ============================================================
 void ui_styles_init();
+
+// Reset styles so they are re-initialized with current theme colors
+void ui_styles_reset();
+
+// ============================================================
+// Theme switching — applies dark or light color palette
+// ============================================================
+void ui_apply_theme(uint8_t theme);
 
 #endif // UI_COMMON_H
