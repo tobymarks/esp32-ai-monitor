@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.3.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.4.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.3.0"
+let kAppVersion = "1.4.0"
 let kKeychainService = "Claude Code-credentials"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
@@ -521,19 +521,19 @@ class AppUpdateManager {
             // No direct asset — open the release page in browser instead
             if let htmlUrl = release.html_url, let url = URL(string: htmlUrl) {
                 NSWorkspace.shared.open(url)
-                completion(true, "Release-Seite im Browser geoeffnet")
+                completion(true, "Release-Seite im Browser geöffnet")
             } else {
                 let repoUrl = "https://github.com/\(kGitHubRepo)/releases/tag/\(release.tag_name)"
                 if let url = URL(string: repoUrl) {
                     NSWorkspace.shared.open(url)
                 }
-                completion(true, "Release-Seite im Browser geoeffnet")
+                completion(true, "Release-Seite im Browser geöffnet")
             }
             return
         }
 
         guard let downloadUrl = URL(string: asset.browser_download_url) else {
-            completion(false, "Ungueltige Download-URL")
+            completion(false, "Ungültige Download-URL")
             return
         }
 
@@ -594,24 +594,17 @@ class AppUpdateManager {
                 if let appName = contents.first(where: { $0.hasSuffix(".app") }) {
                     let extractedAppPath = downloadDir + "/\(appName)"
 
-                    // Reveal in Finder
-                    NSWorkspace.shared.selectFile(extractedAppPath,
-                                                  inFileViewerRootedAtPath: downloadDir)
-
                     NSLog("[AppUpdate] Downloaded and extracted to: %@", extractedAppPath)
                     DispatchQueue.main.async {
                         self.onUpdate?()
-                        completion(true,
-                            "Update \(self.latestVersionDisplay) heruntergeladen.\n\n" +
-                            "Die neue App wurde im Finder angezeigt.\n" +
-                            "Bitte die alte App in /Applications ersetzen und neu starten.")
+                        completion(true, extractedAppPath)
                     }
                 } else {
                     // No .app found, just reveal the folder
                     NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: downloadDir)
                     DispatchQueue.main.async {
                         self.onUpdate?()
-                        completion(true, "Update entpackt nach: \(downloadDir)")
+                        completion(false, "Keine .app im Download gefunden")
                     }
                 }
             } catch {
@@ -635,6 +628,102 @@ class AppUpdateManager {
         }
         if let url = URL(string: urlStr) {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Perform auto-update: write a shell script that replaces the running app, then launch it and quit
+    /// - Parameters:
+    ///   - extractedAppPath: Path to the newly downloaded .app in temp dir
+    ///   - completion: Called with (success, errorMessage) — only called on failure; on success the app terminates
+    func performAutoUpdate(extractedAppPath: String, completion: @escaping (Bool, String) -> Void) {
+        let currentAppPath = Bundle.main.bundlePath
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let scriptPath = NSTemporaryDirectory() + "aimonitor-update.sh"
+
+        // Safety check: make sure the current app path looks valid
+        guard currentAppPath.hasSuffix(".app") else {
+            completion(false, "App-Pfad ungültig: \(currentAppPath)")
+            return
+        }
+
+        // Safety check: make sure the extracted app exists
+        guard FileManager.default.fileExists(atPath: extractedAppPath) else {
+            completion(false, "Heruntergeladene App nicht gefunden: \(extractedAppPath)")
+            return
+        }
+
+        let script = """
+        #!/bin/bash
+        # AI Monitor Auto-Update Script
+        # Wartet bis die alte App beendet ist, ersetzt sie, startet neu
+
+        CURRENT_PID=\(pid)
+        NEW_APP="\(extractedAppPath)"
+        OLD_APP="\(currentAppPath)"
+
+        # Warten bis der aktuelle Prozess beendet ist (max 30 Sekunden)
+        WAITED=0
+        while kill -0 "$CURRENT_PID" 2>/dev/null; do
+            sleep 0.5
+            WAITED=$((WAITED + 1))
+            if [ "$WAITED" -ge 60 ]; then
+                echo "Timeout: App hat sich nicht beendet" >&2
+                exit 1
+            fi
+        done
+
+        # Kurz warten damit alle Dateien freigegeben sind
+        sleep 1
+
+        # Alte App entfernen und neue kopieren
+        rm -rf "$OLD_APP"
+        cp -R "$NEW_APP" "$OLD_APP"
+
+        if [ $? -ne 0 ]; then
+            echo "Fehler beim Kopieren der neuen App" >&2
+            exit 1
+        fi
+
+        # Gatekeeper Quarantine-Attribute entfernen
+        xattr -cr "$OLD_APP" 2>/dev/null
+
+        # Neue App starten
+        open "$OLD_APP"
+
+        # Temp-Dateien aufraeumen
+        rm -rf "$(dirname "$NEW_APP")"
+        rm -f "\(scriptPath)"
+        """
+
+        do {
+            try script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+
+            // Make script executable
+            let chmodProcess = Process()
+            chmodProcess.executableURL = URL(fileURLWithPath: "/bin/chmod")
+            chmodProcess.arguments = ["+x", scriptPath]
+            try chmodProcess.run()
+            chmodProcess.waitUntilExit()
+
+            // Launch the script as a detached process
+            let updateProcess = Process()
+            updateProcess.executableURL = URL(fileURLWithPath: "/bin/bash")
+            updateProcess.arguments = [scriptPath]
+            updateProcess.standardOutput = FileHandle.nullDevice
+            updateProcess.standardError = FileHandle.nullDevice
+            // QualityOfService: detach from parent process
+            updateProcess.qualityOfService = .utility
+            try updateProcess.run()
+
+            NSLog("[AppUpdate] Update-Script gestartet (PID %d), beende App...", updateProcess.processIdentifier)
+
+            // Terminate the app — the shell script will handle the rest
+            DispatchQueue.main.async {
+                NSApplication.shared.terminate(nil)
+            }
+        } catch {
+            NSLog("[AppUpdate] Fehler beim Erstellen/Starten des Update-Scripts: %@", error.localizedDescription)
+            completion(false, "Update-Script konnte nicht gestartet werden: \(error.localizedDescription)")
         }
     }
 
@@ -833,7 +922,7 @@ class FirmwareManager {
         }
 
         guard let url = URL(string: asset.browser_download_url) else {
-            completion(false, "Ungueltige Download-URL")
+            completion(false, "Ungültige Download-URL")
             return
         }
 
@@ -1454,7 +1543,7 @@ class UsageMonitor {
                                 if let usage2 = usage2 {
                                     self.handleSuccess(usage: usage2)
                                 } else {
-                                    self.lastError = "Token abgelaufen - Claude Code oeffnen"
+                                    self.lastError = "Token abgelaufen - Claude Code öffnen"
                                     self.status = .tokenExpired
                                     DispatchQueue.main.async { self.onUpdate?() }
                                 }
@@ -1462,12 +1551,12 @@ class UsageMonitor {
                             return
                         }
                     }
-                    self.lastError = "Token abgelaufen - Claude Code oeffnen"
+                    self.lastError = "Token abgelaufen - Claude Code öffnen"
                     self.status = .tokenExpired
                     DispatchQueue.main.async { self.onUpdate?() }
                     return
                 } else {
-                    self.lastError = "Token abgelaufen - Claude Code oeffnen"
+                    self.lastError = "Token abgelaufen - Claude Code öffnen"
                     self.status = .tokenExpired
                     DispatchQueue.main.async { self.onUpdate?() }
                     return
@@ -1821,7 +1910,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // About
-        menu.addItem(withTitle: "Ueber AI Monitor", action: #selector(showAbout), keyEquivalent: "")
+        menu.addItem(withTitle: "Über AI Monitor", action: #selector(showAbout), keyEquivalent: "")
 
         // Quit
         menu.addItem(withTitle: "Beenden", action: #selector(quit), keyEquivalent: "q")
@@ -1896,12 +1985,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if fw.isFlashing {
             menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: \(fw.flashProgress)"
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
-            menu.item(withTag: kTagFirmwareFlash)?.title = "Flash laeuft..."
+            menu.item(withTag: kTagFirmwareFlash)?.title = "Flash läuft..."
         } else if fw.isDownloading {
             menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware: Download..."
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
         } else if fw.hasUpdate {
-            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware Update: \(fw.latestVersionDisplay) verfuegbar"
+            menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware Update: \(fw.latestVersionDisplay) verfügbar"
             menu.item(withTag: kTagFirmwareFlash)?.title = "Firmware flashen..."
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = fw.canFlash(serialConnected: monitor.serialPort.isConnected)
         } else if fw.latestRelease != nil {
@@ -1918,9 +2007,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if appMgr.isDownloading {
             menu.item(withTag: kTagAppUpdateStatus)?.title = "App: Download..."
             menu.item(withTag: kTagAppUpdateAction)?.isEnabled = false
-            menu.item(withTag: kTagAppUpdateAction)?.title = "Download laeuft..."
+            menu.item(withTag: kTagAppUpdateAction)?.title = "Download läuft..."
         } else if appMgr.hasUpdate {
-            menu.item(withTag: kTagAppUpdateStatus)?.title = "App Update: \(appMgr.latestVersionDisplay) verfuegbar"
+            menu.item(withTag: kTagAppUpdateStatus)?.title = "App Update: \(appMgr.latestVersionDisplay) verfügbar"
             menu.item(withTag: kTagAppUpdateAction)?.isEnabled = true
             menu.item(withTag: kTagAppUpdateAction)?.title = "Update herunterladen..."
         } else if appMgr.latestRelease != nil {
@@ -2034,7 +2123,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let shortPort = (port as NSString).lastPathComponent
         let confirm = NSAlert()
         confirm.messageText = "Firmware flashen?"
-        confirm.informativeText = "ESP32 auf \(shortPort) mit Firmware \(version) flashen?\n\nDie serielle Verbindung wird waehrend des Flash-Vorgangs unterbrochen."
+        confirm.informativeText = "ESP32 auf \(shortPort) mit Firmware \(version) flashen?\n\nDie serielle Verbindung wird während des Flash-Vorgangs unterbrochen."
         confirm.alertStyle = .warning
         confirm.addButton(withTitle: "Flashen")
         confirm.addButton(withTitle: "Abbrechen")
@@ -2076,7 +2165,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.showAppUpdateAlert()
                 } else {
                     let alert = NSAlert()
-                    alert.messageText = "Kein Update verfuegbar"
+                    alert.messageText = "Kein Update verfügbar"
                     alert.informativeText = "AI Monitor v\(kAppVersion) ist aktuell."
                     alert.alertStyle = .informational
                     alert.addButton(withTitle: "OK")
@@ -2091,9 +2180,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard appMgr.hasUpdate else { return }
 
         let alert = NSAlert()
-        alert.messageText = "App-Update verfuegbar"
+        alert.messageText = "App-Update verfügbar"
 
-        var info = "Eine neue Version \(appMgr.latestVersionDisplay) ist verfuegbar.\nInstalliert: v\(kAppVersion)"
+        var info = "Eine neue Version \(appMgr.latestVersionDisplay) ist verfügbar.\nInstalliert: v\(kAppVersion)"
         if let body = appMgr.latestRelease?.body, !body.isEmpty {
             // Show first 200 chars of release notes
             let truncated = body.count > 200 ? String(body.prefix(200)) + "..." : body
@@ -2107,10 +2196,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if hasAsset {
             alert.addButton(withTitle: "Herunterladen")
         } else {
-            alert.addButton(withTitle: "Im Browser oeffnen")
+            alert.addButton(withTitle: "Im Browser öffnen")
         }
-        alert.addButton(withTitle: "Spaeter")
-        alert.addButton(withTitle: "Version ueberspringen")
+        alert.addButton(withTitle: "Später")
+        alert.addButton(withTitle: "Version überspringen")
 
         let response = alert.runModal()
         switch response {
@@ -2137,20 +2226,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        appMgr.downloadAndInstall { [weak self] success, message in
+        appMgr.downloadAndInstall { success, extractedPathOrError in
             DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = success ? "Update bereit" : "Update fehlgeschlagen"
-                alert.informativeText = message
-                alert.alertStyle = success ? .informational : .critical
-                alert.addButton(withTitle: "OK")
-                if success {
-                    alert.addButton(withTitle: "Jetzt beenden")
+                guard success else {
+                    // Download or extraction failed
+                    let alert = NSAlert()
+                    alert.messageText = "Update fehlgeschlagen"
+                    alert.informativeText = extractedPathOrError
+                    alert.alertStyle = .critical
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                    return
                 }
+
+                // Download successful — ask user to confirm install + restart
+                let alert = NSAlert()
+                alert.messageText = "Update auf \(appMgr.latestVersionDisplay) installieren?"
+                alert.informativeText = "Die App wird kurz neu gestartet."
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "Installieren")
+                alert.addButton(withTitle: "Später")
+
                 let response = alert.runModal()
-                if success && response == .alertSecondButtonReturn {
-                    // Quit so user can replace the app
-                    self?.quit()
+                if response == .alertFirstButtonReturn {
+                    // User confirmed — perform auto-update
+                    appMgr.performAutoUpdate(extractedAppPath: extractedPathOrError) { _, errorMessage in
+                        DispatchQueue.main.async {
+                            let errAlert = NSAlert()
+                            errAlert.messageText = "Update fehlgeschlagen"
+                            errAlert.informativeText = errorMessage
+                            errAlert.alertStyle = .critical
+                            errAlert.addButton(withTitle: "OK")
+                            errAlert.runModal()
+                        }
+                    }
+                } else {
+                    // User chose "Spaeter" — leave downloaded app in temp for next time
+                    NSLog("[AppUpdate] User verschiebt Update auf spaeter, neue App liegt in: %@", extractedPathOrError)
                 }
             }
         }
@@ -2159,7 +2271,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showAbout() {
         let alert = NSAlert()
         alert.messageText = "AI Monitor v\(kAppVersion)"
-        alert.informativeText = "macOS Menubar App fuer ESP32 AI Usage Monitor Display.\n\nLiest Claude OAuth Usage und sendet Daten per USB-Serial an das ESP32 Display."
+        alert.informativeText = "macOS Menubar App für ESP32 AI Usage Monitor Display.\n\nLiest Claude OAuth Usage und sendet Daten per USB-Serial an das ESP32 Display."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()
