@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.4.1 — macOS Menubar App for ESP32 AI Usage Monitor Display
+ * AI Monitor v1.5.0 — macOS Menubar App for ESP32 AI Usage Monitor Display
  *
  * Reads Claude OAuth token from macOS Keychain,
  * polls the Claude Usage API, shows usage in menubar,
@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.4.1"
+let kAppVersion = "1.5.0"
 let kKeychainService = "Claude Code-credentials"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
@@ -1279,35 +1279,55 @@ class SerialPortManager {
         newline.withUnsafeBufferPointer { buf in
             _ = Darwin.write(fd, buf.baseAddress!, 1)
         }
-        usleep(500_000)  // 500ms settle time for ESP32 to process
+        usleep(200_000)  // 200ms settle time
 
-        // Query device info immediately (before any other serial traffic)
-        drainInput()
-        let cmd = "{\"cmd\":\"get_info\"}\n"
-        if let cmdData = cmd.data(using: .utf8) {
-            let writeResult = cmdData.withUnsafeBytes { rawBuffer -> Int in
-                guard let ptr = rawBuffer.baseAddress else { return -1 }
-                return Darwin.write(fd, ptr, rawBuffer.count)
-            }
-            if writeResult > 0 {
-                // Read response synchronously (we're still on the scan timer thread)
-                if let response = readLine(timeout: 2.0),
-                   let jsonData = response.data(using: .utf8),
-                   let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                   let type = json["type"] as? String, type == "info",
-                   let version = json["version"] as? String {
-                    deviceFirmwareVersion = version
-                    Settings.shared.installedFirmwareVersion = "v\(version)"
-                    NSLog("[Serial] ESP32 firmware: v%@", version)
-                } else {
-                    NSLog("[Serial] get_info: no valid response")
+        // Query device info on background thread, THEN notify onConnect
+        // (onConnect triggers poll() which also sends serial data — must not overlap)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self, self.fileDescriptor >= 0 else { return }
+
+            self.drainInput()
+
+            let cmd = "{\"cmd\":\"get_info\"}\n"
+            if let cmdData = cmd.data(using: .utf8) {
+                let writeResult = cmdData.withUnsafeBytes { rawBuffer -> Int in
+                    guard let ptr = rawBuffer.baseAddress else { return -1 }
+                    return Darwin.write(self.fileDescriptor, ptr, rawBuffer.count)
+                }
+                NSLog("[Serial] Sent get_info (%d bytes)", writeResult)
+
+                if writeResult > 0 {
+                    // ESP32 may send debug log lines before the JSON response
+                    // Read up to 5 lines, looking for the JSON info response
+                    var found = false
+                    for _ in 0..<5 {
+                        guard let line = self.readLine(timeout: 2.0) else { break }
+                        NSLog("[Serial] read: %@", line)
+
+                        // Skip non-JSON lines (debug logs like "[Serial] Command received: ...")
+                        guard line.hasPrefix("{") else { continue }
+
+                        if let jsonData = line.data(using: .utf8),
+                           let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                           let type = json["type"] as? String, type == "info",
+                           let version = json["version"] as? String {
+                            self.deviceFirmwareVersion = version
+                            Settings.shared.installedFirmwareVersion = "v\(version)"
+                            NSLog("[Serial] ESP32 firmware: v%@", version)
+                            found = true
+                            break
+                        }
+                    }
+                    if !found {
+                        NSLog("[Serial] get_info: no JSON info response received")
+                    }
                 }
             }
-        }
 
-        // Notify listener so an immediate poll can be triggered
-        DispatchQueue.main.async { [weak self] in
-            self?.onConnect?()
+            // Now notify — safe to send usage data
+            DispatchQueue.main.async {
+                self.onConnect?()
+            }
         }
     }
 
@@ -1827,14 +1847,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func buildMenu() {
         let menu = NSMenu()
-
-        // Title
-        let titleItem = NSMenuItem(title: "AI Monitor v\(kAppVersion)", action: nil, keyEquivalent: "")
-        titleItem.tag = kTagTitle
-        titleItem.isEnabled = false
-        menu.addItem(titleItem)
-
-        menu.addItem(NSMenuItem.separator())
 
         // Session
         let sessionItem = NSMenuItem(title: "Session: --", action: nil, keyEquivalent: "")
