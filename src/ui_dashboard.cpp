@@ -203,20 +203,27 @@ void ui_dashboard_create() {
     lv_obj_align(lbl_time, LV_ALIGN_TOP_RIGHT, -8, 11);
 
     // ---- Divider under header ----
-    ui_create_divider(scr_dashboard, 36);
+    const int16_t header_h = 36;
+    ui_create_divider(scr_dashboard, header_h);
+
+    // ---- Split remaining space into two equal zones ----
+    const int16_t block_h       = 114; // height of usage block
+    int16_t available_h         = (int16_t)sh - header_h;
+    int16_t zone_h              = available_h / 2;
+    int16_t session_y           = header_h + (zone_h - block_h) / 2;
+    int16_t middle_divider_y    = header_h + zone_h;
+    int16_t weekly_y            = middle_divider_y + (zone_h - block_h) / 2;
 
     // ---- Session block ----
-    int16_t session_y = 44;
-    int16_t after_session = create_usage_block(
+    create_usage_block(
         scr_dashboard, L(STR_SESSION),
         session_y,
         &lbl_session_pct, &bar_session, &lbl_session_reset
     );
 
-    ui_create_divider(scr_dashboard, after_session + 4);
+    ui_create_divider(scr_dashboard, middle_divider_y);
 
     // ---- Weekly block ----
-    int16_t weekly_y = after_session + 12;
     create_usage_block(
         scr_dashboard, L(STR_WEEKLY),
         weekly_y,
