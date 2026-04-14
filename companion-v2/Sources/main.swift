@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.7.0"
+let kAppVersion = "1.7.1"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 let kOAuthBeta = "oauth-2025-04-20"
@@ -612,7 +612,7 @@ class ClaudeAPI {
     }
 
     // Exponential backoff constants
-    static let kBackoffBase: Double = 60       // first 429 → wait 60s
+    static let kBackoffBase: Double = 120      // first 429 → wait 120s (raised from 60s to reduce bursts after wake)
     static let kBackoffMultiplier: Double = 2  // double each consecutive 429
     static let kBackoffMax: Double = 600       // cap at 10 minutes
     static let kBackoffJitter: Double = 0.25   // ±25% randomization
@@ -1497,6 +1497,8 @@ class SerialPortManager {
     private var fileDescriptor: Int32 = -1
     private(set) var connectedPort: String?
     private var scanTimer: Timer?
+    private var lastDisconnectAt: Date?
+    private let kReconnectBlockWindow: TimeInterval = 5
     var onConnect: (() -> Void)?
 
     var isConnected: Bool { fileDescriptor >= 0 }
@@ -1533,6 +1535,14 @@ class SerialPortManager {
                                    .map { "\(devPath)/\($0)" }
 
             if let port = serialPorts.first {
+                // Flap protection: avoid rapid reconnect after disconnect
+                if let lastDisc = lastDisconnectAt {
+                    let elapsed = Date().timeIntervalSince(lastDisc)
+                    if elapsed < kReconnectBlockWindow {
+                        NSLog("[Serial] Reconnect blocked — last disconnect %.1fs ago", elapsed)
+                        return
+                    }
+                }
                 connect(to: port)
             }
         } catch {
@@ -1645,6 +1655,7 @@ class SerialPortManager {
             fileDescriptor = -1
         }
         connectedPort = nil
+        lastDisconnectAt = Date()
     }
 
     func send(data: Data) -> Bool {
@@ -1760,6 +1771,8 @@ class UsageMonitor {
     var lastPollDate: Date?
     var status: MonitorStatus = .idle
     var onUpdate: (() -> Void)?
+    private var wakeObserver: NSObjectProtocol?
+    private let kOnConnectDebounceWindow: TimeInterval = 60
 
     enum MonitorStatus {
         case idle
@@ -1785,11 +1798,15 @@ class UsageMonitor {
             self?.sendLanguageToESP32()
             self?.sendOrientationToESP32()
 
-            if !ClaudeAPI.isRateLimited {
+            if ClaudeAPI.isRateLimited {
+                NSLog("[Monitor] Serial connected — skipping poll (rate-limited, %ds remaining)", ClaudeAPI.rateLimitRemaining)
+            } else if let lastPoll = self?.lastPollDate,
+                      Date().timeIntervalSince(lastPoll) < (self?.kOnConnectDebounceWindow ?? 60) {
+                let elapsed = Int(Date().timeIntervalSince(lastPoll))
+                NSLog("[Monitor] Serial connected — skipping poll (last poll %ds ago, debouncing)", elapsed)
+            } else {
                 NSLog("[Monitor] Serial connected — triggering immediate poll")
                 self?.poll()
-            } else {
-                NSLog("[Monitor] Serial connected — skipping poll (rate-limited, %ds remaining)", ClaudeAPI.rateLimitRemaining)
             }
         }
         serialPort.startScanning()
@@ -1808,12 +1825,47 @@ class UsageMonitor {
             poll()
         }
         scheduleTimer()
+
+        // Wake observer: after Mac wake, delay the next poll by 30–60s (jitter)
+        // to avoid bursting the Claude API with multiple clients reconnecting.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            NSLog("[Monitor] System woke from sleep — delaying poll")
+            self.scheduleTimerAfterWake()
+        }
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
         serialPort.stopScanning()
+        if let obs = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
+            wakeObserver = nil
+        }
+    }
+
+    deinit {
+        if let obs = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
+        }
+    }
+
+    /// Reschedule timer after wake: first fire in 30–60s (random jitter),
+    /// then continue at kPollInterval. No immediate poll.
+    func scheduleTimerAfterWake() {
+        timer?.invalidate()
+        let wakeDelay = Double.random(in: 30...60)
+        let fireDate = Date().addingTimeInterval(wakeDelay)
+        timer = Timer(fire: fireDate, interval: kPollInterval, repeats: true) { [weak self] _ in
+            self?.poll()
+        }
+        RunLoop.current.add(timer!, forMode: .common)
+        NSLog("[Monitor] Post-wake poll scheduled in %.0fs", wakeDelay)
     }
 
     func scheduleTimer() {
