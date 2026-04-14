@@ -29,6 +29,8 @@ enum StrId {
     STR_ORIENTATION,      // "Ausricht.:" / "Orient.:"
     STR_LANDSCAPE,        // "Querformat" / "Landscape"
     STR_PORTRAIT,         // "Hochformat" / "Portrait"
+    STR_LANDSCAPE_LEFT,   // "Querformat <-" / "Landscape <-"
+    STR_LANDSCAPE_RIGHT,  // "Querformat ->" / "Landscape ->"
     STR_HEAP,             // "Heap:" (stays same)
     STR_UPTIME,           // "Laufzeit:" / "Uptime:"
     STR_POLL,             // "Abfrage:" / "Poll:"

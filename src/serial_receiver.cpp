@@ -62,10 +62,12 @@ static bool parse_command(JsonDocument &doc) {
             Serial.println("{\"type\":\"error\",\"message\":\"set_orientation: missing value\"}");
             return true;
         }
-        if (strcmp(val, "landscape") == 0) {
-            g_config.orientation = ORIENTATION_LANDSCAPE;
-        } else if (strcmp(val, "portrait") == 0) {
+        if (strcmp(val, "portrait") == 0) {
             g_config.orientation = ORIENTATION_PORTRAIT;
+        } else if (strcmp(val, "landscape_left") == 0 || strcmp(val, "landscape") == 0) {
+            g_config.orientation = ORIENTATION_LANDSCAPE_LEFT;
+        } else if (strcmp(val, "landscape_right") == 0) {
+            g_config.orientation = ORIENTATION_LANDSCAPE_RIGHT;
         } else {
             Serial.printf("{\"type\":\"error\",\"message\":\"set_orientation: invalid value '%s'\"}\n", val);
             return true;
@@ -142,8 +144,13 @@ static bool parse_command(JsonDocument &doc) {
 
     // --- get_info ---
     if (strcmp(cmd, "get_info") == 0) {
-        const char *orient = (g_config.orientation == ORIENTATION_LANDSCAPE)
-                             ? "landscape" : "portrait";
+        const char *orient;
+        switch (g_config.orientation) {
+            case ORIENTATION_LANDSCAPE_LEFT:  orient = "landscape_left";  break;
+            case ORIENTATION_LANDSCAPE_RIGHT: orient = "landscape_right"; break;
+            case ORIENTATION_PORTRAIT:
+            default:                          orient = "portrait";        break;
+        }
         const char *theme = (g_config.theme == THEME_LIGHT) ? "light" : "dark";
         const char *lang = (g_config.language == LANG_EN) ? "en" : "de";
         Serial.printf("{\"type\":\"info\",\"version\":\"%s\",\"orientation\":\"%s\","

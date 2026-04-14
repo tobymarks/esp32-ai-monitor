@@ -169,8 +169,14 @@ void ui_settings_create() {
     y += 18;
 
     // Orientation
-    create_info_row(scr, L(STR_ORIENTATION),
-                    g_config.orientation == ORIENTATION_LANDSCAPE ? L(STR_LANDSCAPE) : L(STR_PORTRAIT), y);
+    const char *orient_label;
+    switch (g_config.orientation) {
+        case ORIENTATION_LANDSCAPE_LEFT:  orient_label = L(STR_LANDSCAPE_LEFT);  break;
+        case ORIENTATION_LANDSCAPE_RIGHT: orient_label = L(STR_LANDSCAPE_RIGHT); break;
+        case ORIENTATION_PORTRAIT:
+        default:                          orient_label = L(STR_PORTRAIT);        break;
+    }
+    create_info_row(scr, L(STR_ORIENTATION), orient_label, y);
     y += 18;
 
     // ---- Divider ----

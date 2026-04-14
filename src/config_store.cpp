@@ -31,8 +31,14 @@ void config_load(AppConfig &cfg) {
 
     Serial.println("[Config] Loaded from NVS");
     Serial.printf("[Config] Poll interval: %u sec\n", cfg.poll_interval_sec);
-    Serial.printf("[Config] Orientation: %s\n",
-                  cfg.orientation == ORIENTATION_LANDSCAPE ? "landscape" : "portrait");
+    const char *orient_str;
+    switch (cfg.orientation) {
+        case ORIENTATION_LANDSCAPE_LEFT:  orient_str = "landscape_left";  break;
+        case ORIENTATION_LANDSCAPE_RIGHT: orient_str = "landscape_right"; break;
+        case ORIENTATION_PORTRAIT:
+        default:                          orient_str = "portrait";        break;
+    }
+    Serial.printf("[Config] Orientation: %s\n", orient_str);
     Serial.printf("[Config] Theme: %s\n",
                   cfg.theme == THEME_LIGHT ? "light" : "dark");
     Serial.printf("[Config] Language: %s\n",

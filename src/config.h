@@ -8,7 +8,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.6.0"
+#define APP_VERSION "2.7.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---
@@ -74,8 +74,11 @@ extern uint16_t SCREEN_HEIGHT;
 // ============================================================
 // Orientation options
 // ============================================================
-#define ORIENTATION_PORTRAIT   0   // setRotation(0): 240x320, USB at bottom
-#define ORIENTATION_LANDSCAPE  1   // setRotation(3): 320x240, USB at left
+#define ORIENTATION_PORTRAIT          0   // setRotation(0): 240x320, USB bottom
+#define ORIENTATION_LANDSCAPE_LEFT    1   // setRotation(3): 320x240, USB left
+#define ORIENTATION_LANDSCAPE_RIGHT   2   // setRotation(1): 320x240, USB right
+// Alias für Rückwärtskompatibilität (alte NVS-Werte):
+#define ORIENTATION_LANDSCAPE         ORIENTATION_LANDSCAPE_LEFT
 
 // ============================================================
 // Theme options
@@ -94,7 +97,7 @@ extern uint16_t SCREEN_HEIGHT;
 // ============================================================
 struct AppConfig {
     uint16_t poll_interval_sec;       // Default 120
-    uint8_t  orientation;             // ORIENTATION_PORTRAIT(0) or ORIENTATION_LANDSCAPE(1)
+    uint8_t  orientation;             // ORIENTATION_PORTRAIT(0) / LANDSCAPE_LEFT(1) / LANDSCAPE_RIGHT(2)
     uint8_t  theme;                   // THEME_DARK(0) or THEME_LIGHT(1)
     uint8_t  language;                // LANG_DE(0) or LANG_EN(1)
 };

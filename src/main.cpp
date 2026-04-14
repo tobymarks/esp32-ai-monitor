@@ -173,22 +173,35 @@ void setup()
     // Apply persisted theme before creating UI
     ui_apply_theme(g_config.theme);
 
-    if (g_config.orientation == ORIENTATION_LANDSCAPE) {
-        tft.setRotation(3);
-        SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
-        SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
-    } else {
-        tft.setRotation(0);
-        SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
-        SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
+    const char *orient_name;
+    switch (g_config.orientation) {
+        case ORIENTATION_LANDSCAPE_LEFT:
+            tft.setRotation(3);
+            SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
+            SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
+            orient_name = "landscape_left";
+            break;
+        case ORIENTATION_LANDSCAPE_RIGHT:
+            tft.setRotation(1);
+            SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
+            SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
+            orient_name = "landscape_right";
+            break;
+        case ORIENTATION_PORTRAIT:
+        default:
+            tft.setRotation(0);
+            SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
+            SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
+            orient_name = "portrait";
+            break;
     }
     tft.fillScreen(TFT_BLACK);
     Serial.printf("[TFT] Display initialized (%ux%u %s)\n",
-                  SCREEN_WIDTH, SCREEN_HEIGHT,
-                  g_config.orientation == ORIENTATION_LANDSCAPE ? "landscape" : "portrait");
+                  SCREEN_WIDTH, SCREEN_HEIGHT, orient_name);
 
     // --- Touch init ---
-    if (g_config.orientation == ORIENTATION_LANDSCAPE) {
+    if (g_config.orientation == ORIENTATION_LANDSCAPE_LEFT ||
+        g_config.orientation == ORIENTATION_LANDSCAPE_RIGHT) {
         uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 5 };
         tft.setTouch(calData);
     } else {

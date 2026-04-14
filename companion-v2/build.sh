@@ -10,7 +10,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-echo "Compiling AI Monitor v1.6.0..."
+echo "Compiling AI Monitor v1.7.0..."
 
 # Baue .app Bundle Struktur zuerst
 mkdir -p "$APP/Contents/MacOS"

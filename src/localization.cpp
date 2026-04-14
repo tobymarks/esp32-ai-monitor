@@ -20,6 +20,8 @@ static const char* strings_de[] = {
     "Ausricht.:",            // STR_ORIENTATION
     "Querformat",            // STR_LANDSCAPE
     "Hochformat",            // STR_PORTRAIT
+    "Querf. <-",             // STR_LANDSCAPE_LEFT
+    "Querf. ->",             // STR_LANDSCAPE_RIGHT
     "Heap:",                 // STR_HEAP
     "Laufzeit:",             // STR_UPTIME
     "Abfrage:",              // STR_POLL
@@ -50,6 +52,8 @@ static const char* strings_en[] = {
     "Orient.:",              // STR_ORIENTATION
     "Landscape",             // STR_LANDSCAPE
     "Portrait",              // STR_PORTRAIT
+    "Lands. <-",             // STR_LANDSCAPE_LEFT
+    "Lands. ->",             // STR_LANDSCAPE_RIGHT
     "Heap:",                 // STR_HEAP
     "Uptime:",               // STR_UPTIME
     "Poll:",                 // STR_POLL

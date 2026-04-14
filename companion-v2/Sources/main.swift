@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.6.0"
+let kAppVersion = "1.7.0"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 let kOAuthBeta = "oauth-2025-04-20"
@@ -129,6 +129,12 @@ struct Strings {
     let german: String
     let english: String
 
+    // Orientation menu
+    let orientation: String
+    let orientationPortrait: String
+    let orientationLandscapeLeft: String
+    let orientationLandscapeRight: String
+
     // Time formatting
     let timeAgoSeconds: String   // "vor %ds" / "%ds ago"
     let timeAgoMinutes: String   // "vor %dm" / "%dm ago"
@@ -203,6 +209,10 @@ let stringsDE = Strings(
     language: "Sprache",
     german: "Deutsch",
     english: "Englisch",
+    orientation: "Ausrichtung",
+    orientationPortrait: "Hochformat",
+    orientationLandscapeLeft: "Querformat (USB links)",
+    orientationLandscapeRight: "Querformat (USB rechts)",
     timeAgoSeconds: "vor %ds",
     timeAgoMinutes: "vor %dm",
     timeNow: "jetzt",
@@ -270,6 +280,10 @@ let stringsEN = Strings(
     language: "Language",
     german: "German",
     english: "English",
+    orientation: "Orientation",
+    orientationPortrait: "Portrait",
+    orientationLandscapeLeft: "Landscape (USB left)",
+    orientationLandscapeRight: "Landscape (USB right)",
     timeAgoSeconds: "%ds ago",
     timeAgoMinutes: "%dm ago",
     timeNow: "now",
@@ -372,6 +386,12 @@ class Settings {
     var language: String {
         get { defaults.string(forKey: "language") ?? "de" }
         set { defaults.set(newValue, forKey: "language") }
+    }
+
+    /// Display orientation ("portrait" / "landscape_left" / "landscape_right")
+    var orientation: String {
+        get { defaults.string(forKey: "orientation") ?? "portrait" }
+        set { defaults.set(newValue, forKey: "orientation") }
     }
 
     private init() {
@@ -1763,6 +1783,7 @@ class UsageMonitor {
             // Sync macOS appearance and language to ESP32 on connect
             self?.sendThemeToESP32()
             self?.sendLanguageToESP32()
+            self?.sendOrientationToESP32()
 
             if !ClaudeAPI.isRateLimited {
                 NSLog("[Monitor] Serial connected — triggering immediate poll")
@@ -1950,6 +1971,16 @@ class UsageMonitor {
         let cmd = "{\"cmd\":\"set_language\",\"value\":\"\(lang)\"}"
         if serialPort.sendJSON(cmd) {
             NSLog("[Serial] Sent set_language: %@", lang)
+        }
+    }
+
+    func sendOrientationToESP32() {
+        guard serialPort.isConnected else { return }
+
+        let orient = Settings.shared.orientation
+        let cmd = "{\"cmd\":\"set_orientation\",\"value\":\"\(orient)\"}"
+        if serialPort.sendJSON(cmd) {
+            NSLog("[Serial] Sent set_orientation: %@", orient)
         }
     }
 
@@ -2249,6 +2280,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let langItem = NSMenuItem(title: S().language, action: nil, keyEquivalent: "")
         langItem.submenu = langMenu
         menu.addItem(langItem)
+
+        // Orientation submenu
+        let orientMenu = NSMenu()
+        let orientPortrait = NSMenuItem(title: S().orientationPortrait, action: #selector(setOrientationPortrait), keyEquivalent: "")
+        let orientLandLeft = NSMenuItem(title: S().orientationLandscapeLeft, action: #selector(setOrientationLandscapeLeft), keyEquivalent: "")
+        let orientLandRight = NSMenuItem(title: S().orientationLandscapeRight, action: #selector(setOrientationLandscapeRight), keyEquivalent: "")
+        let currentOrient = Settings.shared.orientation
+        if currentOrient == "portrait" { orientPortrait.state = .on }
+        if currentOrient == "landscape_left" || currentOrient == "landscape" { orientLandLeft.state = .on }
+        if currentOrient == "landscape_right" { orientLandRight.state = .on }
+        orientMenu.addItem(orientPortrait)
+        orientMenu.addItem(orientLandLeft)
+        orientMenu.addItem(orientLandRight)
+        let orientItem = NSMenuItem(title: S().orientation, action: nil, keyEquivalent: "")
+        orientItem.submenu = orientMenu
+        menu.addItem(orientItem)
 
         // Launch at login
         let loginItem = NSMenuItem(title: S().launchAtLogin, action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
@@ -2632,6 +2679,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func setLanguageEN() {
         Settings.shared.language = "en"
         monitor.sendLanguageToESP32()
+        buildMenu()
+        updateMenu()
+    }
+
+    @objc func setOrientationPortrait() {
+        Settings.shared.orientation = "portrait"
+        monitor.sendOrientationToESP32()
+        buildMenu()
+        updateMenu()
+    }
+
+    @objc func setOrientationLandscapeLeft() {
+        Settings.shared.orientation = "landscape_left"
+        monitor.sendOrientationToESP32()
+        buildMenu()
+        updateMenu()
+    }
+
+    @objc func setOrientationLandscapeRight() {
+        Settings.shared.orientation = "landscape_right"
+        monitor.sendOrientationToESP32()
         buildMenu()
         updateMenu()
     }
