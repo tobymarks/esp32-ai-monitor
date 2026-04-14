@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.7.1"
+let kAppVersion = "1.7.2"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 let kOAuthBeta = "oauth-2025-04-20"
@@ -2408,10 +2408,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Display status
-        if monitor.serialPort.isConnected, let port = monitor.serialPort.connectedPort {
-            let shortPort = (port as NSString).lastPathComponent
-            let fwVersion = monitor.serialPort.deviceFirmwareVersion.map { " · FW v\($0)" } ?? ""
-            menu.item(withTag: kTagDisplay)?.title = String(format: S().connectedFormat, shortPort, fwVersion)
+        if monitor.serialPort.isConnected {
+            menu.item(withTag: kTagDisplay)?.title = S().displayConnected
         } else {
             menu.item(withTag: kTagDisplay)?.title = S().displayNotConnected
         }
@@ -2432,21 +2430,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let fw = FirmwareManager.shared
         if fw.isFlashing {
             menu.item(withTag: kTagFirmwareStatus)?.title = "\(S().firmware) \(fw.flashProgress)"
+            menu.item(withTag: kTagFirmwareStatus)?.isHidden = false
+            menu.item(withTag: kTagFirmwareFlash)?.isHidden = false
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
             menu.item(withTag: kTagFirmwareFlash)?.title = S().flashing
         } else if fw.isDownloading {
             menu.item(withTag: kTagFirmwareStatus)?.title = "\(S().firmware) \(S().downloading)"
+            menu.item(withTag: kTagFirmwareStatus)?.isHidden = false
+            menu.item(withTag: kTagFirmwareFlash)?.isHidden = false
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
         } else if fw.hasUpdate {
             menu.item(withTag: kTagFirmwareStatus)?.title = "Firmware Update: \(fw.latestVersionDisplay) \(S().firmwareAvailable)"
-            menu.item(withTag: kTagFirmwareFlash)?.title = S().flashFirmware
-            menu.item(withTag: kTagFirmwareFlash)?.isEnabled = fw.canFlash(serialConnected: monitor.serialPort.isConnected)
-        } else if fw.latestRelease != nil {
-            menu.item(withTag: kTagFirmwareStatus)?.title = "\(S().firmware) \(fw.installedVersionDisplay) \(S().firmwareCurrent)"
+            menu.item(withTag: kTagFirmwareStatus)?.isHidden = false
+            menu.item(withTag: kTagFirmwareFlash)?.isHidden = false
             menu.item(withTag: kTagFirmwareFlash)?.title = S().flashFirmware
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = fw.canFlash(serialConnected: monitor.serialPort.isConnected)
         } else {
             menu.item(withTag: kTagFirmwareStatus)?.title = "\(S().firmware) \(fw.installedVersionDisplay)"
+            menu.item(withTag: kTagFirmwareStatus)?.isHidden = false
+            menu.item(withTag: kTagFirmwareFlash)?.isHidden = true
             menu.item(withTag: kTagFirmwareFlash)?.isEnabled = false
         }
 
