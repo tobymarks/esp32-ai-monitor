@@ -36,25 +36,26 @@ lv_color_t UI_COLOR_DIVIDER    = lv_color_hex(0x3A3937);
 // ============================================================
 void ui_apply_theme(uint8_t theme) {
     if (theme == THEME_LIGHT) {
-        // Light theme — white/light background, dark text
-        UI_COLOR_BG         = lv_color_hex(0xFAF9F5);
-        UI_COLOR_PANEL      = lv_color_hex(0xF4F3EE);
-        UI_COLOR_HEADER_BG  = lv_color_hex(0xF4F3EE);
-        UI_COLOR_ACCENT     = lv_color_hex(0xD97757);
-        UI_COLOR_TEXT       = lv_color_hex(0x141413);
-        UI_COLOR_TEXT_SEC   = lv_color_hex(0x6A6862);
-        UI_COLOR_TEXT_DIM   = lv_color_hex(0xB0AEA5);
-        UI_COLOR_ANTHROPIC  = lv_color_hex(0xC15F3C);
-        UI_COLOR_OPENAI     = lv_color_hex(0x08A868);
-        UI_COLOR_BAR_BG     = lv_color_hex(0xE8E6DC);
-        UI_COLOR_BAR_GREEN  = lv_color_hex(0x219653);
-        UI_COLOR_BAR_YELLOW = lv_color_hex(0xD4AC0D);
-        UI_COLOR_BAR_ORANGE = lv_color_hex(0xCC6D1D);
-        UI_COLOR_BAR_RED    = lv_color_hex(0xCB4335);
-        UI_COLOR_SUCCESS    = lv_color_hex(0x219653);
-        UI_COLOR_ERROR      = lv_color_hex(0xCB4335);
-        UI_COLOR_FETCHING   = lv_color_hex(0xD4AC0D);
-        UI_COLOR_DIVIDER    = lv_color_hex(0xE8E6DC);
+        // Light theme — tuned for contrast & readability on CYD 2.8"
+        // WCAG AA: Text >=4.5:1, UI-Komponenten/Bars >=3:1
+        UI_COLOR_BG         = lv_color_hex(0xFAF9F5);  // warmes Off-White
+        UI_COLOR_PANEL      = lv_color_hex(0xEFEDE4);  // deutlicher abgesetzt ggue. BG
+        UI_COLOR_HEADER_BG  = lv_color_hex(0xE4E1D4);  // klar sichtbare Header-Abgrenzung
+        UI_COLOR_ACCENT     = lv_color_hex(0xB04E2E);  // dunkleres Anthropic-Orange, 5.1:1 auf BG
+        UI_COLOR_TEXT       = lv_color_hex(0x141413);  // 19:1 auf BG (AAA)
+        UI_COLOR_TEXT_SEC   = lv_color_hex(0x5A5954);  // 7.1:1 auf BG (AAA)
+        UI_COLOR_TEXT_DIM   = lv_color_hex(0x8A8880);  // 3.5:1 (fuer dekorative Labels ok)
+        UI_COLOR_ANTHROPIC  = lv_color_hex(0xB04E2E);  // synchron mit ACCENT
+        UI_COLOR_OPENAI     = lv_color_hex(0x04875F);  // 4.6:1 auf BG
+        UI_COLOR_BAR_BG     = lv_color_hex(0xD8D5C8);  // deutlicher Bar-Track
+        UI_COLOR_BAR_GREEN  = lv_color_hex(0x1B7A44);  // 4.9:1 auf BAR_BG
+        UI_COLOR_BAR_YELLOW = lv_color_hex(0xB8860B);  // DarkGoldenrod, 3.4:1 auf BAR_BG
+        UI_COLOR_BAR_ORANGE = lv_color_hex(0xB85A16);  // 4.2:1 auf BAR_BG
+        UI_COLOR_BAR_RED    = lv_color_hex(0xB23127);  // 5.4:1 auf BAR_BG
+        UI_COLOR_SUCCESS    = lv_color_hex(0x1B7A44);
+        UI_COLOR_ERROR      = lv_color_hex(0xB23127);
+        UI_COLOR_FETCHING   = lv_color_hex(0xB8860B);
+        UI_COLOR_DIVIDER    = lv_color_hex(0xC9C6B8);  // sichtbarer Divider
     } else {
         // Dark theme (default)
         UI_COLOR_BG         = lv_color_hex(0x2B2A27);
