@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.7.2"
+let kAppVersion = "1.7.3"
 let kCredentialsFilePath = NSString("~/.claude/.credentials.json").expandingTildeInPath
 let kUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 let kOAuthBeta = "oauth-2025-04-20"
@@ -353,6 +353,13 @@ class Settings {
         set { defaults.set(newValue, forKey: "rateLimitConsecutive") }
     }
 
+    /// Timestamp of the most recent 429 response — used for time-based decay
+    /// of the consecutive-429 counter. Cleared on successful response.
+    var lastRateLimit429Date: Date? {
+        get { defaults.object(forKey: "lastRateLimit429Date") as? Date }
+        set { defaults.set(newValue, forKey: "lastRateLimit429Date") }
+    }
+
     var lastPollDate: Date? {
         get { defaults.object(forKey: "lastPollDate") as? Date }
         set { defaults.set(newValue, forKey: "lastPollDate") }
@@ -610,6 +617,13 @@ class ClaudeAPI {
         get { Settings.shared.rateLimitConsecutive }
         set { Settings.shared.rateLimitConsecutive = newValue }
     }
+    /// Timestamp of last 429 — used for time-based counter decay
+    static var lastRateLimit429Date: Date? {
+        get { Settings.shared.lastRateLimit429Date }
+        set { Settings.shared.lastRateLimit429Date = newValue }
+    }
+    /// Decay window: if no 429 for this long, the counter resets to 0
+    static let kCounterDecaySeconds: TimeInterval = 30 * 60   // 30 minutes
 
     // Exponential backoff constants
     static let kBackoffBase: Double = 120      // first 429 → wait 120s (raised from 60s to reduce bursts after wake)
@@ -645,6 +659,20 @@ class ClaudeAPI {
     }
 
     static func fetchUsage(token: String, completion: @escaping (UsageResponse?, Int?, Error?) -> Void) {
+        // Counter decay: if we are not currently cooling down AND the last 429 was
+        // more than 30 minutes ago, reset the consecutive counter. Prevents the
+        // counter from being stuck at a high value forever (and pinning backoff
+        // permanently at the max). See v1.7.3 rate-limit bugfix.
+        if retryAfterUntil == nil, consecutive429Count > 0 {
+            if let last = lastRateLimit429Date,
+               Date().timeIntervalSince(last) > kCounterDecaySeconds {
+                NSLog("[API] Rate-limit counter decay: resetting consecutive429Count from %d (last 429 > %.0fmin ago)",
+                      consecutive429Count, kCounterDecaySeconds / 60)
+                consecutive429Count = 0
+                lastRateLimit429Date = nil
+            }
+        }
+
         // Respect Retry-After from previous 429
         if let until = retryAfterUntil {
             if Date() < until {
@@ -689,6 +717,7 @@ class ClaudeAPI {
 
             if statusCode == 429 {
                 consecutive429Count += 1
+                lastRateLimit429Date = Date()
                 let headerVal = httpResponse.value(forHTTPHeaderField: "Retry-After")
                     .flatMap { Int($0) } ?? 0
                 let backoff = calculateBackoff(consecutive: consecutive429Count, serverRetryAfter: headerVal)
@@ -711,6 +740,7 @@ class ClaudeAPI {
 
             // Clear rate-limit on success
             retryAfterUntil = nil
+            lastRateLimit429Date = nil
             tokenRefreshAttempted = false
             if consecutive429Count > 0 {
                 NSLog("[API] Success after %d consecutive 429s - backoff reset", consecutive429Count)
@@ -1918,24 +1948,20 @@ class UsageMonitor {
 
             if let statusCode = statusCode, statusCode == 401 {
                 // Token expired - try refresh once
+                // Bug-Fix (v1.7.3): NICHT sofort fetchUsage() nachreichen.
+                // Das frueher ausgeloeste Sofort-Retry erzeugte bei jedem 401 einen
+                // zusaetzlichen API-Call und loeste so 429-Kaskaden aus. Stattdessen
+                // refreshen wir nur das Token und lassen den naechsten regulaeren
+                // Timer-Tick (kPollInterval, ~90s) den Poll durchfuehren.
                 if !ClaudeAPI.tokenRefreshAttempted {
                     ClaudeAPI.tokenRefreshAttempted = true
                     NSLog("[Monitor] Token expired, attempting refresh...")
                     if KeychainReader.refreshToken() {
-                        // Retry with new token
-                        if let newToken = KeychainReader.readAccessToken() {
-                            ClaudeAPI.fetchUsage(token: newToken) { [weak self] usage2, _, error2 in
-                                guard let self = self else { return }
-                                if let usage2 = usage2 {
-                                    self.handleSuccess(usage: usage2)
-                                } else {
-                                    self.lastError = S().tokenExpired
-                                    self.status = .tokenExpired
-                                    DispatchQueue.main.async { self.onUpdate?() }
-                                }
-                            }
-                            return
-                        }
+                        NSLog("[Monitor] Token refreshed — next regular poll will use new token")
+                        self.lastError = nil
+                        self.status = .idle
+                        DispatchQueue.main.async { self.onUpdate?() }
+                        return
                     }
                     self.lastError = S().tokenExpired
                     self.status = .tokenExpired
@@ -2121,7 +2147,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let kTagAppUpdateAction = 301
     let kTagLaunchAtLogin = 400
 
+    /// One-shot migration for the v1.7.3 rate-limit bugfix.
+    /// Bestehende Installationen koennen einen "vergifteten" Zustand haben:
+    /// consecutive-Counter auf hohem Wert, rateLimitUntil dauerhaft in der Zukunft.
+    /// Diese Migration laeuft genau einmal (Flag in UserDefaults) und raeumt auf.
+    /// Neuinstallationen sehen hier nichts, weil die Defaults ohnehin leer/0 sind.
+    private func runRateLimitResetMigrationIfNeeded() {
+        let kMigrationKey_RateLimitReset_v1 = "migratedRateLimitReset_v1"
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: kMigrationKey_RateLimitReset_v1) else { return }
+
+        let oldConsecutive = defaults.integer(forKey: "rateLimitConsecutive")
+        let oldUntil = defaults.object(forKey: "rateLimitUntil")
+        NSLog("[Migration] RateLimitReset_v1 running (old consecutive=%d, rateLimitUntil=%@)",
+              oldConsecutive, String(describing: oldUntil))
+
+        defaults.set(0, forKey: "rateLimitConsecutive")
+        defaults.removeObject(forKey: "rateLimitUntil")
+        defaults.removeObject(forKey: "lastRateLimit429Date")
+        // Dead key from an earlier prototype — remove so it doesn't linger.
+        defaults.removeObject(forKey: "pollInterval")
+
+        defaults.set(true, forKey: kMigrationKey_RateLimitReset_v1)
+        NSLog("[Migration] RateLimitReset_v1 done")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // v1.7.3: one-shot reset of stuck rate-limit state
+        runRateLimitResetMigrationIfNeeded()
+
         // Setup menubar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateMenubarTitle(status: .idle, usage: nil)
