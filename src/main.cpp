@@ -64,6 +64,77 @@ static unsigned long loopCount = 0;
 static unsigned long lastLoopLog = 0;
 
 // ============================================================
+// Backlight control (LEDC PWM on PIN_TFT_BL)
+// ============================================================
+void backlight_apply_percent(uint8_t pct)
+{
+    if (pct < BRIGHTNESS_MIN_PERCENT) pct = BRIGHTNESS_MIN_PERCENT;
+    if (pct > BRIGHTNESS_MAX_PERCENT) pct = BRIGHTNESS_MAX_PERCENT;
+    // Map 0..100 -> 0..255 (8-bit LEDC duty)
+    uint32_t duty = (uint32_t)pct * 255u / 100u;
+    ledcWrite(BACKLIGHT_LEDC_CHANNEL, duty);
+}
+
+// ============================================================
+// Orientation change WITHOUT reboot
+//   - switches TFT rotation
+//   - reapplies touch calibration
+//   - resizes LVGL display
+//   - recreates dashboard so layout uses new SCREEN_WIDTH/HEIGHT
+// ============================================================
+void apply_orientation(uint8_t orientation)
+{
+    const char *orient_name;
+    switch (orientation) {
+        case ORIENTATION_LANDSCAPE_LEFT:
+            tft.setRotation(3);
+            SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
+            SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
+            orient_name = "landscape_left";
+            break;
+        case ORIENTATION_LANDSCAPE_RIGHT:
+            tft.setRotation(1);
+            SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
+            SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
+            orient_name = "landscape_right";
+            break;
+        case ORIENTATION_PORTRAIT:
+        default:
+            tft.setRotation(0);
+            SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
+            SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
+            orient_name = "portrait";
+            break;
+    }
+
+    // Re-apply touch calibration (landscape uses rotation preset 5, portrait 2)
+    if (orientation == ORIENTATION_LANDSCAPE_LEFT ||
+        orientation == ORIENTATION_LANDSCAPE_RIGHT) {
+        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 5 };
+        tft.setTouch(calData);
+    } else {
+        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 2 };
+        tft.setTouch(calData);
+    }
+
+    // Blank the panel so no garbled pixels leak through during recreate
+    tft.fillScreen(TFT_BLACK);
+
+    // Tell LVGL the new resolution — it reallocates the rendering state and
+    // clips subsequent draws to the new extent.
+    if (lv_disp) {
+        lv_display_set_resolution(lv_disp, SCREEN_WIDTH, SCREEN_HEIGHT);
+    }
+
+    // Recreate dashboard with new dimensions — mirrors set_theme behaviour,
+    // no reboot required.
+    ui_dashboard_recreate();
+
+    Serial.printf("[TFT] Rotation switched live to %s (%ux%u)\n",
+                  orient_name, SCREEN_WIDTH, SCREEN_HEIGHT);
+}
+
+// ============================================================
 // LVGL flush callback - sends pixels to TFT_eSPI
 // ============================================================
 static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
@@ -160,44 +231,44 @@ void setup()
     Serial.printf("%s v%s (USB-Serial)\n", APP_NAME, APP_VERSION);
     Serial.println("========================================");
 
-    // --- Backlight on ---
-    pinMode(PIN_TFT_BL, OUTPUT);
-    digitalWrite(PIN_TFT_BL, HIGH);
+    // --- Backlight PWM via LEDC (allows set_brightness) ---
+    ledcSetup(BACKLIGHT_LEDC_CHANNEL, BACKLIGHT_LEDC_FREQ_HZ, BACKLIGHT_LEDC_RES_BITS);
+    ledcAttachPin(PIN_TFT_BL, BACKLIGHT_LEDC_CHANNEL);
+    ledcWrite(BACKLIGHT_LEDC_CHANNEL, 255); // full on until NVS loaded
 
     // --- TFT init ---
     tft.init();
 
-    // Load orientation + theme from NVS
+    // Load orientation + theme + brightness from NVS
     config_load(g_config);
+    backlight_apply_percent(g_config.brightness_pct);
 
     // Apply persisted theme before creating UI
     ui_apply_theme(g_config.theme);
 
-    const char *orient_name;
+    // Set initial rotation + SCREEN_WIDTH/HEIGHT for LVGL display-create below.
+    // We do it inline (apply_orientation expects an already-created LVGL display
+    // plus a dashboard screen — neither exists yet at this point in boot).
     switch (g_config.orientation) {
         case ORIENTATION_LANDSCAPE_LEFT:
             tft.setRotation(3);
             SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
             SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
-            orient_name = "landscape_left";
             break;
         case ORIENTATION_LANDSCAPE_RIGHT:
             tft.setRotation(1);
             SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
             SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
-            orient_name = "landscape_right";
             break;
         case ORIENTATION_PORTRAIT:
         default:
             tft.setRotation(0);
             SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
             SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
-            orient_name = "portrait";
             break;
     }
     tft.fillScreen(TFT_BLACK);
-    Serial.printf("[TFT] Display initialized (%ux%u %s)\n",
-                  SCREEN_WIDTH, SCREEN_HEIGHT, orient_name);
+    Serial.printf("[TFT] Display initialized (%ux%u)\n", SCREEN_WIDTH, SCREEN_HEIGHT);
 
     // --- Touch init ---
     if (g_config.orientation == ORIENTATION_LANDSCAPE_LEFT ||

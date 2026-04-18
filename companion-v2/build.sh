@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.8.0"
+APP_VERSION="1.9.0"
 echo "Compiling AI Monitor v${APP_VERSION}..."
 
 # Baue .app Bundle Struktur zuerst
@@ -32,7 +32,7 @@ swiftc \
 cp Resources/Info.plist "$APP/Contents/"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/" 2>/dev/null || true
 # Menubar-Icons werden ab v1.8.0 nicht mehr verwendet (LSUIElement unsichtbar),
-# bleiben aber im Repo fuer den Fall, dass wir die Entscheidung revidieren.
+# bleiben aber im Repo für den Fall, dass wir die Entscheidung revidieren.
 cp Resources/MenuBarIconTemplate.png "$APP/Contents/Resources/" 2>/dev/null || true
 cp Resources/MenuBarIconTemplate@2x.png "$APP/Contents/Resources/" 2>/dev/null || true
 
@@ -52,7 +52,7 @@ fi
 # Code-Sign (kein iCloud = keine xattr-Probleme)
 codesign --force --deep --sign - "$APP"
 
-# Kopiere zurueck ins Projekt
+# Kopiere zurück ins Projekt
 rm -rf "$SCRIPT_DIR/build"
 cp -R "$BUILD_DIR" "$SCRIPT_DIR/build"
 

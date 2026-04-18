@@ -1,18 +1,16 @@
 /**
  * SettingsWindow.swift — Einziges sichtbares UI der App (LSUIElement=YES).
  *
- * Enthaelt alle Features, die frueher im Menubar-Menue waren:
+ * Enthält alle Features, die früher im Menubar-Menü waren:
  *  - Port-Status + Port-Auswahl
  *  - CodexBar-Status (OK / stale / missing / wrong version)
  *  - Firmware-Version + Flash-Button + Flash-/Download-Fortschritt
  *  - Theme (System / Dark / Light) — wirkt auf ESP32
  *  - Orientation
  *  - Sprache (DE / EN)
+ *  - Brightness (set_brightness, Firmware v2.8.0+)
  *  - Letztes Update
  *  - About
- *
- * Brightness wird vom Firmware-Protokoll aktuell nicht unterstuetzt und
- * deshalb hier nicht implementiert — siehe Backlog im Thread.
  */
 
 import Cocoa
@@ -38,6 +36,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var languagePopup: NSPopUpButton!
     private var orientationPopup: NSPopUpButton!
     private var themePopup: NSPopUpButton!
+    private var brightnessSlider: NSSlider!
+    private var brightnessValueLabel: NSTextField!
 
     private var lastUpdateLabel: NSTextField!
 
@@ -259,11 +259,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         languagePopup.action = #selector(languageChosen)
         let langRow = twoColumnRow(langLabel, languagePopup)
 
+        // Brightness (5..100 %, persisted in ESP32 NVS, firmware v2.8.0+)
+        let brightLabel = NSTextField(labelWithString: "Helligkeit")
+        brightnessSlider = NSSlider(value: Double(Settings.shared.lastKnownBrightness),
+                                    minValue: 5, maxValue: 100,
+                                    target: self, action: #selector(brightnessChanged))
+        brightnessSlider.isContinuous = true
+        brightnessSlider.numberOfTickMarks = 0
+        brightnessSlider.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        brightnessValueLabel = NSTextField(labelWithString: "\(Settings.shared.lastKnownBrightness) %")
+        brightnessValueLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        brightnessValueLabel.textColor = .secondaryLabelColor
+        brightnessValueLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        brightnessValueLabel.alignment = .right
+        let brightControls = NSStackView(views: [brightnessSlider, brightnessValueLabel])
+        brightControls.orientation = .horizontal
+        brightControls.spacing = 8
+        let brightRow = twoColumnRow(brightLabel, brightControls)
+
         lastUpdateLabel = NSTextField(labelWithString: "Letztes Update: -")
         lastUpdateLabel.font = NSFont.systemFont(ofSize: 11)
         lastUpdateLabel.textColor = .secondaryLabelColor
 
-        let stack = NSStackView(views: [heading, themeRow, orientRow, langRow, lastUpdateLabel])
+        let stack = NSStackView(views: [heading, themeRow, orientRow, langRow, brightRow, lastUpdateLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -282,7 +300,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         appUpdateButton.bezelStyle = .rounded
         appUpdateButton.controlSize = .small
 
-        let aboutButton = NSButton(title: "Ueber AI Monitor", target: self, action: #selector(showAbout))
+        let aboutButton = NSButton(title: "Über AI Monitor", target: self, action: #selector(showAbout))
         aboutButton.bezelStyle = .rounded
         aboutButton.controlSize = .small
 
@@ -343,7 +361,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             case .stale(let age):
                 codexBarDetailLabel.stringValue = "Daten sind \(age/60) Minuten alt. AI Monitor sendet nichts Neues an den ESP32, bis CodexBar wieder aktualisiert."
             case .wrongVersion(let f, let e):
-                codexBarDetailLabel.stringValue = "Schema-Version unerwartet: claude.json version=\(f), erwartet \(e). AI Monitor-Update noetig."
+                codexBarDetailLabel.stringValue = "Schema-Version unerwartet: claude.json version=\(f), erwartet \(e). AI Monitor-Update nötig."
             case .parseError(let msg):
                 codexBarDetailLabel.stringValue = "Konnte Snapshot nicht parsen: \(msg)"
             default:
@@ -366,16 +384,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let fw = FirmwareManager.shared
         fwVersionLabel.stringValue = "Installiert: \(fw.installedVersionDisplay)"
         if fw.hasUpdate {
-            fwUpdateLabel.stringValue = "Update verfuegbar: \(fw.latestVersionDisplay)"
+            fwUpdateLabel.stringValue = "Update verfügbar: \(fw.latestVersionDisplay)"
             fwUpdateLabel.textColor = .systemBlue
             fwFlashButton.isEnabled = sp.isConnected
             fwFlashButton.title = "Firmware flashen …"
         } else if fw.isFlashing {
-            fwUpdateLabel.stringValue = "Flash laeuft …"
+            fwUpdateLabel.stringValue = "Flash läuft …"
             fwFlashButton.isEnabled = false
             fwFlashButton.title = "flashing …"
         } else if fw.isDownloading {
-            fwUpdateLabel.stringValue = "Download laeuft …"
+            fwUpdateLabel.stringValue = "Download läuft …"
             fwFlashButton.isEnabled = false
             fwFlashButton.title = "downloading …"
         } else {
@@ -419,10 +437,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         default: themePopup.selectItem(at: 0)
         }
 
+        // Brightness: UI auf den zuletzt bekannten Wert ziehen (wird per
+        // get_info beim Connect nachgeführt).
+        if brightnessSlider != nil {
+            let br = Settings.shared.lastKnownBrightness
+            if Int(brightnessSlider.doubleValue.rounded()) != br {
+                brightnessSlider.doubleValue = Double(br)
+            }
+            brightnessValueLabel.stringValue = "\(br) %"
+        }
+
         refreshLiveLabels()
     }
 
-    /// Fuer Timer-Tick (Alter des letzten Updates).
+    /// Für Timer-Tick (Alter des letzten Updates).
     private func refreshLiveLabels() {
         guard let monitor = monitor else { return }
         if let d = monitor.lastUpdateDate {
@@ -514,6 +542,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         monitor?.sendLanguageToESP32()
     }
 
+    @objc private func brightnessChanged() {
+        let pct = Int(brightnessSlider.doubleValue.rounded())
+        brightnessValueLabel.stringValue = "\(pct) %"
+        monitor?.sendBrightnessToESP32(pct)
+    }
+
     @objc private func flashFirmware() {
         (NSApp.delegate as? AppDelegate)?.runFirmwareFlash()
     }
@@ -526,7 +560,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let alert = NSAlert()
         alert.messageText = "AI Monitor v\(kAppVersion)"
         alert.informativeText = """
-        macOS-Hintergrund-App fuer das ESP32-Usage-Display.
+        macOS-Hintergrund-App für das ESP32-Usage-Display.
 
         Liest Claude-Usage aus der lokalen CodexBar-App \
         (widget-snapshot.json im Group Container) und sendet Session- und Weekly-Werte per USB-Serial an das ESP32-Display.

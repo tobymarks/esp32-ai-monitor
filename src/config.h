@@ -8,7 +8,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.7.1"
+#define APP_VERSION "2.8.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---
@@ -93,6 +93,17 @@ extern uint16_t SCREEN_HEIGHT;
 #define LANG_EN  1
 
 // ============================================================
+// Brightness limits (percent 0..100 on the wire,
+// internally mapped to 8-bit PWM via LEDC)
+// ============================================================
+#define BRIGHTNESS_MIN_PERCENT  5      // nie komplett aus — sonst Display "verloren"
+#define BRIGHTNESS_MAX_PERCENT  100
+#define BRIGHTNESS_DEFAULT_PERCENT 80
+#define BACKLIGHT_LEDC_CHANNEL  0
+#define BACKLIGHT_LEDC_FREQ_HZ  5000
+#define BACKLIGHT_LEDC_RES_BITS 8      // 0..255 duty
+
+// ============================================================
 // Application Configuration Struct
 // ============================================================
 struct AppConfig {
@@ -100,6 +111,7 @@ struct AppConfig {
     uint8_t  orientation;             // ORIENTATION_PORTRAIT(0) / LANDSCAPE_LEFT(1) / LANDSCAPE_RIGHT(2)
     uint8_t  theme;                   // THEME_DARK(0) or THEME_LIGHT(1)
     uint8_t  language;                // LANG_DE(0) or LANG_EN(1)
+    uint8_t  brightness_pct;          // 5..100
 };
 
 // ============================================================

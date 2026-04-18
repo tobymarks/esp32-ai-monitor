@@ -1,10 +1,10 @@
 /**
- * AI Monitor v1.8.0 — macOS Background-App fuer ESP32 AI Usage Monitor Display
+ * AI Monitor v1.9.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter Anthropic-API-Poll.
  * UI-Modus: LSUIElement=YES, unsichtbar. Kein Menubar-Icon. Settings-Fenster beim Launch
  * und beim Reopen-Event (Spotlight / Finder-Doppelklick).
- * ESP32-Protokoll: unveraendert — JSON-Zeile mit time/displayTime/data[].usage.{primary,secondary}.
+ * ESP32-Protokoll: unverändert — JSON-Zeile mit time/displayTime/data[].usage.{primary,secondary}.
  *
  * Build: ./build.sh
  * Run:   open "build/AI Monitor.app"
@@ -23,7 +23,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.8.0"
+let kAppVersion = "1.9.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 let kUserDefaultsSuite = "de.aimonitor.app"
@@ -36,7 +36,7 @@ let kAppAssetName = "AIMonitor.zip"
 let kAppUpdateCheckInterval: TimeInterval = 24 * 3600
 
 /// Der Keychain-Eintrag der alten App-Version (<=1.7.x), der beim App-Start
-/// best-effort geloescht wird. Die Anthropic-Auth laeuft ab v1.8.0 ueber CodexBar.
+/// best-effort gelöscht wird. Die Anthropic-Auth läuft ab v1.8.0 über CodexBar.
 let kLegacyTokenKeychainService = "de.aimonitor.token"
 
 /// Wie oft wir an den ESP32 senden (Session-Display-Clock lebt davon), wenn
@@ -86,7 +86,7 @@ struct Strings {
 let stringsDE = Strings(
     firmware: "Firmware:",
     flashFirmware: "Firmware flashen...",
-    flashing: "Flash laeuft...",
+    flashing: "Flash läuft...",
     downloading: "Download...",
     noReleaseFound: "Kein Release gefunden",
     couldNotLoadRelease: "Konnte kein Firmware-Release von GitHub laden.",
@@ -99,24 +99,24 @@ let stringsDE = Strings(
     flashSuccess: "Flash erfolgreich",
     flashFailed: "Flash fehlgeschlagen",
     preparing: "Vorbereitung...",
-    noUpdateAvailable: "Kein Update verfuegbar",
-    appUpdateAvailable: "App-Update verfuegbar",
+    noUpdateAvailable: "Kein Update verfügbar",
+    appUpdateAvailable: "App-Update verfügbar",
     download: "Herunterladen",
-    openInBrowser: "Im Browser oeffnen",
-    later: "Spaeter",
-    skipVersion: "Version ueberspringen",
+    openInBrowser: "Im Browser öffnen",
+    later: "Später",
+    skipVersion: "Version überspringen",
     updateFailed: "Update fehlgeschlagen",
     install: "Installieren",
     appIsCurrentSuffix: "ist aktuell.",
     installQuestion: "Update auf %@ installieren?",
     restartInfo: "Die App wird kurz neu gestartet.",
-    downloadRunning: "Download laeuft...",
+    downloadRunning: "Download läuft...",
     updateDownload: "Update herunterladen...",
     flashSuccessMessage: "Firmware erfolgreich geflasht!",
     flashFailedPrefix: "Flash fehlgeschlagen:",
     errorPrefix: "Fehler:",
     firmwareCurrent: "(aktuell)",
-    firmwareAvailable: "verfuegbar"
+    firmwareAvailable: "verfügbar"
 )
 
 let stringsEN = Strings(
@@ -211,13 +211,20 @@ class Settings {
         set { defaults.set(newValue, forKey: "themeMode") }
     }
 
-    /// Manuell gewaehlter Serial-Port (/dev/cu.usbserial-...). nil = Autoscan.
+    /// Manuell gewählter Serial-Port (/dev/cu.usbserial-...). nil = Autoscan.
     var manualPortPath: String? {
         get { defaults.string(forKey: "manualPortPath") }
         set {
             if let v = newValue { defaults.set(v, forKey: "manualPortPath") }
             else { defaults.removeObject(forKey: "manualPortPath") }
         }
+    }
+
+    /// Letzter vom ESP32 gemeldeter Brightness-Wert (0..100). Wird aus `get_info`
+    /// gesetzt und für die Settings-UI gecacht. Default 80.
+    var lastKnownBrightness: Int {
+        get { (defaults.object(forKey: "brightness") as? Int) ?? 80 }
+        set { defaults.set(newValue, forKey: "brightness") }
     }
 
     private init() {
@@ -240,7 +247,7 @@ class Settings {
 // MARK: - Legacy Keychain Cleanup
 // ============================================================
 
-/// Beim App-Start best-effort: den alten `de.aimonitor.token`-Eintrag loeschen,
+/// Beim App-Start best-effort: den alten `de.aimonitor.token`-Eintrag löschen,
 /// der aus v1.5-1.7 stammt und ab v1.8 nicht mehr genutzt wird.
 /// Fehler (z. B. Eintrag existiert nicht) werden NICHT als Fehler behandelt.
 func cleanupLegacyKeychainEntry() {
@@ -417,7 +424,7 @@ class AppUpdateManager {
         let pid = ProcessInfo.processInfo.processIdentifier
         let scriptPath = NSTemporaryDirectory() + "aimonitor-update.sh"
 
-        guard currentAppPath.hasSuffix(".app") else { completion(false, "App-Pfad ungueltig: \(currentAppPath)"); return }
+        guard currentAppPath.hasSuffix(".app") else { completion(false, "App-Pfad ungültig: \(currentAppPath)"); return }
         guard FileManager.default.fileExists(atPath: extractedAppPath) else {
             completion(false, "Heruntergeladene App nicht gefunden: \(extractedAppPath)"); return
         }
@@ -730,7 +737,11 @@ class SerialPortManager {
     private(set) var connectedPort: String?
     private var scanTimer: Timer?
     private var lastDisconnectAt: Date?
-    private let kReconnectBlockWindow: TimeInterval = 5
+    // Nach einem Firmware-Reboot (Legacy-Pfad) dauerte das Wiederherstellen der
+    // USB-CDC-Schnittstelle ~2-3 s. Frueher: 5 s Blockwindow = spuerbarer Delay.
+    // v1.9.0: auf 1 s reduziert, da v2.8.0-Firmware orientation/theme ohne Reboot
+    // handhabt und reale Reconnects nur nach Flash oder Hard-Reset auftreten.
+    private let kReconnectBlockWindow: TimeInterval = 1
     var onConnect: (() -> Void)?
     var deviceFirmwareVersion: String?
 
@@ -756,7 +767,7 @@ class SerialPortManager {
         return files.filter { $0.hasPrefix("cu.usbserial-") }.map { "\(devPath)/\($0)" }.sorted()
     }
 
-    /// Wird vom SettingsWindow aufgerufen, wenn der User den Port-Popup aendert.
+    /// Wird vom SettingsWindow aufgerufen, wenn der User den Port-Popup ändert.
     /// Trennt aktuelle Verbindung sauber und triggert einen Rescan.
     func requestReconnect() {
         disconnect()
@@ -842,6 +853,12 @@ class SerialPortManager {
                             self.deviceFirmwareVersion = version
                             Settings.shared.installedFirmwareVersion = "v\(version)"
                             NSLog("[Serial] ESP32 firmware: v%@", version)
+                            // Firmware ab v2.8.0 meldet Brightness-Wert mit —
+                            // cachen, damit Settings-Slider beim Öffnen nicht
+                            // auf den Default zurückspringt.
+                            if let br = json["brightness"] as? Int {
+                                Settings.shared.lastKnownBrightness = br
+                            }
                             break
                         }
                     }
@@ -933,13 +950,21 @@ class UsageMonitor {
             }
         }
 
-        // Serial: bei Connect Theme/Language/Orientation + aktuellen Usage pushen
+        // Serial: bei Connect Theme/Language/Orientation + aktuellen Usage pushen.
+        // ACHTUNG: Die einzelnen set_*-Commands rufen intern ebenfalls
+        // sendLastUsageSnapshotIfAvailable() — Mehrfach-Sends sind ok (ESP32
+        // dedupliziert via Timestamp), garantieren aber, dass jede Variante
+        // sofort sichtbare Daten bekommt.
         serialPort.onConnect = { [weak self] in
             guard let self = self else { return }
             self.onUpdate?()
             self.sendThemeToESP32()
             self.sendLanguageToESP32()
             self.sendOrientationToESP32()
+            // Brightness wurde von get_info bereits gecacht; senden ist
+            // optional, da Firmware den Wert aus NVS wiederherstellt. Wir
+            // senden nur wenn er sich lokal (Slider) geändert hat — die
+            // Slider-Aktion triggert das selbst via sendBrightnessToESP32.
             if self.codexBar.status.isOK {
                 self.sendUsageToESP32()
             }
@@ -979,6 +1004,10 @@ class UsageMonitor {
         let theme = resolvedDark ? "dark" : "light"
         let cmd = "{\"cmd\":\"set_theme\",\"value\":\"\(theme)\"}"
         if serialPort.sendJSON(cmd) { NSLog("[Serial] Sent set_theme: %@", theme) }
+        // Nach Theme-Wechsel (ESP32 recreated dashboard) den letzten Snapshot
+        // sofort re-pushen — sonst zeigt das Display bis zum nächsten
+        // CodexBar-Tick "--%".
+        sendLastUsageSnapshotIfAvailable()
     }
 
     func sendLanguageToESP32() {
@@ -986,6 +1015,7 @@ class UsageMonitor {
         let lang = Settings.shared.language
         let cmd = "{\"cmd\":\"set_language\",\"value\":\"\(lang)\"}"
         if serialPort.sendJSON(cmd) { NSLog("[Serial] Sent set_language: %@", lang) }
+        sendLastUsageSnapshotIfAvailable()
     }
 
     func sendOrientationToESP32() {
@@ -993,9 +1023,30 @@ class UsageMonitor {
         let orient = Settings.shared.orientation
         let cmd = "{\"cmd\":\"set_orientation\",\"value\":\"\(orient)\"}"
         if serialPort.sendJSON(cmd) { NSLog("[Serial] Sent set_orientation: %@", orient) }
+        // Firmware v2.8.0+ wechselt live (kein Reboot). Sofort neuen Snapshot
+        // hinterherschicken, damit das neu aufgebaute Dashboard Daten hat.
+        sendLastUsageSnapshotIfAvailable()
     }
 
-    private func sendUsageToESP32() {
+    /// Sendet den aktuellen Brightness-Wert (0..100) an den ESP32. Persistenz
+    /// liegt in NVS auf der Firmware; hier nur Cache für UI-Vorbelegung.
+    func sendBrightnessToESP32(_ percent: Int) {
+        let clamped = max(5, min(100, percent))
+        Settings.shared.lastKnownBrightness = clamped
+        guard serialPort.isConnected else { return }
+        let cmd = "{\"cmd\":\"set_brightness\",\"value\":\(clamped)}"
+        if serialPort.sendJSON(cmd) { NSLog("[Serial] Sent set_brightness: %d", clamped) }
+    }
+
+    /// Falls CodexBar-Daten vorliegen, wird der letzte Snapshot direkt an den
+    /// ESP32 gesendet — ohne auf den nächsten Heartbeat zu warten. Verwendet
+    /// von allen set_*-Commands und beim Serial-Connect, um Delay zu minimieren.
+    fileprivate func sendLastUsageSnapshotIfAvailable() {
+        guard codexBar.status.isOK, codexBar.lastEntry != nil else { return }
+        sendUsageToESP32()
+    }
+
+    fileprivate func sendUsageToESP32() {
         guard serialPort.isConnected else { return }
         guard let entry = codexBar.lastEntry else { return }
 
@@ -1086,7 +1137,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         checkAppUpdate()
         scheduleAppUpdateCheckTimer()
 
-        // macOS-Appearance-Observer (fuer themeMode=system)
+        // macOS-Appearance-Observer (für themeMode=system)
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
             if Settings.shared.themeMode == "system" {
                 self?.monitor.sendThemeToESP32()
@@ -1102,7 +1153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Wird aufgerufen, wenn die App aus Spotlight/Finder erneut gestartet wird.
-    /// Liefert true und oeffnet das Settings-Fenster.
+    /// Liefert true und öffnet das Settings-Fenster.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         settingsController?.show()
         return true
@@ -1267,7 +1318,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // ============================================================
 
 let app = NSApplication.shared
-// Accessory: kein Dock-Icon. LSUIElement in Info.plist ergaenzt dies fuer den Launch.
+// Accessory: kein Dock-Icon. LSUIElement in Info.plist ergänzt dies für den Launch.
 app.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
 app.delegate = delegate

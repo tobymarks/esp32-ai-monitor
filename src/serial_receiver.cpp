@@ -55,40 +55,45 @@ static bool parse_command(JsonDocument &doc) {
     const char *cmd = doc["cmd"];
     Serial.printf("[Serial] Command received: %s\n", cmd);
 
-    // --- set_orientation ---
+    // --- set_orientation (dynamic — no reboot) ---
     if (strcmp(cmd, "set_orientation") == 0) {
         const char *val = doc["value"];
         if (!val) {
             Serial.println("{\"type\":\"error\",\"message\":\"set_orientation: missing value\"}");
             return true;
         }
+        uint8_t new_orient;
         if (strcmp(val, "portrait") == 0) {
-            g_config.orientation = ORIENTATION_PORTRAIT;
+            new_orient = ORIENTATION_PORTRAIT;
         } else if (strcmp(val, "landscape_left") == 0 || strcmp(val, "landscape") == 0) {
-            g_config.orientation = ORIENTATION_LANDSCAPE_LEFT;
+            new_orient = ORIENTATION_LANDSCAPE_LEFT;
         } else if (strcmp(val, "landscape_right") == 0) {
-            g_config.orientation = ORIENTATION_LANDSCAPE_RIGHT;
+            new_orient = ORIENTATION_LANDSCAPE_RIGHT;
         } else {
             Serial.printf("{\"type\":\"error\",\"message\":\"set_orientation: invalid value '%s'\"}\n", val);
             return true;
         }
-        config_save(g_config);
+        if (new_orient != g_config.orientation) {
+            g_config.orientation = new_orient;
+            config_save(g_config);
+            apply_orientation(new_orient);  // live rotation — no ESP.restart()
+        }
         Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_orientation\",\"value\":\"%s\"}\n", val);
-        delay(200);
-        ESP.restart();
         return true;
     }
 
-    // --- set_brightness ---
+    // --- set_brightness (0..100 percent, persisted in NVS) ---
     if (strcmp(cmd, "set_brightness") == 0) {
         if (!doc["value"].is<int>()) {
             Serial.println("{\"type\":\"error\",\"message\":\"set_brightness: missing or invalid value\"}");
             return true;
         }
         int val = doc["value"];
-        if (val < 0) val = 0;
-        if (val > 255) val = 255;
-        analogWrite(PIN_TFT_BL, val);
+        if (val < BRIGHTNESS_MIN_PERCENT) val = BRIGHTNESS_MIN_PERCENT;
+        if (val > BRIGHTNESS_MAX_PERCENT) val = BRIGHTNESS_MAX_PERCENT;
+        g_config.brightness_pct = (uint8_t)val;
+        config_save(g_config);
+        backlight_apply_percent(g_config.brightness_pct);
         Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_brightness\",\"value\":%d}\n", val);
         return true;
     }
@@ -154,8 +159,10 @@ static bool parse_command(JsonDocument &doc) {
         const char *theme = (g_config.theme == THEME_LIGHT) ? "light" : "dark";
         const char *lang = (g_config.language == LANG_EN) ? "en" : "de";
         Serial.printf("{\"type\":\"info\",\"version\":\"%s\",\"orientation\":\"%s\","
-                      "\"theme\":\"%s\",\"language\":\"%s\",\"uptime\":%lu,\"heap\":%u}\n",
+                      "\"theme\":\"%s\",\"language\":\"%s\",\"brightness\":%u,"
+                      "\"uptime\":%lu,\"heap\":%u}\n",
                       APP_VERSION, orient, theme, lang,
+                      (unsigned)g_config.brightness_pct,
                       (unsigned long)(millis() / 1000),
                       (unsigned)ESP.getFreeHeap());
         return true;

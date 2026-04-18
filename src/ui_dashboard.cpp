@@ -39,18 +39,25 @@
 // ============================================================
 static lv_obj_t *scr_dashboard      = nullptr;
 
+// true = landscape layout with arcs, false = portrait with progress bars
+static bool landscape_layout = false;
+
 // Header
 static lv_obj_t *lbl_provider       = nullptr;
 static lv_obj_t *lbl_time           = nullptr;
 
-// Session block
+// Session block — in portrait: bar; in landscape: arc
 static lv_obj_t *lbl_session_pct    = nullptr;
-static lv_obj_t *bar_session        = nullptr;
+static lv_obj_t *bar_session        = nullptr;   // null in landscape
+static lv_obj_t *arc_session        = nullptr;   // null in portrait
+static lv_obj_t *lbl_session_title  = nullptr;
 static lv_obj_t *lbl_session_reset  = nullptr;
 
 // Weekly block
 static lv_obj_t *lbl_weekly_pct     = nullptr;
-static lv_obj_t *bar_weekly         = nullptr;
+static lv_obj_t *bar_weekly         = nullptr;   // null in landscape
+static lv_obj_t *arc_weekly         = nullptr;   // null in portrait
+static lv_obj_t *lbl_weekly_title   = nullptr;
 static lv_obj_t *lbl_weekly_reset   = nullptr;
 
 // Header status icon (connection indicator)
@@ -72,16 +79,20 @@ static bool       first_data_received = false;
 // Helper: returns true only when all dashboard widgets are live
 // ============================================================
 static inline bool widgets_ready() {
-    return scr_dashboard    != nullptr
-        && lbl_provider     != nullptr
-        && lbl_time         != nullptr
-        && lbl_session_pct  != nullptr
-        && bar_session      != nullptr
-        && lbl_session_reset!= nullptr
-        && lbl_weekly_pct   != nullptr
-        && bar_weekly       != nullptr
-        && lbl_weekly_reset != nullptr
-        && lbl_status_dot   != nullptr;
+    bool base = scr_dashboard    != nullptr
+             && lbl_provider     != nullptr
+             && lbl_time         != nullptr
+             && lbl_session_pct  != nullptr
+             && lbl_session_reset!= nullptr
+             && lbl_weekly_pct   != nullptr
+             && lbl_weekly_reset != nullptr
+             && lbl_status_dot   != nullptr;
+    if (!base) return false;
+    if (landscape_layout) {
+        return arc_session != nullptr && arc_weekly != nullptr;
+    } else {
+        return bar_session != nullptr && bar_weekly != nullptr;
+    }
 }
 
 // ============================================================
@@ -101,27 +112,27 @@ static void on_long_press(lv_event_t *e) {
 }
 
 // ============================================================
-// Helper: create a usage block (label + big pct + bar + countdown)
+// Helper: create a usage block (label + big pct + bar + countdown) — PORTRAIT
 // ============================================================
 static int16_t create_usage_block(
     lv_obj_t *parent,
     const char *title,
     int16_t y_start,
+    lv_obj_t **out_title_lbl,
     lv_obj_t **out_pct_lbl,
     lv_obj_t **out_bar,
     lv_obj_t **out_reset_lbl
 ) {
     int16_t sw = SCREEN_WIDTH;
     int16_t bar_w = sw - 24;
-    int16_t cx = sw / 2;
 
-    lv_obj_t *lbl_title = lv_label_create(parent);
-    lv_label_set_text(lbl_title, title);
-    lv_obj_set_style_text_color(lbl_title, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(lbl_title, 0, y_start);
-    lv_obj_set_width(lbl_title, sw);
-    lv_obj_set_style_text_align(lbl_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    *out_title_lbl = lv_label_create(parent);
+    lv_label_set_text(*out_title_lbl, title);
+    lv_obj_set_style_text_color(*out_title_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_title_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_pos(*out_title_lbl, 0, y_start);
+    lv_obj_set_width(*out_title_lbl, sw);
+    lv_obj_set_style_text_align(*out_title_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
     *out_pct_lbl = lv_label_create(parent);
     lv_label_set_text(*out_pct_lbl, "--%");
@@ -146,12 +157,86 @@ static int16_t create_usage_block(
     *out_reset_lbl = lv_label_create(parent);
     lv_label_set_text(*out_reset_lbl, "Resets in --");
     lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_pos(*out_reset_lbl, 0, y_start + 94);
     lv_obj_set_width(*out_reset_lbl, sw);
     lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
     return y_start + 114;
+}
+
+// ============================================================
+// Helper: create a LANDSCAPE arc block (title + arc w/ pct inside + reset)
+// Centre of the cell is (cx, cy); arc diameter = arc_diameter.
+// ============================================================
+static void create_arc_block(
+    lv_obj_t *parent,
+    const char *title,
+    int16_t cx,
+    int16_t cell_top,
+    int16_t cell_w,
+    int16_t cell_h,
+    int16_t arc_diameter,
+    lv_obj_t **out_title_lbl,
+    lv_obj_t **out_arc,
+    lv_obj_t **out_pct_lbl,
+    lv_obj_t **out_reset_lbl
+) {
+    const int16_t title_h = 16;
+    const int16_t reset_h = 16;
+    const int16_t gap     = 6;
+    int16_t content_h = title_h + gap + arc_diameter + gap + reset_h;
+    int16_t pad_top   = (cell_h - content_h) / 2;
+    if (pad_top < 0) pad_top = 0;
+
+    int16_t title_y = cell_top + pad_top;
+    int16_t arc_y   = title_y + title_h + gap;
+    int16_t reset_y = arc_y + arc_diameter + gap;
+
+    // Title
+    *out_title_lbl = lv_label_create(parent);
+    lv_label_set_text(*out_title_lbl, title);
+    lv_obj_set_style_text_color(*out_title_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_title_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_width(*out_title_lbl, cell_w);
+    lv_obj_set_pos(*out_title_lbl, cx - cell_w / 2, title_y);
+    lv_obj_set_style_text_align(*out_title_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+
+    // Arc (filled ring)
+    *out_arc = lv_arc_create(parent);
+    lv_obj_set_size(*out_arc, arc_diameter, arc_diameter);
+    lv_obj_set_pos(*out_arc, cx - arc_diameter / 2, arc_y);
+    lv_arc_set_rotation(*out_arc, 270);       // start at 12 o'clock
+    lv_arc_set_bg_angles(*out_arc, 0, 360);   // full circle background
+    lv_arc_set_range(*out_arc, 0, 100);
+    lv_arc_set_value(*out_arc, 0);
+    lv_obj_remove_style(*out_arc, NULL, LV_PART_KNOB);
+    lv_obj_clear_flag(*out_arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(*out_arc, 14, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(*out_arc, UI_COLOR_BAR_BG, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(*out_arc, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(*out_arc, 14, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(*out_arc, UI_COLOR_BAR_GREEN, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(*out_arc, LV_OPA_COVER, LV_PART_INDICATOR);
+
+    // Percent in arc centre
+    *out_pct_lbl = lv_label_create(parent);
+    lv_label_set_text(*out_pct_lbl, "--%");
+    lv_obj_set_style_text_color(*out_pct_lbl, UI_COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_pct_lbl, &lv_font_montserrat_36, LV_PART_MAIN);
+    lv_obj_set_style_text_align(*out_pct_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    // Centre the label on the arc centre (arc origin + radius)
+    lv_obj_align_to(*out_pct_lbl, *out_arc, LV_ALIGN_CENTER, 0, 0);
+
+    // Reset time under the arc
+    *out_reset_lbl = lv_label_create(parent);
+    lv_label_set_text(*out_reset_lbl, "--");
+    lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_width(*out_reset_lbl, cell_w);
+    lv_obj_set_pos(*out_reset_lbl, cx - cell_w / 2, reset_y);
+    lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(*out_reset_lbl, LV_LABEL_LONG_DOT);
 }
 
 // ============================================================
@@ -166,6 +251,9 @@ void ui_dashboard_create() {
 
     int16_t sw = SCREEN_WIDTH;
     int16_t sh = SCREEN_HEIGHT;
+
+    // Landscape = wider than tall (320x240)
+    landscape_layout = (sw > sh);
 
     scr_dashboard = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(scr_dashboard, UI_COLOR_BG, LV_PART_MAIN);
@@ -206,29 +294,57 @@ void ui_dashboard_create() {
     const int16_t header_h = 36;
     ui_create_divider(scr_dashboard, header_h);
 
-    // ---- Split remaining space into two equal zones ----
-    const int16_t block_h       = 114; // height of usage block
-    int16_t available_h         = (int16_t)sh - header_h;
-    int16_t zone_h              = available_h / 2;
-    int16_t session_y           = header_h + (zone_h - block_h) / 2;
-    int16_t middle_divider_y    = header_h + zone_h;
-    int16_t weekly_y            = middle_divider_y + (zone_h - block_h) / 2;
+    // Reset orientation-specific widget pointers (a prior create could have
+    // left stale globals from the opposite layout after orientation switch)
+    bar_session = nullptr; bar_weekly = nullptr;
+    arc_session = nullptr; arc_weekly = nullptr;
 
-    // ---- Session block ----
-    create_usage_block(
-        scr_dashboard, L(STR_SESSION),
-        session_y,
-        &lbl_session_pct, &bar_session, &lbl_session_reset
-    );
+    if (landscape_layout) {
+        // ---- Landscape: two filled-arc cells side by side ----
+        int16_t cell_top = header_h + 2;
+        int16_t cell_h   = (int16_t)sh - header_h - 2;
+        int16_t cell_w   = sw / 2;
+        int16_t arc_d    = cell_h - 40; // leaves room for title + reset
+        if (arc_d < 90) arc_d = 90;
+        if (arc_d > cell_w - 20) arc_d = cell_w - 20;
 
-    ui_create_divider(scr_dashboard, middle_divider_y);
+        int16_t left_cx  = cell_w / 2;
+        int16_t right_cx = cell_w + cell_w / 2;
 
-    // ---- Weekly block ----
-    create_usage_block(
-        scr_dashboard, L(STR_WEEKLY),
-        weekly_y,
-        &lbl_weekly_pct, &bar_weekly, &lbl_weekly_reset
-    );
+        create_arc_block(
+            scr_dashboard, L(STR_SESSION),
+            left_cx, cell_top, cell_w, cell_h, arc_d,
+            &lbl_session_title, &arc_session, &lbl_session_pct, &lbl_session_reset
+        );
+
+        create_arc_block(
+            scr_dashboard, L(STR_WEEKLY),
+            right_cx, cell_top, cell_w, cell_h, arc_d,
+            &lbl_weekly_title, &arc_weekly, &lbl_weekly_pct, &lbl_weekly_reset
+        );
+    } else {
+        // ---- Portrait: unchanged bar layout ----
+        const int16_t block_h       = 114;
+        int16_t available_h         = (int16_t)sh - header_h;
+        int16_t zone_h              = available_h / 2;
+        int16_t session_y           = header_h + (zone_h - block_h) / 2;
+        int16_t middle_divider_y    = header_h + zone_h;
+        int16_t weekly_y            = middle_divider_y + (zone_h - block_h) / 2;
+
+        create_usage_block(
+            scr_dashboard, L(STR_SESSION),
+            session_y,
+            &lbl_session_title, &lbl_session_pct, &bar_session, &lbl_session_reset
+        );
+
+        ui_create_divider(scr_dashboard, middle_divider_y);
+
+        create_usage_block(
+            scr_dashboard, L(STR_WEEKLY),
+            weekly_y,
+            &lbl_weekly_title, &lbl_weekly_pct, &bar_weekly, &lbl_weekly_reset
+        );
+    }
 
     // ---- Full-screen overlay for touch events ----
     long_press_overlay = lv_obj_create(scr_dashboard);
@@ -320,46 +436,71 @@ void ui_dashboard_update(const MonitorState &state) {
         }
     }
 
-    // ---- Session block ----
+    // ---- Session + Weekly blocks ----
     if (state.usage.valid) {
         char buf[32];
+        char reset_buf[48];
 
+        // --- Session percent ---
         format_percentage(state.usage.five_hour_utilization, buf, sizeof(buf));
         lv_label_set_text(lbl_session_pct, buf);
 
-        int bar_val = (int)(state.usage.five_hour_utilization * 100.0f);
-        if (bar_val < 0) bar_val = 0;
-        if (bar_val > 100) bar_val = 100;
-        lv_bar_set_value(bar_session, bar_val, LV_ANIM_ON);
+        int s_val = (int)(state.usage.five_hour_utilization * 100.0f);
+        if (s_val < 0) s_val = 0;
+        if (s_val > 100) s_val = 100;
         lv_color_t session_color = ui_bar_color(state.usage.five_hour_utilization);
-        lv_obj_set_style_bg_color(bar_session, session_color, LV_PART_INDICATOR);
 
+        if (landscape_layout && arc_session) {
+            lv_arc_set_value(arc_session, s_val);
+            lv_obj_set_style_arc_color(arc_session, session_color, LV_PART_INDICATOR);
+            lv_obj_set_style_text_color(lbl_session_pct, UI_COLOR_TEXT, LV_PART_MAIN);
+        } else if (bar_session) {
+            lv_bar_set_value(bar_session, s_val, LV_ANIM_ON);
+            lv_obj_set_style_bg_color(bar_session, session_color, LV_PART_INDICATOR);
+        }
+
+        // --- Session reset ---
         format_countdown_long(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
-        char reset_buf[48];
         snprintf(reset_buf, sizeof(reset_buf), L(STR_RESETS_IN), buf);
         lv_label_set_text(lbl_session_reset, reset_buf);
 
+        // --- Weekly percent ---
         format_percentage(state.usage.seven_day_utilization, buf, sizeof(buf));
         lv_label_set_text(lbl_weekly_pct, buf);
 
-        bar_val = (int)(state.usage.seven_day_utilization * 100.0f);
-        if (bar_val < 0) bar_val = 0;
-        if (bar_val > 100) bar_val = 100;
-        lv_bar_set_value(bar_weekly, bar_val, LV_ANIM_ON);
+        int w_val = (int)(state.usage.seven_day_utilization * 100.0f);
+        if (w_val < 0) w_val = 0;
+        if (w_val > 100) w_val = 100;
         lv_color_t weekly_color = ui_bar_color(state.usage.seven_day_utilization);
-        lv_obj_set_style_bg_color(bar_weekly, weekly_color, LV_PART_INDICATOR);
 
+        if (landscape_layout && arc_weekly) {
+            lv_arc_set_value(arc_weekly, w_val);
+            lv_obj_set_style_arc_color(arc_weekly, weekly_color, LV_PART_INDICATOR);
+            lv_obj_set_style_text_color(lbl_weekly_pct, UI_COLOR_TEXT, LV_PART_MAIN);
+        } else if (bar_weekly) {
+            lv_bar_set_value(bar_weekly, w_val, LV_ANIM_ON);
+            lv_obj_set_style_bg_color(bar_weekly, weekly_color, LV_PART_INDICATOR);
+        }
+
+        // --- Weekly reset (formatted target date for portrait; shorter
+        //     countdown for landscape so it fits under the arc) ---
         char wbuf[48];
-        format_reset_date(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
+        if (landscape_layout) {
+            format_countdown(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
+        } else {
+            format_reset_date(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
+        }
         lv_label_set_text(lbl_weekly_reset, wbuf);
 
     } else if (strlen(state.usage.error) > 0) {
         lv_label_set_text(lbl_session_pct,   "ERR");
         lv_label_set_text(lbl_session_reset, state.usage.error);
-        lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
         lv_label_set_text(lbl_weekly_pct,    "ERR");
         lv_label_set_text(lbl_weekly_reset,  "");
-        lv_bar_set_value(bar_weekly, 0, LV_ANIM_OFF);
+        if (bar_session) lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
+        if (bar_weekly)  lv_bar_set_value(bar_weekly,  0, LV_ANIM_OFF);
+        if (arc_session) lv_arc_set_value(arc_session, 0);
+        if (arc_weekly)  lv_arc_set_value(arc_weekly,  0);
     }
 
     // ---- Header: connection status icon ----
@@ -430,11 +571,15 @@ void ui_dashboard_recreate() {
         scr_dashboard      = nullptr;
         lbl_provider       = nullptr;
         lbl_time           = nullptr;
+        lbl_session_title  = nullptr;
         lbl_session_pct    = nullptr;
         bar_session        = nullptr;
+        arc_session        = nullptr;
         lbl_session_reset  = nullptr;
+        lbl_weekly_title   = nullptr;
         lbl_weekly_pct     = nullptr;
         bar_weekly         = nullptr;
+        arc_weekly         = nullptr;
         lbl_weekly_reset   = nullptr;
         lbl_status_dot     = nullptr;
         long_press_overlay = nullptr;

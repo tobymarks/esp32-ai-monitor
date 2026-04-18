@@ -26,6 +26,9 @@ void config_load(AppConfig &cfg) {
     cfg.orientation       = prefs.getUChar("orient", ORIENTATION_PORTRAIT);
     cfg.theme             = prefs.getUChar("theme", THEME_DARK);
     cfg.language          = prefs.getUChar("lang", LANG_DE);
+    cfg.brightness_pct    = prefs.getUChar("bright", BRIGHTNESS_DEFAULT_PERCENT);
+    if (cfg.brightness_pct < BRIGHTNESS_MIN_PERCENT) cfg.brightness_pct = BRIGHTNESS_MIN_PERCENT;
+    if (cfg.brightness_pct > BRIGHTNESS_MAX_PERCENT) cfg.brightness_pct = BRIGHTNESS_MAX_PERCENT;
 
     prefs.end();
 
@@ -43,6 +46,7 @@ void config_load(AppConfig &cfg) {
                   cfg.theme == THEME_LIGHT ? "light" : "dark");
     Serial.printf("[Config] Language: %s\n",
                   cfg.language == LANG_EN ? "en" : "de");
+    Serial.printf("[Config] Brightness: %u%%\n", cfg.brightness_pct);
 }
 
 // ============================================================
@@ -55,6 +59,7 @@ void config_save(const AppConfig &cfg) {
     prefs.putUChar("orient",  cfg.orientation);
     prefs.putUChar("theme",   cfg.theme);
     prefs.putUChar("lang",    cfg.language);
+    prefs.putUChar("bright",  cfg.brightness_pct);
 
     prefs.end();
     Serial.println("[Config] Saved to NVS");

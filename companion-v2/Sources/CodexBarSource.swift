@@ -2,17 +2,17 @@
  * CodexBarSource.swift — Liest Claude-Usage-Daten aus der lokalen CodexBar-App.
  *
  * Datenquelle: ~/Library/Group Containers/group.com.steipete.codexbar/widget-snapshot.json
- * Das ist der aktuelle Momentan-Snapshot, den CodexBar fuer sein Widget schreibt —
+ * Das ist der aktuelle Momentan-Snapshot, den CodexBar für sein Widget schreibt —
  * strukturell identisch mit dem alten Anthropic-Envelope (primary/secondary/tertiary),
- * d.h. ideal als Drop-in-Ersatz fuer unser ESP32-JSON.
+ * d.h. ideal als Drop-in-Ersatz für unser ESP32-JSON.
  *
- * Zusaetzlich: ~/Library/Application Support/com.steipete.codexbar/history/claude.json
- * enthaelt ein "version"-Feld (aktuell 1). Bei Mismatch wird ein Fehlerzustand
- * gesetzt, damit die App sich nicht blind auf ein geaendertes Schema verlaesst.
+ * Zusätzlich: ~/Library/Application Support/com.steipete.codexbar/history/claude.json
+ * enthält ein "version"-Feld (aktuell 1). Bei Mismatch wird ein Fehlerzustand
+ * gesetzt, damit die App sich nicht blind auf ein geändertes Schema verlässt.
  *
  * Design:
- *  - Pull-Strategie: alle 30 s laden. Zusaetzlich ueber DispatchSource-FileMonitor
- *    reagieren, wenn CodexBar schreibt (sub-sekuendliche Latenz).
+ *  - Pull-Strategie: alle 30 s laden. Zusätzlich über DispatchSource-FileMonitor
+ *    reagieren, wenn CodexBar schreibt (sub-sekündliche Latenz).
  *  - Stale-Check: wenn `updatedAt` (bzw. `generatedAt`) > 15 min alt -> Fehler,
  *    ESP32 bekommt nichts Neues, UI zeigt "stale" im Settings-Fenster.
  *  - Schema-Check: wenn claude.json `version` != kExpectedClaudeHistoryVersion ->
@@ -88,7 +88,7 @@ final class CodexBarSource {
     /// Stale-Schwelle — > 15 min Alter heisst: App sendet nichts Neues mehr.
     static let kStaleThresholdSeconds: TimeInterval = 15 * 60
 
-    /// Poll-Intervall fuers zyklische Neueinlesen.
+    /// Poll-Intervall fürs zyklische Neueinlesen.
     static let kPollInterval: TimeInterval = 30
 
     // Pfade
@@ -128,7 +128,7 @@ final class CodexBarSource {
     func loadOnce() -> CodexBarStatus {
         lastLoadedAt = Date()
 
-        // 1. Schema-Version aus history/claude.json pruefen
+        // 1. Schema-Version aus history/claude.json prüfen
         if let header = readHistoryHeader() {
             if let v = header.version, v != Self.kExpectedClaudeHistoryVersion {
                 status = .wrongVersion(found: v, expected: Self.kExpectedClaudeHistoryVersion)
@@ -159,7 +159,7 @@ final class CodexBarSource {
             return status
         }
 
-        // generatedAt -> Date (fuer stale-check)
+        // generatedAt -> Date (für stale-check)
         let genDate = snapshot.generatedAt.flatMap { parseISO8601($0) }
         lastSnapshotGeneratedAt = genDate
 
@@ -231,7 +231,7 @@ final class CodexBarSource {
         let path = Self.widgetSnapshotPath
         let fd = open(path, O_EVTONLY)
         if fd < 0 {
-            // Datei existiert nicht — wir probieren beim naechsten Poll erneut.
+            // Datei existiert nicht — wir probieren beim nächsten Poll erneut.
             return
         }
         watchedFD = fd
