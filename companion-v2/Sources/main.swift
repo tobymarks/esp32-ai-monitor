@@ -28,7 +28,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.14.0"
+let kAppVersion = "1.14.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -178,22 +178,83 @@ let kLegacyDeviceMAC = "legacy-device"
 
 /// Adjektiv-Pool (30) + Tier-Pool (30) für Auto-Namen. 900 Kombinationen,
 /// Kollisions-Check gegen bestehende `friendlyName`s.
-private let kDeviceAutoAdjectives: [String] = [
-    "Flink", "Funkelnd", "Mürrisch", "Stolz", "Neugierig",
-    "Gelassen", "Schelmisch", "Mutig", "Verträumt", "Pfiffig",
-    "Wuselig", "Tapfer", "Stürmisch", "Leise", "Knifflig",
-    "Flauschig", "Glücklich", "Schlau", "Ruhig", "Verrückt",
-    "Zackig", "Emsig", "Munter", "Fröhlich", "Weise",
-    "Frech", "Kühn", "Sanft", "Grantelig", "Glitzernd",
+///
+/// Ab v1.14.1: Genus-Matching. Jedes Tier trägt sein grammatikalisches Geschlecht
+/// (m/f/n), Adjektive halten alle drei Nominativ-stark-Formen als Tupel vor.
+/// Der Generator pickt die passende Form gemäß Tier-Genus. Vermeidet Unsinn wie
+/// „Schlauer Schildkröte" (fem.) oder „Kühner Seepferdchen" (neutr.).
+enum DeviceAutoGenus {
+    case masc
+    case fem
+    case neutr
+}
+
+/// `(masc, fem, neutr)` Nominativ-stark-Flexion.
+private let kDeviceAutoAdjectives: [(String, String, String)] = [
+    ("Flinker",       "Flinke",       "Flinkes"),
+    ("Funkelnder",    "Funkelnde",    "Funkelndes"),
+    ("Mürrischer",    "Mürrische",    "Mürrisches"),
+    ("Stolzer",       "Stolze",       "Stolzes"),
+    ("Neugieriger",   "Neugierige",   "Neugieriges"),
+    ("Gelassener",    "Gelassene",    "Gelassenes"),
+    ("Schelmischer",  "Schelmische",  "Schelmisches"),
+    ("Mutiger",       "Mutige",       "Mutiges"),
+    ("Verträumter",   "Verträumte",   "Verträumtes"),
+    ("Pfiffiger",     "Pfiffige",     "Pfiffiges"),
+    ("Wuseliger",     "Wuselige",     "Wuseliges"),
+    ("Tapferer",      "Tapfere",      "Tapferes"),
+    ("Stürmischer",   "Stürmische",   "Stürmisches"),
+    ("Leiser",        "Leise",        "Leises"),
+    ("Kniffliger",    "Knifflige",    "Kniffliges"),
+    ("Flauschiger",   "Flauschige",   "Flauschiges"),
+    ("Glücklicher",   "Glückliche",   "Glückliches"),
+    ("Schlauer",      "Schlaue",      "Schlaues"),
+    ("Ruhiger",       "Ruhige",       "Ruhiges"),
+    ("Verrückter",    "Verrückte",    "Verrücktes"),
+    ("Zackiger",      "Zackige",      "Zackiges"),
+    ("Emsiger",       "Emsige",       "Emsiges"),
+    ("Munterer",      "Muntere",      "Munteres"),
+    ("Fröhlicher",    "Fröhliche",    "Fröhliches"),
+    ("Weiser",        "Weise",        "Weises"),
+    ("Frecher",       "Freche",       "Freches"),
+    ("Kühner",        "Kühne",        "Kühnes"),
+    ("Sanfter",       "Sanfte",       "Sanftes"),
+    ("Granteliger",   "Grantelige",   "Granteliges"),
+    ("Glitzernder",   "Glitzernde",   "Glitzerndes"),
 ]
 
-private let kDeviceAutoAnimals: [String] = [
-    "Dachs", "Otter", "Igel", "Kolibri", "Luchs",
-    "Biber", "Eichhörnchen", "Fuchs", "Waschbär", "Hirsch",
-    "Wolf", "Uhu", "Seepferdchen", "Marienkäfer", "Tintenfisch",
-    "Erdmännchen", "Murmeltier", "Pelikan", "Elster", "Salamander",
-    "Feuersalamander", "Seeadler", "Kakadu", "Kranich", "Panda",
-    "Koala", "Quokka", "Ameisenbär", "Schildkröte", "Nashorn",
+/// `(name, genus)` — Tier mit grammatikalischem Geschlecht.
+private let kDeviceAutoAnimals: [(String, DeviceAutoGenus)] = [
+    ("Dachs",            .masc),
+    ("Otter",            .masc),
+    ("Igel",             .masc),
+    ("Kolibri",          .masc),
+    ("Luchs",            .masc),
+    ("Biber",            .masc),
+    ("Eichhörnchen",     .neutr),
+    ("Fuchs",            .masc),
+    ("Waschbär",         .masc),
+    ("Hirsch",           .masc),
+    ("Wolf",             .masc),
+    ("Uhu",              .masc),
+    ("Seepferdchen",     .neutr),
+    ("Marienkäfer",      .masc),
+    ("Tintenfisch",      .masc),
+    ("Erdmännchen",      .neutr),
+    ("Murmeltier",       .neutr),
+    ("Pelikan",          .masc),
+    ("Elster",           .fem),
+    ("Salamander",       .masc),
+    ("Feuersalamander",  .masc),
+    ("Seeadler",         .masc),
+    ("Kakadu",           .masc),
+    ("Kranich",          .masc),
+    ("Panda",            .masc),
+    ("Koala",            .masc),
+    ("Quokka",           .neutr),
+    ("Ameisenbär",       .masc),
+    ("Schildkröte",      .fem),
+    ("Nashorn",          .neutr),
 ]
 
 /// Per-Device-Settings. Jedes am USB verbundene ESP32 hat genau ein Profil,
@@ -299,9 +360,15 @@ final class DeviceRegistry {
     /// Hard-Fallback `"Gerät N"` nach 50 Versuchen.
     static func generateAutoName(existing: Set<String>) -> String {
         for _ in 0..<50 {
-            let adj = kDeviceAutoAdjectives.randomElement() ?? "Flink"
-            let animal = kDeviceAutoAnimals.randomElement() ?? "Dachs"
-            let candidate = "\(adj)er \(animal)"
+            let adj = kDeviceAutoAdjectives.randomElement() ?? ("Flinker", "Flinke", "Flinkes")
+            let animal = kDeviceAutoAnimals.randomElement() ?? ("Dachs", .masc)
+            let adjForm: String
+            switch animal.1 {
+            case .masc:  adjForm = adj.0
+            case .fem:   adjForm = adj.1
+            case .neutr: adjForm = adj.2
+            }
+            let candidate = "\(adjForm) \(animal.0)"
             if !existing.contains(candidate) { return candidate }
         }
         // Hard-Fallback: „Gerät N" mit kleinster freier N ≥ 1.
