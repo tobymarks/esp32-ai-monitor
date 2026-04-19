@@ -1,22 +1,29 @@
 /**
- * CodexBarSource.swift — Liest Claude-Usage-Daten aus der lokalen CodexBar-App.
+ * CodexBarSource.swift — Liest AI-Provider-Usage-Daten aus der lokalen CodexBar-App.
  *
- * Datenquelle: ~/Library/Group Containers/group.com.steipete.codexbar/widget-snapshot.json
- * Das ist der aktuelle Momentan-Snapshot, den CodexBar für sein Widget schreibt —
- * strukturell identisch mit dem alten Anthropic-Envelope (primary/secondary/tertiary),
- * d.h. ideal als Drop-in-Ersatz für unser ESP32-JSON.
+ * Ab v1.10.0 provider-parametrisiert: unterstützt Claude UND OpenAI Codex. Der
+ * aktive Provider wird über `provider` im Init/setProvider gesetzt (UserDefaults
+ * „selectedProvider"). Das Schema von Codex ist strukturell identisch zu Claude
+ * im widget-snapshot.json (primary/secondary mit usedPercent/resetsAt/
+ * windowMinutes). In der history/-Ablage weicht Codex ab: Daten liegen unter
+ * `accounts[<key>]` statt `unscoped[]` — für den Schema-Versions-Check reicht
+ * uns aber das `version`-Feld der entsprechenden History-Datei.
  *
- * Zusätzlich: ~/Library/Application Support/com.steipete.codexbar/history/claude.json
- * enthält ein "version"-Feld (aktuell 1). Bei Mismatch wird ein Fehlerzustand
- * gesetzt, damit die App sich nicht blind auf ein geändertes Schema verlässt.
+ * Datenquelle (beide Provider):
+ *  ~/Library/Group Containers/group.com.steipete.codexbar/widget-snapshot.json
+ *  → entries[] mit `provider`-Feld („claude" / „codex")
+ *
+ * Schema-Check:
+ *  ~/Library/Application Support/com.steipete.codexbar/history/{claude,codex}.json
+ *  → `version`-Feld (aktuell 1).
  *
  * Design:
  *  - Pull-Strategie: alle 30 s laden. Zusätzlich über DispatchSource-FileMonitor
  *    reagieren, wenn CodexBar schreibt (sub-sekündliche Latenz).
  *  - Stale-Check: wenn `updatedAt` (bzw. `generatedAt`) > 15 min alt -> Fehler,
- *    ESP32 bekommt nichts Neues, UI zeigt "stale" im Settings-Fenster.
- *  - Schema-Check: wenn claude.json `version` != kExpectedClaudeHistoryVersion ->
- *    Fehler "wrong version".
+ *    ESP32 bekommt nichts Neues, UI zeigt „stale" im Settings-Fenster.
+ *  - Schema-Check: wenn history-Datei `version` != kExpectedHistoryVersion ->
+ *    Fehler „wrong version".
  */
 
 import Foundation
@@ -81,9 +88,10 @@ struct CodexBarHistoryHeader: Codable {
 
 final class CodexBarSource {
 
-    /// Erwartete Schema-Version der claude.json. Wenn CodexBar auf 2 wechselt,
-    /// hier ebenfalls anpassen — bis dahin: Fehlermeldung im Settings-Fenster.
-    static let kExpectedClaudeHistoryVersion = 1
+    /// Erwartete Schema-Version der history/{provider}.json. Wenn CodexBar auf 2
+    /// wechselt, hier ebenfalls anpassen — bis dahin: Fehlermeldung im Settings-
+    /// Fenster.
+    static let kExpectedHistoryVersion = 1
 
     /// Stale-Schwelle — > 15 min Alter heisst: App sendet nichts Neues mehr.
     static let kStaleThresholdSeconds: TimeInterval = 15 * 60
@@ -93,7 +101,12 @@ final class CodexBarSource {
 
     // Pfade
     static let widgetSnapshotPath = NSString("~/Library/Group Containers/group.com.steipete.codexbar/widget-snapshot.json").expandingTildeInPath
-    static let claudeHistoryPath = NSString("~/Library/Application Support/com.steipete.codexbar/history/claude.json").expandingTildeInPath
+    static let historyDirectoryPath = NSString("~/Library/Application Support/com.steipete.codexbar/history").expandingTildeInPath
+
+    /// Aktiver Provider („claude" | „codex"). Darf zur Laufzeit über
+    /// `setProvider(_:)` gewechselt werden — anschliessend `loadOnce()` aufrufen
+    /// (macht `setProvider` automatisch).
+    private(set) var provider: String
 
     // State
     private(set) var status: CodexBarStatus = .notYet
@@ -108,7 +121,31 @@ final class CodexBarSource {
     private var fileWatcher: DispatchSourceFileSystemObject?
     private var watchedFD: Int32 = -1
 
-    // MARK: - Lifecycle
+    // MARK: - Init / Lifecycle
+
+    init(provider: String = "claude") {
+        self.provider = Self.normalizeProvider(provider)
+    }
+
+    /// Provider zur Laufzeit wechseln. Triggert ein sofortiges Re-Load, damit
+    /// der nächste `onChange`-Tick schon den neuen Provider liefert.
+    func setProvider(_ newProvider: String) {
+        let norm = Self.normalizeProvider(newProvider)
+        if norm == provider { return }
+        provider = norm
+        NSLog("[CodexBar] Provider switched to '%@'", norm)
+        loadOnce()
+    }
+
+    private static func normalizeProvider(_ raw: String) -> String {
+        let v = raw.lowercased()
+        return (v == "codex" || v == "claude") ? v : "claude"
+    }
+
+    /// Pfad der History-Datei für den aktiven Provider (Schema-Version).
+    private func historyFilePath() -> String {
+        return (Self.historyDirectoryPath as NSString).appendingPathComponent("\(provider).json")
+    }
 
     func start() {
         loadOnce()
@@ -128,17 +165,18 @@ final class CodexBarSource {
     func loadOnce() -> CodexBarStatus {
         lastLoadedAt = Date()
 
-        // 1. Schema-Version aus history/claude.json prüfen
+        // 1. Schema-Version aus history/{provider}.json prüfen
         if let header = readHistoryHeader() {
-            if let v = header.version, v != Self.kExpectedClaudeHistoryVersion {
-                status = .wrongVersion(found: v, expected: Self.kExpectedClaudeHistoryVersion)
-                NSLog("[CodexBar] Wrong schema version in claude.json: %d (expected %d)", v, Self.kExpectedClaudeHistoryVersion)
+            if let v = header.version, v != Self.kExpectedHistoryVersion {
+                status = .wrongVersion(found: v, expected: Self.kExpectedHistoryVersion)
+                NSLog("[CodexBar] Wrong schema version in %@.json: %d (expected %d)", provider, v, Self.kExpectedHistoryVersion)
                 notify()
                 return status
             }
         }
-        // kein else: wenn die History-Datei noch nicht existiert (frischer Install),
-        // ist das nicht zwingend ein Fehler. Widget-Snapshot entscheidet.
+        // kein else: wenn die History-Datei noch nicht existiert (frischer Install /
+        // Provider noch nie genutzt), ist das nicht zwingend ein Fehler. Widget-
+        // Snapshot entscheidet.
 
         // 2. widget-snapshot.json laden
         guard let data = FileManager.default.contents(atPath: Self.widgetSnapshotPath) else {
@@ -163,14 +201,22 @@ final class CodexBarSource {
         let genDate = snapshot.generatedAt.flatMap { parseISO8601($0) }
         lastSnapshotGeneratedAt = genDate
 
-        // Claude-Entry suchen (provider == "claude")
-        let claudeEntry = snapshot.entries?.first(where: { ($0.provider ?? "").lowercased() == "claude" })
-            ?? snapshot.entries?.first
-        lastEntry = claudeEntry
+        // Entry für aktiven Provider suchen
+        let providerEntry = snapshot.entries?.first(where: { ($0.provider ?? "").lowercased() == provider })
+        if providerEntry == nil {
+            // Provider nicht im Snapshot — explizit missing (CodexBar schreibt ihn
+            // erst, wenn der Provider dort aktiv ist).
+            lastEntry = nil
+            status = .missing
+            NSLog("[CodexBar] No entry for provider '%@' in snapshot", provider)
+            notify()
+            return status
+        }
+        lastEntry = providerEntry
 
         // Alter bestimmen — bevorzugt updatedAt des Entries, sonst generatedAt
         let ageRef: Date? = {
-            if let s = claudeEntry?.updatedAt, let d = parseISO8601(s) { return d }
+            if let s = providerEntry?.updatedAt, let d = parseISO8601(s) { return d }
             return genDate
         }()
 
@@ -178,7 +224,7 @@ final class CodexBarSource {
             let age = Date().timeIntervalSince(ref)
             if age > Self.kStaleThresholdSeconds {
                 status = .stale(ageSeconds: Int(age))
-                NSLog("[CodexBar] Stale snapshot: %.0f min old", age / 60)
+                NSLog("[CodexBar] Stale snapshot (%@): %.0f min old", provider, age / 60)
                 notify()
                 return status
             }
@@ -190,26 +236,20 @@ final class CodexBarSource {
             return status
         }
 
-        if claudeEntry == nil {
-            status = .missing
-            NSLog("[CodexBar] No claude entry in snapshot")
-            notify()
-            return status
-        }
-
         status = .ok
         notify()
         return status
     }
 
     private func readHistoryHeader() -> CodexBarHistoryHeader? {
-        guard let data = FileManager.default.contents(atPath: Self.claudeHistoryPath) else {
+        let path = historyFilePath()
+        guard let data = FileManager.default.contents(atPath: path) else {
             return nil
         }
         do {
             return try JSONDecoder().decode(CodexBarHistoryHeader.self, from: data)
         } catch {
-            NSLog("[CodexBar] Could not parse claude.json header: %@", error.localizedDescription)
+            NSLog("[CodexBar] Could not parse %@ header: %@", path, error.localizedDescription)
             return nil
         }
     }

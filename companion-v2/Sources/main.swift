@@ -1,10 +1,11 @@
 /**
- * AI Monitor v1.9.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.10.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
- * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter Anthropic-API-Poll.
+ * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
+ * Multi-Provider: Claude ODER Codex — per Umschalter im Settings-Fenster.
  * UI-Modus: LSUIElement=YES, unsichtbar. Kein Menubar-Icon. Settings-Fenster beim Launch
  * und beim Reopen-Event (Spotlight / Finder-Doppelklick).
- * ESP32-Protokoll: unverändert — JSON-Zeile mit time/displayTime/data[].usage.{primary,secondary}.
+ * ESP32-Protokoll: Envelope um `provider`-Feld erweitert (String, „claude"|„codex").
  *
  * Build: ./build.sh
  * Run:   open "build/AI Monitor.app"
@@ -23,7 +24,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.9.0"
+let kAppVersion = "1.10.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 let kUserDefaultsSuite = "de.aimonitor.app"
@@ -225,6 +226,20 @@ class Settings {
     var lastKnownBrightness: Int {
         get { (defaults.object(forKey: "brightness") as? Int) ?? 80 }
         set { defaults.set(newValue, forKey: "brightness") }
+    }
+
+    /// Aktiver CodexBar-Provider — „claude" oder „codex". Default „claude".
+    /// Steuert sowohl welches widget-snapshot-Entry gelesen wird als auch das
+    /// `provider`-Feld im Envelope an den ESP32 (Header-Label auf dem Display).
+    var selectedProvider: String {
+        get {
+            let raw = (defaults.string(forKey: "selectedProvider") ?? "claude").lowercased()
+            return (raw == "codex") ? "codex" : "claude"
+        }
+        set {
+            let norm = (newValue.lowercased() == "codex") ? "codex" : "claude"
+            defaults.set(norm, forKey: "selectedProvider")
+        }
     }
 
     private init() {
@@ -935,7 +950,24 @@ class UsageMonitor {
 
     init() {
         self.serialPort = SerialPortManager()
-        self.codexBar = CodexBarSource()
+        self.codexBar = CodexBarSource(provider: Settings.shared.selectedProvider)
+    }
+
+    /// Vom SettingsWindow aufgerufen, wenn der Provider-Picker geändert wurde.
+    /// Persistiert, aktualisiert die CodexBar-Source und pusht sofort den neuen
+    /// Snapshot an den ESP32 (kein Warten auf den nächsten Heartbeat).
+    func setSelectedProvider(_ newProvider: String) {
+        let norm = (newProvider.lowercased() == "codex") ? "codex" : "claude"
+        Settings.shared.selectedProvider = norm
+        codexBar.setProvider(norm)
+        // Wenn die CodexBar-Source bereits einen OK-Entry für den neuen Provider
+        // hat (setProvider() hat loadOnce() getriggert, das auch onChange feuert
+        // und damit sendUsageToESP32 bereits ausgelöst hat), ist das hier
+        // redundant aber harmlos — garantiert aber den Resend falls onChange
+        // noch nicht drin war (z. B. während das Settings-Fenster updatet).
+        if codexBar.status.isOK {
+            sendUsageToESP32()
+        }
     }
 
     func start() {
@@ -1065,14 +1097,21 @@ class UsageMonitor {
         timeFmt.dateFormat = "HH:mm"
         let localTime = timeFmt.string(from: Date())
 
-        // JSON-Envelope: strukturgleich zum alten Format MINUS providerCost.
-        // (has_extra_usage=false auf dem ESP32 blendet die Cost-Kachel ohnehin aus.)
+        // Provider aus der CodexBar-Source (normalisiert), nicht direkt aus
+        // Settings — das hält Envelope und tatsächlich gelesene Daten konsistent.
+        let activeProvider = codexBar.provider           // „claude" | „codex"
+        let loginMethodLabel = (activeProvider == "codex") ? "Codex" : "Claude Max"
+
+        // JSON-Envelope: strukturgleich zum alten Format, ab v1.10.0 mit
+        // `provider`-Feld (FW v2.9.0 rendert darauf das Header-Label; ältere FW
+        // ignoriert unbekannte Felder und zeigt „CLAUDE" statisch).
         let envelope: [String: Any] = [
             "time": nowISO,
             "displayTime": localTime,
             "data": [
                 [
                     "source": "codexbar",
+                    "provider": activeProvider,
                     "usage": [
                         "primary": [
                             "usedPercent": primaryPercent,
@@ -1084,9 +1123,8 @@ class UsageMonitor {
                             "resetsAt": secondaryResetsAt,
                             "windowMinutes": secondaryWindow
                         ],
-                        "loginMethod": "Claude Max"
-                    ],
-                    "provider": "claude"
+                        "loginMethod": loginMethodLabel
+                    ]
                 ]
             ]
         ]

@@ -2,6 +2,7 @@
  * SettingsWindow.swift — Einziges sichtbares UI der App (LSUIElement=YES).
  *
  * Enthält alle Features, die früher im Menubar-Menü waren:
+ *  - Provider-Umschalter (Claude / Codex) — ab v1.10.0, ganz oben
  *  - Port-Status + Port-Auswahl
  *  - CodexBar-Status (OK / stale / missing / wrong version)
  *  - Firmware-Version + Flash-Button + Flash-/Download-Fortschritt
@@ -21,6 +22,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     weak var monitor: UsageMonitor?
 
     // Views (re-used via update())
+    private var providerSegmented: NSSegmentedControl!
     private var codexBarStatusLabel: NSTextField!
     private var codexBarDetailLabel: NSTextField!
     private var portStatusLabel: NSTextField!
@@ -106,6 +108,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         stack.addArrangedSubview(buildHeader())
         stack.addArrangedSubview(makeSeparator())
+        stack.addArrangedSubview(buildProviderSection())
+        stack.addArrangedSubview(makeSeparator())
         stack.addArrangedSubview(buildCodexBarSection())
         stack.addArrangedSubview(makeSeparator())
         stack.addArrangedSubview(buildPortSection())
@@ -139,6 +143,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         v.alignment = .leading
         v.spacing = 2
         return v
+    }
+
+    // --- Provider-Umschalter (Claude / Codex) ---
+
+    private func buildProviderSection() -> NSView {
+        let heading = makeSectionHeading("Provider")
+
+        providerSegmented = NSSegmentedControl(labels: ["Claude", "Codex"],
+                                               trackingMode: .selectOne,
+                                               target: self,
+                                               action: #selector(providerChosen))
+        providerSegmented.segmentStyle = .rounded
+        providerSegmented.selectedSegment = (Settings.shared.selectedProvider == "codex") ? 1 : 0
+
+        let hint = NSTextField(labelWithString: "Welche CodexBar-Datenquelle auf dem Display anzeigen. Umschalten überträgt sofort an den ESP32.")
+        hint.font = NSFont.systemFont(ofSize: 11)
+        hint.textColor = .secondaryLabelColor
+        hint.lineBreakMode = .byWordWrapping
+        hint.maximumNumberOfLines = 2
+        hint.preferredMaxLayoutWidth = 480
+
+        let stack = NSStackView(views: [heading, providerSegmented, hint])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        return stack
     }
 
     // --- CodexBar ---
@@ -342,6 +372,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func update() {
         guard let monitor = monitor else { return }
 
+        // Provider-Segmented
+        if providerSegmented != nil {
+            let wantIdx = (Settings.shared.selectedProvider == "codex") ? 1 : 0
+            if providerSegmented.selectedSegment != wantIdx {
+                providerSegmented.selectedSegment = wantIdx
+            }
+        }
+
         // CodexBar
         let src = monitor.codexBar
         let entry = src.lastEntry
@@ -357,7 +395,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         } else {
             switch src.status {
             case .missing:
-                codexBarDetailLabel.stringValue = "widget-snapshot.json nicht gefunden. Ist CodexBar installiert und einmal gelaufen?"
+                let providerLabel = (src.provider == "codex") ? "Codex" : "Claude"
+                codexBarDetailLabel.stringValue = "Keine \(providerLabel)-Daten in CodexBar gefunden. Ist der Provider in CodexBar aktiviert und wurde er einmal genutzt?"
             case .stale(let age):
                 codexBarDetailLabel.stringValue = "Daten sind \(age/60) Minuten alt. AI Monitor sendet nichts Neues an den ESP32, bis CodexBar wieder aktualisiert."
             case .wrongVersion(let f, let e):
@@ -495,6 +534,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: - Actions
+
+    @objc private func providerChosen() {
+        let idx = providerSegmented.selectedSegment
+        let provider = (idx == 1) ? "codex" : "claude"
+        monitor?.setSelectedProvider(provider)
+        update()
+    }
 
     @objc private func reloadCodexBar() {
         monitor?.codexBar.loadOnce()
