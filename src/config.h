@@ -8,8 +8,21 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.10.0"
+#define APP_VERSION "2.10.1"
 #define APP_NAME    "AI Usage Monitor"
+
+// Display-Controller-ID (aus Build-Flags abgeleitet, Compile-Zeit).
+// Wird im get_info-Response als `display`-Feld ausgegeben, damit die Mac-App
+// die Board-Variante (ILI9341 vs. ST7789) pro Geraet persistieren und beim
+// naechsten Flash die richtige Firmware-Variante vorwaehlen kann.
+// Seit FW v2.10.1 / App v1.15.0.
+#if defined(ST7789_DRIVER)
+  #define DISPLAY_ID "st7789"
+#elif defined(ILI9341_DRIVER)
+  #define DISPLAY_ID "ili9341"
+#else
+  #define DISPLAY_ID "unknown"
+#endif
 
 // --- Display (ILI9341 on VSPI) ---
 #define PIN_TFT_MISO  12
