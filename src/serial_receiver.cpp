@@ -295,13 +295,30 @@ static void parse_json(const char *json_str) {
         Serial.printf("[Serial] Login: %s\n", loginMethod);
     }
 
+    // --- Provider label (v2.9.0+ envelope field) ---
+    // Companion-App sendet "claude" oder "codex" pro Frame. Fallback "claude"
+    // für alte App-Versionen ohne das Feld. Label wird für das Display-Header-
+    // Rendering uppercase gespeichert.
+    const char *prov = data0["provider"];
+    if (!prov) prov = "claude";
+    // Uppercase-Copy in state.provider_label (max 15 Zeichen + NUL)
+    size_t n = 0;
+    while (prov[n] != '\0' && n < sizeof(state.provider_label) - 1) {
+        char c = prov[n];
+        if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
+        state.provider_label[n] = c;
+        n++;
+    }
+    state.provider_label[n] = '\0';
+    // Legacy-enum für bestehende Checks im Dashboard weiter pflegen
+    state.provider = (strcmp(prov, "codex") == 0) ? PROVIDER_OPENAI : PROVIDER_CLAUDE;
+
     // Mark data as valid
     state.usage.valid = true;
     state.usage.last_fetch = millis();
     state.usage.error[0] = '\0';
     state.token_valid = true;
     state.is_fetching = false;
-    state.provider = PROVIDER_CLAUDE;
     strlcpy(state.status, "OK (USB)", sizeof(state.status));
     new_data_flag = true;
 
@@ -325,6 +342,7 @@ void serial_receiver_init() {
     tzset();
     g_language = g_config.language;  // Apply saved language
     state.provider = PROVIDER_CLAUDE;
+    strlcpy(state.provider_label, "CLAUDE", sizeof(state.provider_label));
     strlcpy(state.status, L(STR_WAITING), sizeof(state.status));
     new_data_flag = false;
     strlcpy(display_time, "--:--", sizeof(display_time));

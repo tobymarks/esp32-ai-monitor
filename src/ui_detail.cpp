@@ -111,7 +111,11 @@ void ui_detail_create(const MonitorState &state) {
     ui_styles_init();
 
     const UsageData &data = state.usage;
-    const char *provider_name = (state.provider == 1) ? "OPENAI" : "CLAUDE";
+    // v2.9.0+: Label dynamisch aus dem Envelope (state.provider_label). Der
+    // state.provider-Enum steuert weiterhin die Akzentfarbe (Anthropic-Orange
+    // für Claude, OpenAI-Grün für Codex/OpenAI).
+    const char *provider_name = state.provider_label[0] != '\0' ? state.provider_label
+                                                                : ((state.provider == 1) ? "OPENAI" : "CLAUDE");
     lv_color_t brand_color = (state.provider == 1) ? UI_COLOR_OPENAI : UI_COLOR_ANTHROPIC;
 
     int16_t sw = SCREEN_WIDTH;

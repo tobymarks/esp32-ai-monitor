@@ -8,7 +8,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.8.2"
+#define APP_VERSION "2.9.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // --- Display (ILI9341 on VSPI) ---

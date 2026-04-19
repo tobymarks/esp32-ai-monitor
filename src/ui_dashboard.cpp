@@ -418,8 +418,12 @@ void ui_dashboard_update(const MonitorState &state) {
     }
 
     // ---- Provider name ----
+    // v2.9.0+: Label kommt direkt aus dem Mac-Envelope (state.provider_label,
+    // uppercase, z. B. "CLAUDE" oder "CODEX"). Fallback auf "CLAUDE" bei leerem
+    // String (alter App-Version).
     if (lbl_provider != nullptr) {
-        lv_label_set_text(lbl_provider, state.provider == 1 ? "OPENAI" : "CLAUDE");
+        const char *label = state.provider_label[0] != '\0' ? state.provider_label : "CLAUDE";
+        lv_label_set_text(lbl_provider, label);
     }
 
     // ---- Clock (system time set via settimeofday from Mac's UTC) ----
