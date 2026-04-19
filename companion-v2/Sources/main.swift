@@ -28,7 +28,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.13.0"
+let kAppVersion = "1.14.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -169,6 +169,164 @@ func S() -> Strings {
 }
 
 // ============================================================
+// MARK: - Device Registry (Per-Device Settings, ab v1.14.0)
+// ============================================================
+
+/// Pseudo-MAC für Geräte mit Firmware < v2.10.0 (ohne MAC im `get_info`-Response).
+/// Wird bei erstem echten MAC-Roundtrip durch das Profil mit realer MAC ersetzt.
+let kLegacyDeviceMAC = "legacy-device"
+
+/// Adjektiv-Pool (30) + Tier-Pool (30) für Auto-Namen. 900 Kombinationen,
+/// Kollisions-Check gegen bestehende `friendlyName`s.
+private let kDeviceAutoAdjectives: [String] = [
+    "Flink", "Funkelnd", "Mürrisch", "Stolz", "Neugierig",
+    "Gelassen", "Schelmisch", "Mutig", "Verträumt", "Pfiffig",
+    "Wuselig", "Tapfer", "Stürmisch", "Leise", "Knifflig",
+    "Flauschig", "Glücklich", "Schlau", "Ruhig", "Verrückt",
+    "Zackig", "Emsig", "Munter", "Fröhlich", "Weise",
+    "Frech", "Kühn", "Sanft", "Grantelig", "Glitzernd",
+]
+
+private let kDeviceAutoAnimals: [String] = [
+    "Dachs", "Otter", "Igel", "Kolibri", "Luchs",
+    "Biber", "Eichhörnchen", "Fuchs", "Waschbär", "Hirsch",
+    "Wolf", "Uhu", "Seepferdchen", "Marienkäfer", "Tintenfisch",
+    "Erdmännchen", "Murmeltier", "Pelikan", "Elster", "Salamander",
+    "Feuersalamander", "Seeadler", "Kakadu", "Kranich", "Panda",
+    "Koala", "Quokka", "Ameisenbär", "Schildkröte", "Nashorn",
+]
+
+/// Per-Device-Settings. Jedes am USB verbundene ESP32 hat genau ein Profil,
+/// adressiert über die MAC-Adresse (ab FW v2.10.0 im `get_info`-Response).
+/// Geräte mit älterer Firmware werden unter `kLegacyDeviceMAC` geführt — beim
+/// ersten Upgrade auf FW v2.10.0 wandert das Profil auf die echte MAC.
+struct DeviceProfile: Codable {
+    var mac: String
+    var friendlyName: String
+    /// "system" | "dark" | "light" (analog `Settings.themeMode`)
+    var theme: String
+    /// "portrait" | "landscape_left" | "landscape_right"
+    var orientation: String
+    /// "de" | "en"
+    var language: String
+    /// 5..100
+    var brightness: Int
+
+    static func defaultFor(mac: String, friendlyName: String,
+                           theme: String = "system",
+                           orientation: String = "portrait",
+                           language: String = "de",
+                           brightness: Int = 80) -> DeviceProfile {
+        return DeviceProfile(
+            mac: mac,
+            friendlyName: friendlyName,
+            theme: theme,
+            orientation: orientation,
+            language: language,
+            brightness: brightness
+        )
+    }
+}
+
+/// Singleton-Registry aller bekannten Geräte. Serialisiert `[String: DeviceProfile]`
+/// als JSON in UserDefaults unter dem Key `devices`. `currentMAC` (persistiert als
+/// `lastKnownDeviceMAC`) zeigt auf das gerade verbundene Device — wird beim
+/// `get_info`-Response gesetzt.
+final class DeviceRegistry {
+    static let shared = DeviceRegistry()
+
+    private let defaults = UserDefaults.standard
+    private let kDevicesKey = "devices"
+    private let kLastKnownDeviceMACKey = "lastKnownDeviceMAC"
+
+    /// MAC des aktuell verbundenen Geräts. `nil` wenn nie verbunden war.
+    var currentMAC: String? {
+        get { defaults.string(forKey: kLastKnownDeviceMACKey) }
+        set {
+            if let v = newValue { defaults.set(v, forKey: kLastKnownDeviceMACKey) }
+            else { defaults.removeObject(forKey: kLastKnownDeviceMACKey) }
+        }
+    }
+
+    /// Liefert alle bekannten Profile (MAC → Profile).
+    func all() -> [String: DeviceProfile] {
+        guard let data = defaults.data(forKey: kDevicesKey) else { return [:] }
+        guard let decoded = try? JSONDecoder().decode([String: DeviceProfile].self, from: data) else {
+            return [:]
+        }
+        return decoded
+    }
+
+    /// Liefert das Profil für die gegebene MAC oder `nil`.
+    func profile(forMAC mac: String) -> DeviceProfile? {
+        return all()[mac]
+    }
+
+    /// Profil speichern (überschreibt wenn vorhanden).
+    func save(_ profile: DeviceProfile) {
+        var current = all()
+        current[profile.mac] = profile
+        persist(current)
+    }
+
+    /// Profil entfernen (z.B. nach Legacy→Real-MAC-Umzug).
+    func remove(mac: String) {
+        var current = all()
+        current.removeValue(forKey: mac)
+        persist(current)
+    }
+
+    /// Das aktuell aktive Profil — `currentMAC` + Lookup. `nil` wenn nichts
+    /// verbunden ist.
+    func currentProfile() -> DeviceProfile? {
+        guard let mac = currentMAC else { return nil }
+        return profile(forMAC: mac)
+    }
+
+    /// Atomic update des Current-Profiles via Closure. Kein Effekt wenn kein
+    /// aktives Profil vorliegt.
+    func updateCurrent(_ transform: (inout DeviceProfile) -> Void) {
+        guard let mac = currentMAC else { return }
+        var profiles = all()
+        guard var p = profiles[mac] else { return }
+        transform(&p)
+        profiles[mac] = p
+        persist(profiles)
+    }
+
+    /// Erzeugt einen eindeutigen Auto-Namen (Adjektiv + Tier, deutsch).
+    /// Kollisions-Check gegen `existing` (alle bestehenden `friendlyName`s).
+    /// Hard-Fallback `"Gerät N"` nach 50 Versuchen.
+    static func generateAutoName(existing: Set<String>) -> String {
+        for _ in 0..<50 {
+            let adj = kDeviceAutoAdjectives.randomElement() ?? "Flink"
+            let animal = kDeviceAutoAnimals.randomElement() ?? "Dachs"
+            let candidate = "\(adj)er \(animal)"
+            if !existing.contains(candidate) { return candidate }
+        }
+        // Hard-Fallback: „Gerät N" mit kleinster freier N ≥ 1.
+        var n = 1
+        while existing.contains("Gerät \(n)") { n += 1 }
+        return "Gerät \(n)"
+    }
+
+    /// Prüft, ob `name` bereits an ein anderes Gerät vergeben ist (gegen
+    /// `excludeMAC` als Eigen-Match-Bypass beim Rename).
+    func isNameTaken(_ name: String, excludeMAC: String?) -> Bool {
+        for (mac, p) in all() {
+            if mac == excludeMAC { continue }
+            if p.friendlyName == name { return true }
+        }
+        return false
+    }
+
+    private func persist(_ dict: [String: DeviceProfile]) {
+        guard let data = try? JSONEncoder().encode(dict) else { return }
+        defaults.set(data, forKey: kDevicesKey)
+    }
+}
+
+// ============================================================
 // MARK: - Settings Manager
 // ============================================================
 
@@ -204,20 +362,73 @@ class Settings {
         set { defaults.set(newValue, forKey: "skippedAppVersion") }
     }
 
+    /// Ab v1.14.0: Per-Device-Settings. Alle Display-Properties (Sprache,
+    /// Orientation, Theme, Brightness) werden im `DeviceProfile` des aktuell
+    /// verbundenen Geräts gehalten. Wenn noch kein Profil existiert
+    /// (Erstinstallation vor FW v2.10.0-Upgrade), fällt der Lookup auf das
+    /// `kLegacyDeviceMAC`-Profil zurück — das die v1.12.0/v1.13.0-Globals
+    /// im Migration-Step übernommen hat.
+    private func activeProfileMAC() -> String {
+        return DeviceRegistry.shared.currentMAC ?? kLegacyDeviceMAC
+    }
+
+    private func readProfileString(_ keyPath: (DeviceProfile) -> String, default defaultValue: String) -> String {
+        let mac = activeProfileMAC()
+        if let p = DeviceRegistry.shared.profile(forMAC: mac) { return keyPath(p) }
+        return defaultValue
+    }
+
+    private func readProfileInt(_ keyPath: (DeviceProfile) -> Int, default defaultValue: Int) -> Int {
+        let mac = activeProfileMAC()
+        if let p = DeviceRegistry.shared.profile(forMAC: mac) { return keyPath(p) }
+        return defaultValue
+    }
+
     var language: String {
-        get { defaults.string(forKey: "language") ?? "de" }
-        set { defaults.set(newValue, forKey: "language") }
+        get { readProfileString({ $0.language }, default: "de") }
+        set {
+            let mac = activeProfileMAC()
+            if var p = DeviceRegistry.shared.profile(forMAC: mac) {
+                p.language = newValue
+                DeviceRegistry.shared.save(p)
+            } else {
+                // Fallback: Auto-Legacy-Profil anlegen (extrem selten — sollte
+                // durch Migration bereits erledigt sein).
+                let existing = Set(DeviceRegistry.shared.all().values.map { $0.friendlyName })
+                let name = DeviceRegistry.generateAutoName(existing: existing)
+                var p = DeviceProfile.defaultFor(mac: mac, friendlyName: name)
+                p.language = newValue
+                DeviceRegistry.shared.save(p)
+            }
+        }
     }
 
     var orientation: String {
-        get { defaults.string(forKey: "orientation") ?? "portrait" }
-        set { defaults.set(newValue, forKey: "orientation") }
+        get { readProfileString({ $0.orientation }, default: "portrait") }
+        set {
+            DeviceRegistry.shared.updateCurrent { $0.orientation = newValue }
+            if DeviceRegistry.shared.currentMAC == nil {
+                // Kein verbundenes Gerät — in Legacy-Profil schreiben, falls vorhanden.
+                if var p = DeviceRegistry.shared.profile(forMAC: kLegacyDeviceMAC) {
+                    p.orientation = newValue
+                    DeviceRegistry.shared.save(p)
+                }
+            }
+        }
     }
 
     /// "system" | "dark" | "light" — steuert, was per set_theme an ESP32 geht.
     var themeMode: String {
-        get { defaults.string(forKey: "themeMode") ?? "system" }
-        set { defaults.set(newValue, forKey: "themeMode") }
+        get { readProfileString({ $0.theme }, default: "system") }
+        set {
+            DeviceRegistry.shared.updateCurrent { $0.theme = newValue }
+            if DeviceRegistry.shared.currentMAC == nil {
+                if var p = DeviceRegistry.shared.profile(forMAC: kLegacyDeviceMAC) {
+                    p.theme = newValue
+                    DeviceRegistry.shared.save(p)
+                }
+            }
+        }
     }
 
     /// Manuell gewählter Serial-Port (/dev/cu.usbserial-...). nil = Autoscan.
@@ -231,9 +442,18 @@ class Settings {
 
     /// Letzter vom ESP32 gemeldeter Brightness-Wert (0..100). Wird aus `get_info`
     /// gesetzt und für die Settings-UI gecacht. Default 80.
+    /// Ab v1.14.0: per-Device gespeichert im `DeviceProfile.brightness`.
     var lastKnownBrightness: Int {
-        get { (defaults.object(forKey: "brightness") as? Int) ?? 80 }
-        set { defaults.set(newValue, forKey: "brightness") }
+        get { readProfileInt({ $0.brightness }, default: 80) }
+        set {
+            DeviceRegistry.shared.updateCurrent { $0.brightness = newValue }
+            if DeviceRegistry.shared.currentMAC == nil {
+                if var p = DeviceRegistry.shared.profile(forMAC: kLegacyDeviceMAC) {
+                    p.brightness = newValue
+                    DeviceRegistry.shared.save(p)
+                }
+            }
+        }
     }
 
     /// Aktiver CodexBar-Provider — „claude" oder „codex". Default „claude".
@@ -272,6 +492,47 @@ class Settings {
         // Defaults. Bestehende Installationen werden einmalig migriert.
         defaults = UserDefaults.standard
         Self.migrateLegacySuiteIfNeeded()
+        Self.migrateToPerDeviceIfNeeded()
+    }
+
+    /// Einmalige Migration (v1.13.0 → v1.14.0): globale Display-Keys
+    /// (`theme`/`themeMode`/`orientation`/`language`/`brightness`) werden in
+    /// ein `DeviceProfile` unter `kLegacyDeviceMAC` gepackt. Das Profil dient
+    /// als Fallback, solange kein echter MAC-Roundtrip über `get_info`
+    /// stattgefunden hat, und wird beim ersten `get_info`-Response mit echter
+    /// MAC auf das reale Device umgezogen.
+    private static func migrateToPerDeviceIfNeeded() {
+        let standard = UserDefaults.standard
+        if standard.bool(forKey: "didMigrateToPerDevice_v1140") { return }
+
+        // Globale Keys lesen (Defaults analog zu den alten Gettern)
+        let theme = standard.string(forKey: "themeMode") ?? "system"
+        let orientation = standard.string(forKey: "orientation") ?? "portrait"
+        let language = standard.string(forKey: "language") ?? "de"
+        let brightness = (standard.object(forKey: "brightness") as? Int) ?? 80
+
+        // Auto-Name für Legacy-Device (noch keine anderen Devices registriert)
+        let existing = Set(DeviceRegistry.shared.all().values.map { $0.friendlyName })
+        let friendlyName = DeviceRegistry.generateAutoName(existing: existing)
+
+        let legacyProfile = DeviceProfile(
+            mac: kLegacyDeviceMAC,
+            friendlyName: friendlyName,
+            theme: theme,
+            orientation: orientation,
+            language: language,
+            brightness: brightness
+        )
+        DeviceRegistry.shared.save(legacyProfile)
+
+        // Globale Keys aufräumen — alle weiteren Lookups laufen über Profile.
+        standard.removeObject(forKey: "themeMode")
+        standard.removeObject(forKey: "orientation")
+        standard.removeObject(forKey: "language")
+        standard.removeObject(forKey: "brightness")
+
+        standard.set(true, forKey: "didMigrateToPerDevice_v1140")
+        NSLog("[Settings] Migrated to per-device settings. Legacy profile created: '%@'", friendlyName)
     }
 
     /// Einmalige Migration: liest alle bekannten Keys aus der alten
@@ -1037,12 +1298,18 @@ class SerialPortManager {
                             self.deviceFirmwareVersion = version
                             Settings.shared.installedFirmwareVersion = "v\(version)"
                             NSLog("[Serial] ESP32 firmware: v%@", version)
-                            // Firmware ab v2.8.0 meldet Brightness-Wert mit —
-                            // cachen, damit Settings-Slider beim Öffnen nicht
-                            // auf den Default zurückspringt.
-                            if let br = json["brightness"] as? Int {
-                                Settings.shared.lastKnownBrightness = br
-                            }
+
+                            // Ab FW v2.10.0: MAC extrahieren und Per-Device-
+                            // Registry-Lookup machen. Alte FW (ohne `mac`):
+                            // Pseudo-MAC `kLegacyDeviceMAC` nutzen.
+                            let reportedMAC = (json["mac"] as? String)?
+                                .lowercased()
+                                .trimmingCharacters(in: .whitespaces)
+                            let effectiveMAC: String = (reportedMAC?.isEmpty ?? true)
+                                ? kLegacyDeviceMAC
+                                : reportedMAC!
+                            self.resolveDeviceProfile(forMAC: effectiveMAC,
+                                                     reportedBrightness: json["brightness"] as? Int)
                             break
                         }
                     }
@@ -1056,6 +1323,69 @@ class SerialPortManager {
         if fileDescriptor >= 0 { Darwin.close(fileDescriptor); fileDescriptor = -1 }
         connectedPort = nil
         lastDisconnectAt = Date()
+    }
+
+    /// Mappt eine per `get_info` gemeldete MAC auf ein `DeviceProfile`. Legt ein
+    /// neues Profil an, wenn noch keines existiert. Wenn ein Gerät mit echter
+    /// MAC dort ankommt, wo bisher das `kLegacyDeviceMAC`-Fallback-Profil
+    /// seine Settings getragen hat, werden die Settings aus dem Legacy-Profil
+    /// übernommen und das Legacy-Profil entfernt.
+    /// Setzt am Ende `currentMAC` auf das gefundene/neue Profil.
+    /// `reportedBrightness` (FW v2.8.0+) wird in das Profil geschrieben, damit
+    /// der Slider beim Öffnen des Settings-Fensters den echten ESP32-Stand zeigt.
+    fileprivate func resolveDeviceProfile(forMAC mac: String, reportedBrightness: Int?) {
+        let registry = DeviceRegistry.shared
+
+        if var existing = registry.profile(forMAC: mac) {
+            // Profil bereits bekannt — nur Brightness nachziehen und `currentMAC`
+            // auf das Profil setzen, damit Settings-Reads/Writes auf dem
+            // richtigen Objekt landen.
+            if let br = reportedBrightness, br != existing.brightness {
+                existing.brightness = br
+                registry.save(existing)
+            }
+            registry.currentMAC = mac
+            NSLog("[Device] Matched existing profile: %@ (mac=%@)", existing.friendlyName, mac)
+            return
+        }
+
+        // Profil existiert noch nicht.
+        // Spezialfall: Gerät meldet eine ECHTE MAC, aber wir haben ein
+        // Legacy-Device-Profil — dann transferiere Settings vom Legacy-Profil,
+        // damit der User seinen bisherigen Setup-Stand behält.
+        let useLegacyTransfer = (mac != kLegacyDeviceMAC)
+            && (registry.profile(forMAC: kLegacyDeviceMAC) != nil)
+
+        if useLegacyTransfer, let legacy = registry.profile(forMAC: kLegacyDeviceMAC) {
+            var moved = legacy
+            moved.mac = mac
+            if let br = reportedBrightness { moved.brightness = br }
+            registry.save(moved)
+            registry.remove(mac: kLegacyDeviceMAC)
+            registry.currentMAC = mac
+            NSLog("[Device] Migrated legacy profile to real MAC: %@ → %@ (mac=%@)",
+                  kLegacyDeviceMAC, moved.friendlyName, mac)
+            return
+        }
+
+        // Komplett neues Gerät — Auto-Name + Default-Settings aus aktuell
+        // aktivem Profil (falls es eins gibt), sonst App-Defaults.
+        let existingNames = Set(registry.all().values.map { $0.friendlyName })
+        let autoName = DeviceRegistry.generateAutoName(existing: existingNames)
+
+        let template = registry.currentProfile()
+        var fresh = DeviceProfile.defaultFor(
+            mac: mac,
+            friendlyName: autoName,
+            theme: template?.theme ?? "system",
+            orientation: template?.orientation ?? "portrait",
+            language: template?.language ?? "de",
+            brightness: reportedBrightness ?? template?.brightness ?? 80
+        )
+        if let br = reportedBrightness { fresh.brightness = br }
+        registry.save(fresh)
+        registry.currentMAC = mac
+        NSLog("[Device] Created new profile: '%@' (mac=%@)", fresh.friendlyName, mac)
     }
 
     func send(data: Data) -> Bool {
@@ -1159,13 +1489,15 @@ class UsageMonitor {
         serialPort.onConnect = { [weak self] in
             guard let self = self else { return }
             self.onUpdate?()
+            // Ab v1.14.0: bei Connect ALLE Per-Device-Settings pushen
+            // (Theme/Language/Orientation/Brightness), damit ein Gerät, das
+            // anderswo verwendet wurde, sofort auf das hier hinterlegte
+            // Profil springt. Die einzelnen set_*-Pushes triggern intern
+            // sendLastUsageSnapshotIfAvailable — kein Verlust des Dashboards.
             self.sendThemeToESP32()
             self.sendLanguageToESP32()
             self.sendOrientationToESP32()
-            // Brightness wurde von get_info bereits gecacht; senden ist
-            // optional, da Firmware den Wert aus NVS wiederherstellt. Wir
-            // senden nur wenn er sich lokal (Slider) geändert hat — die
-            // Slider-Aktion triggert das selbst via sendBrightnessToESP32.
+            self.sendBrightnessToESP32(Settings.shared.lastKnownBrightness)
             if self.codexBar.status.isOK {
                 self.sendUsageToESP32()
             }

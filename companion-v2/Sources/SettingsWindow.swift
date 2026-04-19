@@ -35,6 +35,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var portRefreshButton: NSButton!
 
     // Rechte Spalte — Display
+    private var deviceRow: NSView!
+    private var deviceNameLabel: NSTextField!
+    private var deviceEditButton: NSButton!
+    private var deviceEditField: NSTextField!
+    private var deviceEditSaveButton: NSButton!
+    private var deviceEditCancelButton: NSButton!
+    private var deviceEditHintLabel: NSTextField!
+    private var deviceEditContainer: NSView!
+    private var deviceDisplayContainer: NSView!
+    private var isEditingDeviceName: Bool = false
     private var themePopup: NSPopUpButton!
     private var orientationPopup: NSPopUpButton!
     private var languagePopup: NSPopUpButton!
@@ -365,6 +375,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildDisplayBox() -> NSView {
         let heading = makeSectionHeading("Display-Einstellungen")
 
+        // Geräte-Zeile (ab v1.14.0)
+        let deviceRowBuilt = buildDeviceRow()
+
         // Theme
         themePopup = NSPopUpButton()
         themePopup.addItems(withTitles: ["Automatisch (macOS)", "Dark", "Light"])
@@ -422,7 +435,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lastUpdateLabel.font = NSFont.systemFont(ofSize: 11)
         lastUpdateLabel.textColor = .secondaryLabelColor
 
-        let rowsStack = NSStackView(views: [themeRow, orientRow, langRow, tzRow, brightRow])
+        let rowsStack = NSStackView(views: [deviceRowBuilt, themeRow, orientRow, langRow, tzRow, brightRow])
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
         rowsStack.spacing = 8
@@ -432,6 +445,155 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.alignment = .leading
         stack.spacing = 12
         return stack
+    }
+
+    /// Geräte-Zeile: „Gerät: <FriendlyName>   ✏️" mit Inline-Edit (Stift-Icon →
+    /// NSTextField). Bei nicht-verbundenem ESP32: dimmed „Gerät: — (nicht
+    /// verbunden)". Tooltip über dem Namen zeigt die MAC.
+    private func buildDeviceRow() -> NSView {
+        // --- Display-Container ---
+        deviceNameLabel = NSTextField(labelWithString: "—")
+        deviceNameLabel.font = NSFont.systemFont(ofSize: 13)
+        deviceNameLabel.lineBreakMode = .byTruncatingTail
+        deviceNameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        deviceNameLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        deviceEditButton = NSButton()
+        deviceEditButton.bezelStyle = .regularSquare
+        deviceEditButton.isBordered = false
+        deviceEditButton.title = "✏️"
+        deviceEditButton.target = self
+        deviceEditButton.action = #selector(beginDeviceNameEdit)
+        deviceEditButton.setButtonType(.momentaryPushIn)
+        deviceEditButton.font = NSFont.systemFont(ofSize: 13)
+        deviceEditButton.toolTip = "Name ändern"
+        deviceEditButton.translatesAutoresizingMaskIntoConstraints = false
+        deviceEditButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
+
+        let displayStack = NSStackView(views: [deviceNameLabel, deviceEditButton])
+        displayStack.orientation = .horizontal
+        displayStack.spacing = 6
+        displayStack.alignment = .centerY
+        deviceDisplayContainer = displayStack
+
+        // --- Edit-Container (initial versteckt) ---
+        deviceEditField = NSTextField()
+        deviceEditField.placeholderString = "Gerätename"
+        deviceEditField.font = NSFont.systemFont(ofSize: 13)
+        deviceEditField.translatesAutoresizingMaskIntoConstraints = false
+        deviceEditField.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        deviceEditField.target = self
+        deviceEditField.action = #selector(commitDeviceNameEdit)
+
+        deviceEditSaveButton = NSButton(title: "Speichern", target: self, action: #selector(commitDeviceNameEdit))
+        deviceEditSaveButton.bezelStyle = .rounded
+        deviceEditSaveButton.keyEquivalent = "\r"
+
+        deviceEditCancelButton = NSButton(title: "Abbrechen", target: self, action: #selector(cancelDeviceNameEdit))
+        deviceEditCancelButton.bezelStyle = .rounded
+        deviceEditCancelButton.keyEquivalent = "\u{1B}" // Escape
+
+        let editStack = NSStackView(views: [deviceEditField, deviceEditSaveButton, deviceEditCancelButton])
+        editStack.orientation = .horizontal
+        editStack.spacing = 6
+        editStack.alignment = .centerY
+        deviceEditContainer = editStack
+        deviceEditContainer.isHidden = true
+
+        deviceEditHintLabel = NSTextField(labelWithString: "")
+        deviceEditHintLabel.font = NSFont.systemFont(ofSize: 11)
+        deviceEditHintLabel.textColor = .systemRed
+        deviceEditHintLabel.isHidden = true
+
+        // --- Zeilen-Container: Display- und Edit-Container übereinander ---
+        let containersStack = NSStackView(views: [deviceDisplayContainer, deviceEditContainer, deviceEditHintLabel])
+        containersStack.orientation = .vertical
+        containersStack.alignment = .leading
+        containersStack.spacing = 4
+
+        deviceRow = twoColumnRow("Gerät", containersStack)
+        return deviceRow
+    }
+
+    @objc private func beginDeviceNameEdit() {
+        guard let profile = DeviceRegistry.shared.currentProfile() else { return }
+        deviceEditField.stringValue = profile.friendlyName
+        deviceEditHintLabel.isHidden = true
+        deviceDisplayContainer.isHidden = true
+        deviceEditContainer.isHidden = false
+        isEditingDeviceName = true
+        window?.makeFirstResponder(deviceEditField)
+        deviceEditField.currentEditor()?.selectAll(nil)
+    }
+
+    @objc private func commitDeviceNameEdit() {
+        guard let profile = DeviceRegistry.shared.currentProfile() else {
+            cancelDeviceNameEdit()
+            return
+        }
+        let raw = deviceEditField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty {
+            deviceEditHintLabel.stringValue = "Name darf nicht leer sein."
+            deviceEditHintLabel.isHidden = false
+            return
+        }
+        if raw.count > 30 {
+            deviceEditHintLabel.stringValue = "Name darf max. 30 Zeichen haben."
+            deviceEditHintLabel.isHidden = false
+            return
+        }
+        if DeviceRegistry.shared.isNameTaken(raw, excludeMAC: profile.mac) {
+            deviceEditHintLabel.stringValue = "Name bereits vergeben."
+            deviceEditHintLabel.isHidden = false
+            return
+        }
+        var updated = profile
+        updated.friendlyName = raw
+        DeviceRegistry.shared.save(updated)
+
+        deviceEditContainer.isHidden = true
+        deviceEditHintLabel.isHidden = true
+        deviceDisplayContainer.isHidden = false
+        isEditingDeviceName = false
+        update()
+    }
+
+    @objc private func cancelDeviceNameEdit() {
+        deviceEditContainer.isHidden = true
+        deviceEditHintLabel.isHidden = true
+        deviceDisplayContainer.isHidden = false
+        isEditingDeviceName = false
+        update()
+    }
+
+    /// Aktualisiert die Geräte-Zeile basierend auf Verbindungsstatus +
+    /// DeviceRegistry. Im Edit-Modus wird nichts überschrieben.
+    private func updateDeviceRow() {
+        guard deviceNameLabel != nil else { return }
+        if isEditingDeviceName { return }
+        let connected = monitor?.serialPort.isConnected ?? false
+        if connected, let profile = DeviceRegistry.shared.currentProfile() {
+            deviceNameLabel.stringValue = profile.friendlyName
+            deviceNameLabel.textColor = .labelColor
+            deviceEditButton.isEnabled = true
+            deviceEditButton.isHidden = false
+            // Tooltip zeigt die MAC (legacy-device bei alter FW).
+            let macTip: String
+            if profile.mac == kLegacyDeviceMAC {
+                macTip = "MAC: — (Firmware < v2.10.0)"
+            } else {
+                macTip = "MAC: \(profile.mac)"
+            }
+            deviceNameLabel.toolTip = macTip
+            deviceRow.toolTip = macTip
+        } else {
+            deviceNameLabel.stringValue = "— (nicht verbunden)"
+            deviceNameLabel.textColor = .tertiaryLabelColor
+            deviceEditButton.isEnabled = false
+            deviceEditButton.isHidden = true
+            deviceNameLabel.toolTip = nil
+            deviceRow.toolTip = nil
+        }
     }
 
     private func buildFirmwareBox() -> NSView {
@@ -658,6 +820,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             fwProgressLabel.isHidden = true
             fwProgressBar.stopAnimation(nil)
         }
+
+        // Device-Zeile (ab v1.14.0)
+        updateDeviceRow()
 
         // Display-Settings
         switch Settings.shared.orientation {
