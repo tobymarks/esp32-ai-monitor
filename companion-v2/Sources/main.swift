@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.11.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.12.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude ODER Codex — per Umschalter im Settings-Fenster.
@@ -7,11 +7,9 @@
  * und beim Reopen-Event (Spotlight / Finder-Doppelklick).
  * ESP32-Protokoll: Envelope um `provider`-Feld erweitert (String, „claude"|„codex").
  *
- * v1.11.1 (Hotfix): macOS rendert unter `.accessory`/LSUIElement=YES keine eigene
- * System-Menüleiste — der in v1.11.0 eingebaute Main-Menu-Pfad („Über / Updates /
- * Beenden" via NSApp.mainMenu) war in der Praxis unsichtbar. Aktionen sind jetzt
- * wieder dauerhaft im Settings-Footer: links Version, rechts „Über AI Monitor" und
- * „Nach Updates suchen …". Beenden bleibt ⌘Q (Standard-Shortcut + Spotlight).
+ * v1.12.0: Backlog-Batch (Zeitzone konfigurierbar, CI/CD Mac-Build, DMG-Wrapper,
+ * mehrstufige Firmware-Flash-Phasen, UserDefaults-Suite-Warning gefixt,
+ * Flaticon-Attribution im About-Dialog, Remote-URL Legacy-PAT-Cleanup).
  *
  * Build: ./build.sh
  * Run:   open "build/AI Monitor.app"
@@ -30,10 +28,14 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.11.1"
+let kAppVersion = "1.12.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
-let kUserDefaultsSuite = "de.aimonitor.app"
+/// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
+/// nicht mehr beschrieben. Der Suite-Name == Bundle-Identifier hatte eine
+/// Foundation-Warning verursacht („Using your own bundle identifier as
+/// NSUserDefaults suite name"). Ab v1.12.0 läuft alles über `.standard`.
+let kLegacyUserDefaultsSuite = "de.aimonitor.app"
 let kGitHubRepo = "tobymarks/esp32-ai-monitor"
 let kGitHubReleasesAPI = "https://api.github.com/repos/tobymarks/esp32-ai-monitor/releases"
 let kFirmwareAssetName = "ai-monitor.bin"
@@ -248,8 +250,69 @@ class Settings {
         }
     }
 
+    /// Gewählte Zeitzone für `displayTime` auf dem ESP32 und Reset-Berechnungen.
+    /// `"auto"` (Default) folgt `TimeZone.current`. Andere Werte sind IANA-Namen
+    /// wie „Europe/Berlin" oder „America/New_York".
+    var selectedTimeZone: String {
+        get { defaults.string(forKey: "selectedTimeZone") ?? "auto" }
+        set { defaults.set(newValue, forKey: "selectedTimeZone") }
+    }
+
+    /// Löst die effektive TimeZone aus der Settings-Konfiguration auf.
+    /// Fällt bei unbekannter IANA-Kennung auf `TimeZone.current` zurück.
+    func effectiveTimeZone() -> TimeZone {
+        let id = selectedTimeZone
+        if id == "auto" { return TimeZone.current }
+        return TimeZone(identifier: id) ?? TimeZone.current
+    }
+
     private init() {
-        defaults = UserDefaults(suiteName: kUserDefaultsSuite) ?? UserDefaults.standard
+        // Ab v1.12.0 läuft alles über `.standard` — das vermeidet die
+        // Foundation-Warning und verhält sich sauber unter Sandbox-nahen
+        // Defaults. Bestehende Installationen werden einmalig migriert.
+        defaults = UserDefaults.standard
+        Self.migrateLegacySuiteIfNeeded()
+    }
+
+    /// Einmalige Migration: liest alle bekannten Keys aus der alten
+    /// Suite (`de.aimonitor.app`), schreibt nach `.standard` wenn dort noch kein
+    /// Wert existiert, und entfernt die Suite-Keys anschließend. Idempotent —
+    /// sobald das Marker-Flag gesetzt ist, passiert nichts mehr.
+    private static func migrateLegacySuiteIfNeeded() {
+        let standard = UserDefaults.standard
+        if standard.bool(forKey: "didMigrateLegacySuite_v1120") { return }
+        guard let legacy = UserDefaults(suiteName: kLegacyUserDefaultsSuite) else {
+            standard.set(true, forKey: "didMigrateLegacySuite_v1120")
+            return
+        }
+        let keys = [
+            "launchAtLogin",
+            "installedFirmwareVersion",
+            "lastFirmwareCheck",
+            "lastAppUpdateCheck",
+            "skippedAppVersion",
+            "language",
+            "orientation",
+            "themeMode",
+            "manualPortPath",
+            "brightness",
+            "selectedProvider",
+            "selectedTimeZone",
+        ]
+        var copied = 0
+        for k in keys {
+            guard let v = legacy.object(forKey: k) else { continue }
+            if standard.object(forKey: k) == nil {
+                standard.set(v, forKey: k)
+                copied += 1
+            }
+            legacy.removeObject(forKey: k)
+        }
+        legacy.synchronize()
+        standard.set(true, forKey: "didMigrateLegacySuite_v1120")
+        if copied > 0 {
+            NSLog("[Settings] Migrated %d legacy suite keys to UserDefaults.standard", copied)
+        }
     }
 
     private func updateLaunchAtLogin(_ enabled: Bool) {
@@ -517,6 +580,40 @@ class AppUpdateManager {
 // MARK: - Firmware Manager
 // ============================================================
 
+/// Mehrstufige Phase der Firmware-Aktualisierung. Zeigt an, wo genau im
+/// Download→Flash→Reboot-Ablauf wir gerade stehen. Das Settings-Fenster rendert
+/// das zugehörige Label unter der ProgressBar (v1.12.0).
+enum FirmwareFlashPhase {
+    case idle
+    case downloading        // GitHub-Release wird gezogen
+    case connecting         // esptool-Handshake mit ESP32
+    case erasing            // Flashspeicher löschen
+    case writing            // Write mit Prozentangabe
+    case verifying          // Hash-Verify
+    case rebooting          // Reset nach Flash
+    case done               // Erfolgreich, Firmware aktiv
+    case failed             // Abbruch
+
+    /// Deutsches, nutzersichtbares Label unter der ProgressBar.
+    func label(percent: Int? = nil, version: String? = nil) -> String {
+        switch self {
+        case .idle:        return ""
+        case .downloading: return "Firmware wird geladen …"
+        case .connecting:  return "Verbindung zum ESP32 wird hergestellt …"
+        case .erasing:     return "Flashspeicher wird gelöscht …"
+        case .writing:
+            if let p = percent { return "Firmware wird geschrieben … \(p) %" }
+            return "Firmware wird geschrieben …"
+        case .verifying:   return "Verifikation läuft …"
+        case .rebooting:   return "Neustart …"
+        case .done:
+            if let v = version { return "Fertig. Firmware \(v) aktiv." }
+            return "Fertig."
+        case .failed:      return "Abgebrochen."
+        }
+    }
+}
+
 class FirmwareManager {
     static let shared = FirmwareManager()
 
@@ -526,6 +623,10 @@ class FirmwareManager {
     var isFlashing = false
     var downloadProgress: Double = 0
     var flashProgress: String = ""
+    /// Aktuelle Phase — wird vom Settings-Fenster live gelesen.
+    var flashPhase: FirmwareFlashPhase = .idle
+    /// Prozent innerhalb der Write-Phase (nur relevant wenn `.writing`).
+    var flashWritePercent: Int = 0
     var onUpdate: (() -> Void)?
 
     private var firmwareDir: String {
@@ -621,6 +722,9 @@ class FirmwareManager {
         }
         isDownloading = true
         downloadProgress = 0
+        // v1.12.0: Phase-Label im UI setzen, damit der User den GitHub-Download
+        // klar von Connect/Erase/Write trennen kann.
+        setPhase(.downloading)
         DispatchQueue.main.async { self.onUpdate?() }
         let task = URLSession.shared.downloadTask(with: url) { [weak self] tempURL, _, error in
             guard let self = self else { return }
@@ -638,14 +742,38 @@ class FirmwareManager {
                 try FileManager.default.moveItem(at: tempURL, to: URL(fileURLWithPath: destPath))
                 self.downloadedBinPath = destPath
                 self.downloadProgress = 1.0
-                DispatchQueue.main.async { self.onUpdate?() }
+                // Download fertig — Phase zurücksetzen, damit der anschließende
+                // Flash-Start mit `.connecting` beginnt.
+                DispatchQueue.main.async {
+                    self.flashPhase = .idle
+                    self.flashProgress = ""
+                    self.onUpdate?()
+                }
                 completion(true, nil)
             } catch {
-                DispatchQueue.main.async { self.onUpdate?() }
+                DispatchQueue.main.async {
+                    self.flashPhase = .idle
+                    self.flashProgress = ""
+                    self.onUpdate?()
+                }
                 completion(false, error.localizedDescription)
             }
         }
         task.resume()
+    }
+
+    /// Setzt Phase + Label und triggert UI-Refresh. Muss vom Main-Thread aus
+    /// konsistent sein, daher immer via DispatchQueue.main.async.
+    private func setPhase(_ phase: FirmwareFlashPhase, percent: Int? = nil) {
+        DispatchQueue.main.async {
+            self.flashPhase = phase
+            if case .writing = phase, let p = percent { self.flashWritePercent = p }
+            self.flashProgress = phase.label(
+                percent: percent,
+                version: self.latestRelease?.tag_name
+            )
+            self.onUpdate?()
+        }
     }
 
     func flashFirmware(port: String, completion: @escaping (Bool, String) -> Void) {
@@ -656,8 +784,7 @@ class FirmwareManager {
             completion(false, "esptool nicht gefunden.\nInstalliere mit: pip3 install esptool"); return
         }
         isFlashing = true
-        flashProgress = S().preparing
-        DispatchQueue.main.async { self.onUpdate?() }
+        setPhase(.connecting)
         usleep(500_000)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
@@ -693,17 +820,38 @@ class FirmwareManager {
             var outputText = ""
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                if let str = String(data: data, encoding: .utf8), !str.isEmpty {
-                    outputText += str
-                    if let range = str.range(of: #"\((\d+)\s*%\)"#, options: .regularExpression) {
-                        let percentStr = str[range].replacingOccurrences(of: "(", with: "")
-                            .replacingOccurrences(of: "%)", with: "")
-                            .trimmingCharacters(in: .whitespaces)
-                        DispatchQueue.main.async {
-                            self.flashProgress = "Flashing... \(percentStr)%"
-                            self.onUpdate?()
-                        }
+                guard let str = String(data: data, encoding: .utf8), !str.isEmpty else { return }
+                outputText += str
+                // Phase-Erkennung anhand von esptool-Output-Markern. esptool
+                // schreibt Statuszeilen unmittelbar vor dem jeweiligen Block —
+                // das reicht als Trigger für den Phase-Wechsel.
+                let lower = str.lowercased()
+                if lower.contains("connecting") {
+                    self.setPhase(.connecting)
+                }
+                if lower.contains("erasing flash") || lower.contains("erase") {
+                    self.setPhase(.erasing)
+                }
+                if lower.contains("writing at") || lower.contains("wrote") {
+                    // Wir sind in der Write-Phase; konkreter Prozentwert kommt
+                    // über das Regex unten.
+                    if case .writing = self.flashPhase {} else {
+                        self.setPhase(.writing, percent: 0)
                     }
+                }
+                if let range = str.range(of: #"\((\d+)\s*%\)"#, options: .regularExpression) {
+                    let percentStr = str[range].replacingOccurrences(of: "(", with: "")
+                        .replacingOccurrences(of: "%)", with: "")
+                        .trimmingCharacters(in: .whitespaces)
+                    if let p = Int(percentStr) {
+                        self.setPhase(.writing, percent: p)
+                    }
+                }
+                if lower.contains("verifying") || lower.contains("hash of data verified") {
+                    self.setPhase(.verifying)
+                }
+                if lower.contains("hard resetting") || lower.contains("soft reset") || lower.contains("resetting") {
+                    self.setPhase(.rebooting)
                 }
             }
             var errorText = ""
@@ -712,7 +860,6 @@ class FirmwareManager {
                 if let str = String(data: data, encoding: .utf8), !str.isEmpty { errorText += str }
             }
             do {
-                DispatchQueue.main.async { self.flashProgress = "Flashing..."; self.onUpdate?() }
                 try process.run()
                 process.waitUntilExit()
                 outputPipe.fileHandleForReading.readabilityHandler = nil
@@ -720,16 +867,32 @@ class FirmwareManager {
                 let exitCode = process.terminationStatus
                 if exitCode == 0 {
                     if let release = self.latestRelease { Settings.shared.installedFirmwareVersion = release.tag_name }
-                    DispatchQueue.main.async { self.isFlashing = false; self.flashProgress = ""; self.onUpdate?() }
+                    self.setPhase(.done)
+                    DispatchQueue.main.async {
+                        self.isFlashing = false
+                        self.onUpdate?()
+                    }
                     completion(true, S().flashSuccessMessage)
                 } else {
-                    DispatchQueue.main.async { self.isFlashing = false; self.flashProgress = ""; self.onUpdate?() }
+                    self.setPhase(.failed)
+                    DispatchQueue.main.async {
+                        self.isFlashing = false
+                        self.flashProgress = ""
+                        self.flashPhase = .idle
+                        self.onUpdate?()
+                    }
                     let shortError = errorText.isEmpty ? "esptool Exit-Code \(exitCode)" :
                         (errorText.components(separatedBy: "\n").last(where: { !$0.isEmpty }) ?? errorText)
                     completion(false, "\(S().flashFailedPrefix) \(shortError)")
                 }
             } catch {
-                DispatchQueue.main.async { self.isFlashing = false; self.flashProgress = ""; self.onUpdate?() }
+                self.setPhase(.failed)
+                DispatchQueue.main.async {
+                    self.isFlashing = false
+                    self.flashProgress = ""
+                    self.flashPhase = .idle
+                    self.onUpdate?()
+                }
                 completion(false, "esptool konnte nicht gestartet werden: \(error.localizedDescription)")
             }
         }
@@ -1066,6 +1229,13 @@ class UsageMonitor {
         sendLastUsageSnapshotIfAvailable()
     }
 
+    /// Wird aus dem SettingsWindow aufgerufen, wenn die Zeitzone geändert wurde.
+    /// Der nächste `sendUsageToESP32` nutzt die neue TZ via `Settings.shared
+    /// .effectiveTimeZone()`, deshalb reicht ein sofortiger Resend.
+    func sendUsageSnapshotForTimeZoneChange() {
+        sendLastUsageSnapshotIfAvailable()
+    }
+
     /// Sendet den aktuellen Brightness-Wert (0..100) an den ESP32. Persistenz
     /// liegt in NVS auf der Firmware; hier nur Cache für UI-Vorbelegung.
     func sendBrightnessToESP32(_ percent: Int) {
@@ -1101,6 +1271,9 @@ class UsageMonitor {
 
         let timeFmt = DateFormatter()
         timeFmt.dateFormat = "HH:mm"
+        // Ab v1.12.0 berücksichtigt `displayTime` die im Settings-Fenster
+        // gewählte Zeitzone. „auto" folgt weiterhin der System-Zeitzone.
+        timeFmt.timeZone = Settings.shared.effectiveTimeZone()
         let localTime = timeFmt.string(from: Date())
 
         // Provider aus der CodexBar-Source (normalisiert), nicht direkt aus

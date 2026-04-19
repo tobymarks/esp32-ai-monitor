@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.11.1"
+APP_VERSION="1.12.0"
 echo "Compiling AI Monitor v${APP_VERSION}..."
 
 # Baue .app Bundle Struktur zuerst
@@ -61,6 +61,28 @@ cd "$SCRIPT_DIR/build"
 zip -r -q "AIMonitor.zip" "AI Monitor.app"
 echo "Release ZIP: $SCRIPT_DIR/build/AIMonitor.zip"
 
+# Create DMG wrapper for fresh installs (auto-updater uses ZIP, not DMG).
+# Ab v1.12.0: zusätzlich zum ZIP ein komprimiertes UDZO-DMG erzeugen.
+# create-dmg ist ein optionales nice-to-have (Background-Layout etc.) — wir
+# fallen deterministisch auf `hdiutil` zurück, damit der CI-Runner das ohne
+# Homebrew-Install hinbekommt. Fehler beim DMG-Build sind NICHT fatal für den
+# gesamten Build (der ZIP-Pfad ist der kritische).
+DMG_PATH="$SCRIPT_DIR/build/AIMonitor.dmg"
+rm -f "$DMG_PATH"
+DMG_STAGING="$(mktemp -d)"
+cp -R "$SCRIPT_DIR/build/AI Monitor.app" "$DMG_STAGING/"
+# Applications-Symlink (per Finder-Dropzone)
+ln -sf /Applications "$DMG_STAGING/Applications"
+if hdiutil create -volname "AI Monitor" \
+  -srcfolder "$DMG_STAGING" \
+  -ov -format UDZO \
+  "$DMG_PATH" >/dev/null 2>&1; then
+  echo "Release DMG: $DMG_PATH"
+else
+  echo "WARNING: hdiutil DMG build failed — ZIP is still usable."
+fi
+rm -rf "$DMG_STAGING"
+
 echo "Build complete: $SCRIPT_DIR/build/AI Monitor.app"
 echo ""
 echo "=== Release Workflow ==="
@@ -69,4 +91,4 @@ echo "2. Update CFBundleVersion + CFBundleShortVersionString in Resources/Info.p
 echo "3. Update APP_VERSION in build.sh (this file)"
 echo "4. Run: ./build.sh"
 echo "5. Create GitHub Release with tag 'app-vX.Y.Z'"
-echo "6. Upload build/AIMonitor.zip as release asset"
+echo "6. Upload build/AIMonitor.zip AND build/AIMonitor.dmg as release assets"

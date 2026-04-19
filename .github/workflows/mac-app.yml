@@ -1,0 +1,73 @@
+name: Mac App Build
+
+# Trigger nur auf App-Tags (app-v1.x.x), damit der macos-Runner nicht bei jedem
+# Commit Zeit verbrennt. Manuell per `gh workflow run mac-app.yml` oder
+# UI-Dispatch startbar — dann wird ohne Release-Upload nur das Bundle gebaut.
+on:
+  push:
+    tags:
+      - 'app-v*.*.*'
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: 'Upload ZIP+DMG zum vorhandenen Release (Tag manuell angeben)'
+        required: false
+        default: 'false'
+      tag:
+        description: 'Release-Tag (nur bei workflow_dispatch mit upload=true)'
+        required: false
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build AI Monitor.app (ad-hoc signing)
+        working-directory: companion-v2
+        run: |
+          # build.sh erzeugt /tmp/aimonitor-build/AI Monitor.app, kopiert nach
+          # companion-v2/build/ und baut ZIP + DMG. Signing ist ad-hoc (codesign
+          # --sign -), da Tobias einziger Nutzer ist und das Bundle vor dem
+          # Start per xattr-Clean von der Quarantine befreit wird.
+          ./build.sh
+
+      - name: List build artifacts
+        working-directory: companion-v2
+        run: ls -lah build/
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIMonitor-zip
+          path: companion-v2/build/AIMonitor.zip
+          if-no-files-found: error
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIMonitor-dmg
+          path: companion-v2/build/AIMonitor.dmg
+          if-no-files-found: warn
+
+      - name: Attach assets to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Uploading assets to release $TAG"
+          # Release muss bereits existieren (wir legen ihn aktuell per curl
+          # manuell an). Assets nach-hochladen — --clobber überschreibt
+          # vorhandene Assets mit gleichem Namen.
+          gh release upload "$TAG" \
+            companion-v2/build/AIMonitor.zip \
+            companion-v2/build/AIMonitor.dmg \
+            --clobber

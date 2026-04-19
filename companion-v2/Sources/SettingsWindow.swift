@@ -38,9 +38,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var themePopup: NSPopUpButton!
     private var orientationPopup: NSPopUpButton!
     private var languagePopup: NSPopUpButton!
+    private var timeZonePopup: NSPopUpButton!
     private var brightnessSlider: NSSlider!
     private var brightnessValueLabel: NSTextField!
     private var lastUpdateLabel: NSTextField!
+
+    // Zeitzone: Reihenfolge der häufigen Einträge. Erster Eintrag ist
+    // immer „Automatisch (macOS)", dann die IANA-Kurzliste, dann „Weitere …".
+    private let kTimeZonePopupIdentifiers: [String] = [
+        "auto",
+        "Europe/Berlin",
+        "Europe/London",
+        "America/New_York",
+        "America/Los_Angeles",
+        "Asia/Tokyo",
+        "Australia/Sydney",
+    ]
 
     // Rechte Spalte — Firmware
     private var fwVersionLabel: NSTextField!
@@ -377,6 +390,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         languagePopup.action = #selector(languageChosen)
         let langRow = twoColumnRow("Sprache", languagePopup)
 
+        // TimeZone (v1.12.0) — steuert displayTime auf dem ESP32.
+        timeZonePopup = NSPopUpButton()
+        rebuildTimeZonePopup()
+        timeZonePopup.target = self
+        timeZonePopup.action = #selector(timeZoneChosen)
+        timeZonePopup.translatesAutoresizingMaskIntoConstraints = false
+        timeZonePopup.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        let tzRow = twoColumnRow("Zeitzone", timeZonePopup)
+
         // Brightness
         brightnessSlider = NSSlider(value: Double(Settings.shared.lastKnownBrightness),
                                     minValue: 5, maxValue: 100,
@@ -400,7 +422,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lastUpdateLabel.font = NSFont.systemFont(ofSize: 11)
         lastUpdateLabel.textColor = .secondaryLabelColor
 
-        let rowsStack = NSStackView(views: [themeRow, orientRow, langRow, brightRow])
+        let rowsStack = NSStackView(views: [themeRow, orientRow, langRow, tzRow, brightRow])
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
         rowsStack.spacing = 8
@@ -595,20 +617,42 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             fwFlashButton.title = "Firmware flashen …"
         }
 
-        // Inline Flash-Progress
+        // Inline Flash-Progress — v1.12.0 mit mehrstufigem Phase-Label unter
+        // der ProgressBar (Download/Connect/Erase/Write %/Verify/Reboot/Fertig).
         if fw.isFlashing {
             fwProgressBar.isHidden = false
             fwProgressLabel.isHidden = false
             fwProgressLabel.stringValue = fw.flashProgress
-            fwProgressBar.isIndeterminate = true
-            fwProgressBar.startAnimation(nil)
+            if case .writing = fw.flashPhase {
+                // Determinate während Write — echter Prozentwert aus esptool.
+                fwProgressBar.isIndeterminate = false
+                fwProgressBar.stopAnimation(nil)
+                fwProgressBar.doubleValue = Double(fw.flashWritePercent)
+            } else {
+                fwProgressBar.isIndeterminate = true
+                fwProgressBar.startAnimation(nil)
+            }
         } else if fw.isDownloading {
             fwProgressBar.isHidden = false
             fwProgressLabel.isHidden = false
             fwProgressBar.isIndeterminate = false
             fwProgressBar.stopAnimation(nil)
             fwProgressBar.doubleValue = fw.downloadProgress * 100.0
-            fwProgressLabel.stringValue = String(format: "Download: %.0f %%", fw.downloadProgress * 100.0)
+            // Phase-Label aus FirmwareManager, falls gesetzt (Download läuft =
+            // „Firmware wird geladen …"), sonst Legacy-Label.
+            if !fw.flashProgress.isEmpty {
+                fwProgressLabel.stringValue = fw.flashProgress
+            } else {
+                fwProgressLabel.stringValue = String(format: "Download: %.0f %%", fw.downloadProgress * 100.0)
+            }
+        } else if case .done = fw.flashPhase {
+            // Kurz nach Abschluss den „Fertig."-Status noch anzeigen.
+            fwProgressBar.isHidden = false
+            fwProgressLabel.isHidden = false
+            fwProgressBar.isIndeterminate = false
+            fwProgressBar.stopAnimation(nil)
+            fwProgressBar.doubleValue = 100
+            fwProgressLabel.stringValue = fw.flashProgress
         } else {
             fwProgressBar.isHidden = true
             fwProgressLabel.isHidden = true
@@ -656,10 +700,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             lastUpdateLabel.stringValue = "Letztes Update an ESP32: —"
         }
 
-        // Flash-Fortschritts-Text live nachziehen
+        // Flash-Fortschritts-Text live nachziehen (Phase-Label + Write-%)
         let fw = FirmwareManager.shared
         if fw.isFlashing {
             fwProgressLabel.stringValue = fw.flashProgress
+            if case .writing = fw.flashPhase {
+                fwProgressBar.isIndeterminate = false
+                fwProgressBar.doubleValue = Double(fw.flashWritePercent)
+            }
         }
     }
 
@@ -733,6 +781,126 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         monitor?.sendOrientationToESP32()
     }
 
+    /// Füllt das Zeitzonen-Popup mit „Automatisch (macOS)", der IANA-Kurzliste
+    /// und einem „Weitere …"-Eintrag. Wenn die aktuell gewählte TZ nicht in der
+    /// Kurzliste steckt, wird sie als zusätzliche Zeile vor „Weitere …"
+    /// eingeblendet, damit der User sieht, was aktiv ist.
+    private func rebuildTimeZonePopup() {
+        timeZonePopup.removeAllItems()
+        let current = Settings.shared.selectedTimeZone
+        for id in kTimeZonePopupIdentifiers {
+            timeZonePopup.addItem(withTitle: Self.titleForTimeZone(id))
+        }
+        // Custom-Eintrag, falls gewählter Wert nicht in der Kurzliste ist.
+        if current != "auto" && !kTimeZonePopupIdentifiers.contains(current) {
+            timeZonePopup.addItem(withTitle: Self.titleForTimeZone(current))
+        }
+        timeZonePopup.menu?.addItem(.separator())
+        timeZonePopup.addItem(withTitle: "Weitere …")
+
+        // Auswahl setzen
+        if let idx = kTimeZonePopupIdentifiers.firstIndex(of: current) {
+            timeZonePopup.selectItem(at: idx)
+        } else if current != "auto" {
+            // Custom-Zeile liegt direkt hinter der Kurzliste.
+            timeZonePopup.selectItem(at: kTimeZonePopupIdentifiers.count)
+        } else {
+            timeZonePopup.selectItem(at: 0)
+        }
+    }
+
+    private static func titleForTimeZone(_ id: String) -> String {
+        if id == "auto" {
+            let current = TimeZone.current.identifier
+            return "Automatisch (macOS) — \(current)"
+        }
+        return id
+    }
+
+    @objc private func timeZoneChosen() {
+        let idx = timeZonePopup.indexOfSelectedItem
+        let lastRegularIdx = kTimeZonePopupIdentifiers.count // ggf. Custom-Zeile
+        let hasCustomRow = Settings.shared.selectedTimeZone != "auto" &&
+            !kTimeZonePopupIdentifiers.contains(Settings.shared.selectedTimeZone)
+        let weitereIdx: Int = hasCustomRow
+            ? lastRegularIdx + 2   // +Custom +Separator → „Weitere …"
+            : lastRegularIdx + 1   // +Separator → „Weitere …"
+
+        if idx == weitereIdx {
+            // Modal mit allen IANA-Zonen.
+            presentTimeZonePicker()
+            return
+        }
+        if idx < kTimeZonePopupIdentifiers.count {
+            Settings.shared.selectedTimeZone = kTimeZonePopupIdentifiers[idx]
+        } else if hasCustomRow && idx == lastRegularIdx {
+            // Custom-Zeile — Auswahl bleibt wie sie war, keine Änderung nötig.
+        }
+        // TZ-Änderung: sofort neuen Snapshot mit neuem displayTime senden.
+        monitor?.sendUsageSnapshotForTimeZoneChange()
+        update()
+    }
+
+    private func presentTimeZonePicker() {
+        let alert = NSAlert()
+        alert.messageText = "Zeitzone wählen"
+        alert.informativeText = "Filter und Auswahl — die ausgewählte IANA-Zone wird für die Display-Uhr und Reset-Berechnungen genutzt."
+        alert.alertStyle = .informational
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 260))
+        let search = NSSearchField(frame: NSRect(x: 0, y: 230, width: 360, height: 24))
+        search.placeholderString = "Filter (z. B. Berlin, New_York, UTC)"
+        container.addSubview(search)
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 220))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let tableView = NSTableView(frame: scroll.bounds)
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("tz"))
+        column.title = "IANA"
+        column.width = 340
+        tableView.addTableColumn(column)
+        tableView.headerView = nil
+        let datasource = TimeZoneTableSource()
+        datasource.allIdentifiers = TimeZone.knownTimeZoneIdentifiers.sorted()
+        datasource.filtered = datasource.allIdentifiers
+        tableView.dataSource = datasource
+        tableView.delegate = datasource
+        datasource.tableView = tableView
+
+        // Live-Filter verdrahten
+        search.target = datasource
+        search.action = #selector(TimeZoneTableSource.searchChanged(_:))
+        datasource.searchField = search
+
+        scroll.documentView = tableView
+        container.addSubview(scroll)
+        alert.accessoryView = container
+        alert.addButton(withTitle: "Übernehmen")
+        alert.addButton(withTitle: "Abbrechen")
+
+        // Vorauswahl setzen
+        let current = Settings.shared.selectedTimeZone
+        if current != "auto", let idx = datasource.filtered.firstIndex(of: current) {
+            tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
+            tableView.scrollRowToVisible(idx)
+        }
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let row = tableView.selectedRow
+            if row >= 0 && row < datasource.filtered.count {
+                Settings.shared.selectedTimeZone = datasource.filtered[row]
+                rebuildTimeZonePopup()
+                monitor?.sendUsageSnapshotForTimeZoneChange()
+                update()
+                return
+            }
+        }
+        // Abbruch oder keine Auswahl → Popup auf aktuellen Wert resetten.
+        rebuildTimeZonePopup()
+    }
+
     @objc private func languageChosen() {
         let langs = ["de", "en"]
         let i = languagePopup.indexOfSelectedItem
@@ -765,6 +933,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         Weekly-Werte per USB-Serial an das ESP32-Display.
 
         Repo: github.com/tobymarks/esp32-ai-monitor
+
+        © 2026 Tobias Marks
+        Chatbot icons created by LAFS — Flaticon
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
@@ -773,5 +944,54 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc fileprivate func quitApp() {
         NSApplication.shared.terminate(nil)
+    }
+}
+
+// ============================================================
+// MARK: - TimeZone Picker Datasource
+// ============================================================
+
+/// Datasource + Delegate für den „Weitere …"-TZ-Picker. Hält die komplette
+/// IANA-Liste und ein Live-Filterergebnis. Das Search-Field triggert
+/// `searchChanged(_:)`, reloadData + (falls zutreffend) Auswahl-Scrolling.
+private final class TimeZoneTableSource: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    var allIdentifiers: [String] = []
+    var filtered: [String] = []
+    weak var tableView: NSTableView?
+    weak var searchField: NSSearchField?
+
+    @objc func searchChanged(_ sender: NSSearchField) {
+        let query = sender.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
+        if query.isEmpty {
+            filtered = allIdentifiers
+        } else {
+            filtered = allIdentifiers.filter { $0.lowercased().contains(query) }
+        }
+        tableView?.reloadData()
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { filtered.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let identifier = NSUserInterfaceItemIdentifier("tzCell")
+        let cell: NSTableCellView
+        if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView {
+            cell = reused
+        } else {
+            cell = NSTableCellView()
+            cell.identifier = identifier
+            let tf = NSTextField(labelWithString: "")
+            tf.translatesAutoresizingMaskIntoConstraints = false
+            tf.font = NSFont.systemFont(ofSize: 12)
+            cell.addSubview(tf)
+            cell.textField = tf
+            NSLayoutConstraint.activate([
+                tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+        }
+        cell.textField?.stringValue = filtered[row]
+        return cell
     }
 }
