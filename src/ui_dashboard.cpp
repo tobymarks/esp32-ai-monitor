@@ -157,7 +157,7 @@ static int16_t create_usage_block(
     *out_reset_lbl = lv_label_create(parent);
     lv_label_set_text(*out_reset_lbl, "Resets in --");
     lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_pos(*out_reset_lbl, 0, y_start + 94);
     lv_obj_set_width(*out_reset_lbl, sw);
     lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -232,7 +232,7 @@ static void create_arc_block(
     *out_reset_lbl = lv_label_create(parent);
     lv_label_set_text(*out_reset_lbl, "--");
     lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_width(*out_reset_lbl, cell_w);
     lv_obj_set_pos(*out_reset_lbl, cx - cell_w / 2, reset_y);
     lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
