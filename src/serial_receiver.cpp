@@ -19,6 +19,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <esp_mac.h>
 #include <sys/time.h>
 
 // ============================================================
@@ -158,10 +159,18 @@ static bool parse_command(JsonDocument &doc) {
         }
         const char *theme = (g_config.theme == THEME_LIGHT) ? "light" : "dark";
         const char *lang = (g_config.language == LANG_EN) ? "en" : "de";
-        Serial.printf("{\"type\":\"info\",\"version\":\"%s\",\"orientation\":\"%s\","
+        // MAC (Wi-Fi STA, lowercase-Hex mit Doppelpunkten) als Device-ID fuer
+        // Per-Device-Profile in der Mac-App (ab App v1.14.0 / FW v2.10.0).
+        uint8_t mac[6] = {0};
+        esp_read_mac(mac, ESP_MAC_WIFI_STA);
+        char mac_str[18];
+        snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        Serial.printf("{\"type\":\"info\",\"version\":\"%s\",\"mac\":\"%s\","
+                      "\"orientation\":\"%s\","
                       "\"theme\":\"%s\",\"language\":\"%s\",\"brightness\":%u,"
                       "\"uptime\":%lu,\"heap\":%u}\n",
-                      APP_VERSION, orient, theme, lang,
+                      APP_VERSION, mac_str, orient, theme, lang,
                       (unsigned)g_config.brightness_pct,
                       (unsigned long)(millis() / 1000),
                       (unsigned)ESP.getFreeHeap());
