@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.11.0"
+APP_VERSION="1.11.1"
 echo "Compiling AI Monitor v${APP_VERSION}..."
 
 # Baue .app Bundle Struktur zuerst

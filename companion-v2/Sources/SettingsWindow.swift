@@ -3,9 +3,11 @@
  *
  * Ab v1.11.0: Querformat-Layout, 960×560, nicht resizable. Zwei-Spalten-Split
  * statt langer vertikaler Liste. Header mit Provider-Umschalter rechts.
- * „Über / Updates / Beenden" liegen im nativen macOS-App-Menü — falls das
- * aus irgendeinem Grund nicht erscheint, springen dezente Footer-Links ein
- * (Fallback, siehe AppDelegate + updateFooterFallback()).
+ *
+ * Ab v1.11.1: „Über AI Monitor" und „Nach Updates suchen …" dauerhaft im
+ * Footer sichtbar — der v1.11.0-Pfad ueber das native Main-Menu funktioniert
+ * unter .accessory/LSUIElement=YES nicht (macOS rendert keine System-Menueleiste
+ * fuer solche Apps). „Beenden" bleibt auf ⌘Q (kein Button im Settings-Fenster).
  */
 
 import Cocoa
@@ -201,11 +203,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         footerVersionLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(footerVersionLabel)
 
-        // Fallback-Links (versteckt, wenn das App-Menue erfolgreich montiert wurde)
+        // Ab v1.11.1 dauerhaft sichtbar — die einzigen Wege zur App-Info und
+        // zum Update-Checker, weil unter .accessory kein macOS-App-Menue rendert.
         footerAboutButton = makeLinkButton("Über AI Monitor", action: #selector(showAbout))
         footerUpdateButton = makeLinkButton("Nach Updates suchen …", action: #selector(checkAppUpdate))
-        footerAboutButton.isHidden = true
-        footerUpdateButton.isHidden = true
         container.addSubview(footerAboutButton)
         container.addSubview(footerUpdateButton)
 
@@ -237,13 +238,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             .paragraphStyle: ps,
         ])
         return b
-    }
-
-    /// Wenn das macOS-App-Menue erfolgreich mit den Menueeintraegen montiert ist,
-    /// bleiben die Footer-Buttons unsichtbar. Wenn nicht, werden sie eingeblendet.
-    func setFooterFallbackVisible(_ visible: Bool) {
-        footerAboutButton?.isHidden = !visible
-        footerUpdateButton?.isHidden = !visible
     }
 
     // MARK: - Linke Spalte
