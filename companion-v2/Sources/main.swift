@@ -28,7 +28,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.14.2"
+let kAppVersion = "1.15.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -38,7 +38,26 @@ let kSerialScanInterval: TimeInterval = 3
 let kLegacyUserDefaultsSuite = "de.aimonitor.app"
 let kGitHubRepo = "tobymarks/esp32-ai-monitor"
 let kGitHubReleasesAPI = "https://api.github.com/repos/tobymarks/esp32-ai-monitor/releases"
+/// Default-Asset (ILI9341-Variante). Wird als Fallback genutzt, wenn der
+/// Release keine variantenspezifischen Assets enthaelt (Releases < v2.10.0).
 let kFirmwareAssetName = "ai-monitor.bin"
+
+/// Mapping Display-Controller-ID → Release-Asset-Name.
+/// Ab App v1.15.0 / FW v2.10.1: Der User waehlt im Flash-Dialog die Board-
+/// Variante (ILI9341 vs. ST7789). Das Dictionary ist bewusst ein simples
+/// String→String-Mapping, damit kuenftige Boards (S3-Varianten, 3.5"-
+/// Displays) ohne Code-Aenderung ergaenzbar sind — einfach neuen Key
+/// hinzufuegen.
+let kFirmwareAssetByDisplay: [String: String] = [
+    "ili9341": "ai-monitor.bin",
+    "st7789":  "ai-monitor-st7789.bin",
+]
+
+/// Display-Variante: stabile String-IDs. Passen zu den FW-Werten im
+/// get_info-`display`-Feld (ab FW v2.10.1).
+let kDisplayVariantILI9341 = "ili9341"
+let kDisplayVariantST7789  = "st7789"
+let kDisplayVariantDefault = kDisplayVariantILI9341
 let kFirmwareCheckInterval: TimeInterval = 6 * 3600
 let kFlashBaudRate = 460800
 let kAppAssetName = "AIMonitor.zip"
@@ -90,6 +109,13 @@ struct Strings {
     let errorPrefix: String
     let firmwareCurrent: String
     let firmwareAvailable: String
+    // --- Flash-Dialog (ab App v1.15.0) ---
+    let flashDialogTitle: String
+    let flashDialogBoardVariant: String
+    let flashDialogVariantStandard: String
+    let flashDialogVariantAlternative: String
+    let flashDialogVariantHint: String
+    let flashDialogStart: String
 }
 
 let stringsDE = Strings(
@@ -125,7 +151,13 @@ let stringsDE = Strings(
     flashFailedPrefix: "Flash fehlgeschlagen:",
     errorPrefix: "Fehler:",
     firmwareCurrent: "(aktuell)",
-    firmwareAvailable: "verfügbar"
+    firmwareAvailable: "verfügbar",
+    flashDialogTitle: "Firmware flashen",
+    flashDialogBoardVariant: "Board-Variante",
+    flashDialogVariantStandard: "Standard (ILI9341) — CYD-2432S028R",
+    flashDialogVariantAlternative: "Alternative (ST7789) — CYD-2432S028",
+    flashDialogVariantHint: "Im Zweifel zuerst Standard probieren. Wenn das Display nach dem Flash rauscht oder gekippt ist, die Alternative wählen.",
+    flashDialogStart: "Flashen starten"
 )
 
 let stringsEN = Strings(
@@ -161,7 +193,13 @@ let stringsEN = Strings(
     flashFailedPrefix: "Flash failed:",
     errorPrefix: "Error:",
     firmwareCurrent: "(current)",
-    firmwareAvailable: "available"
+    firmwareAvailable: "available",
+    flashDialogTitle: "Flash firmware",
+    flashDialogBoardVariant: "Board variant",
+    flashDialogVariantStandard: "Standard (ILI9341) — CYD-2432S028R",
+    flashDialogVariantAlternative: "Alternative (ST7789) — CYD-2432S028",
+    flashDialogVariantHint: "When in doubt, try Standard first. If the display shows noise or looks wrong after flashing, pick the alternative.",
+    flashDialogStart: "Start flashing"
 )
 
 func S() -> Strings {
@@ -272,19 +310,29 @@ struct DeviceProfile: Codable {
     var language: String
     /// 5..100
     var brightness: Int
+    /// Display-Controller-Variante: "ili9341" | "st7789" | nil (unbekannt).
+    /// Ab App v1.15.0: Wird im Flash-Dialog vorausgewaehlt (Standard vs.
+    /// Alternative). Ab FW v2.10.1 wird das Feld nach einem erfolgreichen
+    /// Flash aus dem `display`-Feld des get_info-Response uebernommen.
+    /// Geraete mit FW < v2.10.1 behalten `nil` — Fallback ist die zuletzt
+    /// manuell gewaehlte Variante des Users. Codable-optional, damit alte
+    /// serialisierte Profile ohne Migration weiterhin decodieren.
+    var displayVariant: String?
 
     static func defaultFor(mac: String, friendlyName: String,
                            theme: String = "system",
                            orientation: String = "portrait",
                            language: String = "de",
-                           brightness: Int = 80) -> DeviceProfile {
+                           brightness: Int = 80,
+                           displayVariant: String? = nil) -> DeviceProfile {
         return DeviceProfile(
             mac: mac,
             friendlyName: friendlyName,
             theme: theme,
             orientation: orientation,
             language: language,
-            brightness: brightness
+            brightness: brightness,
+            displayVariant: displayVariant
         )
     }
 }
@@ -588,7 +636,8 @@ class Settings {
             theme: theme,
             orientation: orientation,
             language: language,
-            brightness: brightness
+            brightness: brightness,
+            displayVariant: nil
         )
         DeviceRegistry.shared.save(legacyProfile)
 
@@ -963,7 +1012,36 @@ class FirmwareManager {
     }
 
     func localBinPath(for version: String) -> String {
-        return (firmwareDir as NSString).appendingPathComponent("ai-monitor-\(version).bin")
+        return localBinPath(for: version, variant: kDisplayVariantDefault)
+    }
+
+    /// Variantenspezifischer Cache-Pfad pro Release-Tag. Ab v1.15.0: die App
+    /// laed beide Varianten unterschiedlich ab, damit ein Umschalten im
+    /// Flash-Dialog keinen erneuten Download von 0 erzwingt.
+    func localBinPath(for version: String, variant: String) -> String {
+        let assetName = kFirmwareAssetByDisplay[variant] ?? kFirmwareAssetName
+        // Dateiname: z. B. "ai-monitor-v2.10.1.bin" oder
+        // "ai-monitor-st7789-v2.10.1.bin". Base ohne `.bin`-Suffix.
+        let base: String = {
+            if assetName.hasSuffix(".bin") {
+                return String(assetName.dropLast(4))
+            }
+            return assetName
+        }()
+        return (firmwareDir as NSString).appendingPathComponent("\(base)-\(version).bin")
+    }
+
+    /// Prueft, ob das Cache-File fuer (version, variant) lokal liegt und setzt
+    /// `downloadedBinPath` entsprechend. Wird nach jedem Variant-Switch im
+    /// Flash-Dialog aufgerufen. Liefert `true` wenn bereits heruntergeladen.
+    @discardableResult
+    func checkCachedBin(version: String, variant: String) -> Bool {
+        let path = localBinPath(for: version, variant: variant)
+        if FileManager.default.fileExists(atPath: path) {
+            downloadedBinPath = path
+            return true
+        }
+        return false
     }
 
     func resolveEsptool() -> (python: String, mode: String)? {
@@ -1031,9 +1109,25 @@ class FirmwareManager {
     }
 
     func downloadFirmware(completion: @escaping (Bool, String?) -> Void) {
+        // Legacy-Aufruf: Default-Variante (ILI9341). Ab v1.15.0 laeuft der
+        // Flash-Dialog ueber `downloadFirmware(variant:)`, der Pfad hier
+        // bleibt kompatibel.
+        downloadFirmware(variant: kDisplayVariantDefault, completion: completion)
+    }
+
+    /// Variantenspezifischer Download. Zieht das passende Release-Asset
+    /// laut `kFirmwareAssetByDisplay` und cached per-Variant.
+    /// Fallback: wenn das variantenspezifische Asset nicht im Release liegt
+    /// (z. B. alte Releases < v2.10.0), ziehen wir `kFirmwareAssetName` —
+    /// dann aber als Hinweis im `completion`-Text, damit der Dialog den
+    /// User warnen kann.
+    func downloadFirmware(variant: String, completion: @escaping (Bool, String?) -> Void) {
         guard let release = latestRelease else { completion(false, S().noReleaseFound); return }
-        guard let asset = release.assets.first(where: { $0.name == kFirmwareAssetName }) else {
-            completion(false, "No \(kFirmwareAssetName) in release \(release.tag_name)"); return
+        let requestedAsset = kFirmwareAssetByDisplay[variant] ?? kFirmwareAssetName
+        let asset: GitHubAsset? = release.assets.first(where: { $0.name == requestedAsset })
+            ?? release.assets.first(where: { $0.name == kFirmwareAssetName })
+        guard let asset = asset else {
+            completion(false, "Kein \(requestedAsset) im Release \(release.tag_name)"); return
         }
         guard let url = URL(string: asset.browser_download_url) else {
             completion(false, "Invalid download URL"); return
@@ -1043,7 +1137,7 @@ class FirmwareManager {
         } catch {
             completion(false, "Cannot create firmware directory: \(error.localizedDescription)"); return
         }
-        let destPath = localBinPath(for: release.tag_name)
+        let destPath = localBinPath(for: release.tag_name, variant: variant)
         if FileManager.default.fileExists(atPath: destPath) {
             downloadedBinPath = destPath
             completion(true, nil); return
@@ -1419,8 +1513,16 @@ class SerialPortManager {
                         ? kLegacyDeviceMAC
                         : reportedMAC!
                     self.state = .connected
+                    // Ab FW v2.10.1: `display`-Feld liefert die
+                    // Board-Variante (ili9341|st7789). Wird ins Profil
+                    // uebernommen, damit der Flash-Dialog die Variante
+                    // beim naechsten Flash korrekt vorwaehlt.
+                    let reportedDisplay = (json["display"] as? String)?
+                        .lowercased()
+                        .trimmingCharacters(in: .whitespaces)
                     self.resolveDeviceProfile(forMAC: effectiveMAC,
-                                             reportedBrightness: json["brightness"] as? Int)
+                                             reportedBrightness: json["brightness"] as? Int,
+                                             reportedDisplay: reportedDisplay)
                     handled = true
                     break
                 }
@@ -1479,8 +1581,12 @@ class SerialPortManager {
                     : reportedMAC!
                 self.state = .connected
                 NSLog("[Serial] Late info-response received — upgrading foreignFirmware → connected (v%@)", version)
+                let reportedDisplay = (json["display"] as? String)?
+                    .lowercased()
+                    .trimmingCharacters(in: .whitespaces)
                 self.resolveDeviceProfile(forMAC: effectiveMAC,
-                                         reportedBrightness: json["brightness"] as? Int)
+                                         reportedBrightness: json["brightness"] as? Int,
+                                         reportedDisplay: reportedDisplay)
                 DispatchQueue.main.async { self.onConnect?() }
                 return
             }
@@ -1502,19 +1608,34 @@ class SerialPortManager {
     /// Setzt am Ende `currentMAC` auf das gefundene/neue Profil.
     /// `reportedBrightness` (FW v2.8.0+) wird in das Profil geschrieben, damit
     /// der Slider beim Öffnen des Settings-Fensters den echten ESP32-Stand zeigt.
-    fileprivate func resolveDeviceProfile(forMAC mac: String, reportedBrightness: Int?) {
+    fileprivate func resolveDeviceProfile(forMAC mac: String,
+                                          reportedBrightness: Int?,
+                                          reportedDisplay: String?) {
         let registry = DeviceRegistry.shared
+        // Nur bekannte Varianten akzeptieren; "unknown" / Fremdwerte ignorieren,
+        // damit ein altes Profil mit gutem Wert nicht ueberschrieben wird.
+        let validDisplay: String? = {
+            guard let d = reportedDisplay, !d.isEmpty else { return nil }
+            return kFirmwareAssetByDisplay.keys.contains(d) ? d : nil
+        }()
 
         if var existing = registry.profile(forMAC: mac) {
-            // Profil bereits bekannt — nur Brightness nachziehen und `currentMAC`
-            // auf das Profil setzen, damit Settings-Reads/Writes auf dem
-            // richtigen Objekt landen.
+            // Profil bereits bekannt — Brightness + Display-Variante nachziehen
+            // und `currentMAC` auf das Profil setzen, damit Settings-Reads/
+            // -Writes auf dem richtigen Objekt landen.
+            var changed = false
             if let br = reportedBrightness, br != existing.brightness {
                 existing.brightness = br
-                registry.save(existing)
+                changed = true
             }
+            if let d = validDisplay, d != existing.displayVariant {
+                existing.displayVariant = d
+                changed = true
+            }
+            if changed { registry.save(existing) }
             registry.currentMAC = mac
-            NSLog("[Device] Matched existing profile: %@ (mac=%@)", existing.friendlyName, mac)
+            NSLog("[Device] Matched existing profile: %@ (mac=%@, display=%@)",
+                  existing.friendlyName, mac, existing.displayVariant ?? "nil")
             return
         }
 
@@ -1529,11 +1650,12 @@ class SerialPortManager {
             var moved = legacy
             moved.mac = mac
             if let br = reportedBrightness { moved.brightness = br }
+            if let d = validDisplay { moved.displayVariant = d }
             registry.save(moved)
             registry.remove(mac: kLegacyDeviceMAC)
             registry.currentMAC = mac
-            NSLog("[Device] Migrated legacy profile to real MAC: %@ → %@ (mac=%@)",
-                  kLegacyDeviceMAC, moved.friendlyName, mac)
+            NSLog("[Device] Migrated legacy profile to real MAC: %@ → %@ (mac=%@, display=%@)",
+                  kLegacyDeviceMAC, moved.friendlyName, mac, moved.displayVariant ?? "nil")
             return
         }
 
@@ -1549,12 +1671,14 @@ class SerialPortManager {
             theme: template?.theme ?? "system",
             orientation: template?.orientation ?? "portrait",
             language: template?.language ?? "de",
-            brightness: reportedBrightness ?? template?.brightness ?? 80
+            brightness: reportedBrightness ?? template?.brightness ?? 80,
+            displayVariant: validDisplay
         )
         if let br = reportedBrightness { fresh.brightness = br }
         registry.save(fresh)
         registry.currentMAC = mac
-        NSLog("[Device] Created new profile: '%@' (mac=%@)", fresh.friendlyName, mac)
+        NSLog("[Device] Created new profile: '%@' (mac=%@, display=%@)",
+              fresh.friendlyName, mac, fresh.displayVariant ?? "nil")
     }
 
     func send(data: Data) -> Bool {
@@ -1947,41 +2071,83 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // ---- Actions, vom Settings-Fenster aufgerufen ----
 
+    /// Ab App v1.15.0: Flash-Dialog mit Board-Variant-Auswahl.
+    /// Ablauf:
+    ///   1. Release muss bekannt sein → sonst Warn-Alert.
+    ///   2. Port muss verbunden sein → sonst Warn-Alert.
+    ///   3. Default-Variante bestimmen: aus `DeviceProfile.displayVariant` des
+    ///      aktuell verbundenen Geraets (falls vorhanden), sonst Standard
+    ///      (ILI9341). Bei `.foreignFirmware` kein MAC → immer Standard.
+    ///   4. Dialog modal zeigen. User waehlt Variante → „Flashen starten".
+    ///   5. Variantenspezifisches Asset herunterladen (falls nicht gecached),
+    ///      Variant im Profil persistieren, flashen.
     func runFirmwareFlash() {
         let fw = FirmwareManager.shared
-        if fw.downloadedBinPath == nil {
-            guard fw.latestRelease != nil else {
-                alert(title: S().noReleaseFound, info: S().couldNotLoadRelease, style: .warning)
-                return
-            }
-            fw.downloadFirmware { [weak self] success, error in
-                DispatchQueue.main.async {
-                    if success { self?.runFirmwareFlash() }
-                    else { self?.alert(title: S().downloadFailed, info: error ?? "Unknown error", style: .warning) }
-                }
-            }
+        guard fw.latestRelease != nil else {
+            alert(title: S().noReleaseFound, info: S().couldNotLoadRelease, style: .warning)
             return
         }
         guard let port = monitor.serialPort.connectedPort else {
             alert(title: S().noESP32Connected, info: S().connectESP32, style: .warning); return
         }
+
+        // Default-Variante bestimmen — aus Profil (falls bekannt), sonst ILI9341.
+        let defaultVariant: String = DeviceRegistry.shared.currentProfile()?.displayVariant
+            ?? kDisplayVariantDefault
+
         let version = fw.latestRelease?.tag_name ?? fw.installedVersionDisplay
         let shortPort = (port as NSString).lastPathComponent
-        let confirm = NSAlert()
-        confirm.messageText = S().flashFirmwareQuestion
-        confirm.informativeText = "ESP32 \(shortPort) — Firmware \(version)"
-        confirm.alertStyle = .warning
-        confirm.addButton(withTitle: S().flash)
-        confirm.addButton(withTitle: S().cancel)
-        let response = confirm.runModal()
-        guard response == .alertFirstButtonReturn else { return }
+        let info = "ESP32 \(shortPort) — Firmware \(version)"
 
-        monitor.serialPort.stopScanning()
-        fw.flashFirmware(port: port) { [weak self] success, message in
+        FlashDialogController.presentModal(info: info,
+                                           defaultVariant: defaultVariant) { [weak self] chosenVariant in
+            guard let self = self else { return }
+            guard let variant = chosenVariant else { return }  // Abbrechen
+            self.performFlash(port: port, variant: variant)
+        }
+    }
+
+    /// Eigentliches Flashen inkl. Download des variantenspezifischen Assets.
+    /// Ausgelagert aus `runFirmwareFlash`, damit der Dialog-Callback klar bleibt.
+    fileprivate func performFlash(port: String, variant: String) {
+        let fw = FirmwareManager.shared
+
+        // Variant im aktiven Profil persistieren (falls Gerät bekannt ist),
+        // damit der Dialog beim naechsten Flash dieselbe Wahl vorauswaehlt.
+        // Bei `.foreignFirmware` haben wir keine aktuell gueltige currentMAC-
+        // Zuordnung fuer DAS Geraet, das geflasht wird — dort schreibt
+        // `resolveDeviceProfile` nach dem naechsten get_info dann den
+        // finalen Display-Wert aus der FW. Die User-Wahl ist der Fallback,
+        // falls die FW das `display`-Feld nicht liefert (alte FW < 2.10.1).
+        DeviceRegistry.shared.updateCurrent { profile in
+            profile.displayVariant = variant
+        }
+
+        let proceed: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            self.monitor.serialPort.stopScanning()
+            fw.flashFirmware(port: port) { [weak self] success, message in
+                DispatchQueue.main.async {
+                    self?.monitor.serialPort.startScanning()
+                    self?.alert(title: success ? S().flashSuccess : S().flashFailed,
+                                info: message,
+                                style: success ? .informational : .critical)
+                }
+            }
+        }
+
+        // Variantenspezifischer Cache-Check + Download falls noetig.
+        if let release = fw.latestRelease,
+           fw.checkCachedBin(version: release.tag_name, variant: variant) {
+            proceed(); return
+        }
+
+        fw.downloadFirmware(variant: variant) { [weak self] success, error in
             DispatchQueue.main.async {
-                self?.monitor.serialPort.startScanning()
-                self?.alert(title: success ? S().flashSuccess : S().flashFailed, info: message,
-                            style: success ? .informational : .critical)
+                if success { proceed() }
+                else { self?.alert(title: S().downloadFailed,
+                                   info: error ?? "Unknown error",
+                                   style: .warning) }
             }
         }
     }

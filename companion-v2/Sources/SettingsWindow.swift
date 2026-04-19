@@ -1269,3 +1269,161 @@ private final class TimeZoneTableSource: NSObject, NSTableViewDataSource, NSTabl
         return cell
     }
 }
+
+// ============================================================
+// MARK: - Flash-Dialog (ab App v1.15.0)
+// ============================================================
+
+/// Modaler Dialog fuer die Board-Variant-Auswahl vor dem Firmware-Flash.
+/// Ersetzt ab v1.15.0 den simplen NSAlert-Bestaetigungsdialog, weil die
+/// CYD-Revisionen (ILI9341 vs. ST7789) am Produktnamen nicht unterscheidbar
+/// sind. Der Dialog wird per `presentModal(info:defaultVariant:completion:)`
+/// angezeigt und liefert die gewaehlte Variante (oder `nil` bei Abbruch).
+final class FlashDialogController: NSWindowController {
+
+    /// Einstiegspunkt. Blockiert nicht (runModal wird selbst aufgerufen).
+    /// `defaultVariant` waehlt den Radio-Button vor (aus DeviceProfile oder
+    /// Fallback ILI9341). `completion` wird mit der gewaehlten Variante
+    /// aufgerufen oder mit `nil` bei Abbruch.
+    static func presentModal(info: String,
+                             defaultVariant: String,
+                             completion: @escaping (String?) -> Void) {
+        let controller = FlashDialogController(info: info, defaultVariant: defaultVariant)
+        controller.completion = completion
+        guard let window = controller.window else { completion(nil); return }
+        // Modal gegenueber dem Settings-Fenster (falls offen), sonst
+        // standalone-Modal. runModal blockiert den Main-Thread — ok, wir
+        // kommen aus einer UI-Action.
+        window.center()
+        NSApp.runModal(for: window)
+        window.orderOut(nil)
+    }
+
+    private var completion: ((String?) -> Void)?
+    private var radioStandard: NSButton!
+    private var radioAlternative: NSButton!
+    private let defaultVariant: String
+    private let infoText: String
+
+    init(info: String, defaultVariant: String) {
+        self.infoText = info
+        self.defaultVariant = defaultVariant
+        let rect = NSRect(x: 0, y: 0, width: 460, height: 270)
+        let mask: NSWindow.StyleMask = [.titled, .closable]
+        let window = NSWindow(contentRect: rect, styleMask: mask,
+                              backing: .buffered, defer: false)
+        window.title = S().flashDialogTitle
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+        buildUI()
+    }
+
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    private func buildUI() {
+        guard let content = window?.contentView else { return }
+
+        let title = NSTextField(labelWithString: S().flashDialogTitle)
+        title.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(title)
+
+        let infoLabel = NSTextField(labelWithString: infoText)
+        infoLabel.font = NSFont.systemFont(ofSize: 12)
+        infoLabel.textColor = .secondaryLabelColor
+        infoLabel.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(infoLabel)
+
+        let groupLabel = NSTextField(labelWithString: S().flashDialogBoardVariant)
+        groupLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        groupLabel.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(groupLabel)
+
+        radioStandard = NSButton(radioButtonWithTitle: S().flashDialogVariantStandard,
+                                 target: self, action: #selector(variantChanged(_:)))
+        radioStandard.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(radioStandard)
+
+        radioAlternative = NSButton(radioButtonWithTitle: S().flashDialogVariantAlternative,
+                                    target: self, action: #selector(variantChanged(_:)))
+        radioAlternative.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(radioAlternative)
+
+        // Default-Auswahl setzen.
+        if defaultVariant == kDisplayVariantST7789 {
+            radioAlternative.state = .on
+        } else {
+            radioStandard.state = .on
+        }
+
+        let hint = NSTextField(wrappingLabelWithString: S().flashDialogVariantHint)
+        hint.font = NSFont.systemFont(ofSize: 11)
+        hint.textColor = .tertiaryLabelColor
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(hint)
+
+        let startBtn = NSButton(title: S().flashDialogStart, target: self, action: #selector(onStart))
+        startBtn.bezelStyle = .rounded
+        startBtn.keyEquivalent = "\r"  // Enter
+        startBtn.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(startBtn)
+
+        let cancelBtn = NSButton(title: S().cancel, target: self, action: #selector(onCancel))
+        cancelBtn.bezelStyle = .rounded
+        cancelBtn.keyEquivalent = "\u{1b}"  // Escape
+        cancelBtn.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(cancelBtn)
+
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+            title.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            title.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            infoLabel.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
+            infoLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            infoLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            groupLabel.topAnchor.constraint(equalTo: infoLabel.bottomAnchor, constant: 18),
+            groupLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+
+            radioStandard.topAnchor.constraint(equalTo: groupLabel.bottomAnchor, constant: 8),
+            radioStandard.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            radioStandard.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            radioAlternative.topAnchor.constraint(equalTo: radioStandard.bottomAnchor, constant: 6),
+            radioAlternative.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            radioAlternative.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            hint.topAnchor.constraint(equalTo: radioAlternative.bottomAnchor, constant: 12),
+            hint.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            hint.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            startBtn.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
+            startBtn.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            cancelBtn.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
+            cancelBtn.trailingAnchor.constraint(equalTo: startBtn.leadingAnchor, constant: -10),
+        ])
+    }
+
+    @objc private func variantChanged(_ sender: NSButton) {
+        // Radio-Group-Mutex: NSButton als radioButtonWithTitle haelt das
+        // Mutex nur, wenn alle Buttons dieselbe `action` haben — was hier
+        // der Fall ist.
+        _ = sender
+    }
+
+    @objc private func onStart() {
+        let chosen: String = (radioAlternative.state == .on)
+            ? kDisplayVariantST7789 : kDisplayVariantILI9341
+        NSApp.stopModal()
+        completion?(chosen)
+        completion = nil
+    }
+
+    @objc private func onCancel() {
+        NSApp.stopModal()
+        completion?(nil)
+        completion = nil
+    }
+}
