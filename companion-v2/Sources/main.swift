@@ -28,7 +28,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.14.1"
+let kAppVersion = "1.14.2"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -1244,6 +1244,26 @@ class FirmwareManager {
 // MARK: - Serial Port Manager
 // ============================================================
 
+/// Ab v1.14.2: Expliziter Lebenszyklus der USB-Serial-Verbindung. Ersetzt das
+/// implizite „verbunden == antwortet" der Vorgaenger. Wichtig fuer Geraete mit
+/// Fremd-Firmware (z. B. Hersteller-Vorschau-FW auf CYD), die zwar den
+/// USB-CDC-Port oeffnen, aber auf `get_info` nicht antworten — fuer die
+/// Display-Settings/Profil-Zuordnung liefen sonst cache-basierte Fehlwerte.
+///
+/// Transitions:
+///   disconnected → probing           (Port geoeffnet, `get_info` gesendet)
+///   probing      → connected         (parsebare info-Response, ggf. mit MAC)
+///   probing      → foreignFirmware   (5s-Timeout oder unparsebare Antwort)
+///   foreignFirmware → connected      (seltene Spaet-Response waehrend
+///                                     weiterhin offener Session)
+///   *            → disconnected      (Port verschwunden / disconnect())
+enum DeviceConnectionState {
+    case disconnected
+    case probing
+    case connected
+    case foreignFirmware
+}
+
 class SerialPortManager {
     private var fileDescriptor: Int32 = -1
     private(set) var connectedPort: String?
@@ -1254,8 +1274,22 @@ class SerialPortManager {
     // v1.9.0: auf 1 s reduziert, da v2.8.0-Firmware orientation/theme ohne Reboot
     // handhabt und reale Reconnects nur nach Flash oder Hard-Reset auftreten.
     private let kReconnectBlockWindow: TimeInterval = 1
+    /// Hartes Response-Deadline fuer `get_info` nach Connect. Bei Fremd-FW
+    /// (keine AI-Monitor-Firmware) bleibt die UART stumm — wir muessen den
+    /// Probe abbrechen, um nicht mit Cache-Werten fremde Geraete zu
+    /// ueberschreiben. 5 s deckt auch langsamere CYD-Klone ab.
+    private let kGetInfoTimeout: TimeInterval = 5
     var onConnect: (() -> Void)?
     var deviceFirmwareVersion: String?
+
+    /// Ab v1.14.2: Lebenszyklus-Status der aktuellen Verbindung. Die UI (und
+    /// alle `set_*`-Sends) muessen hier draufhoeren, nicht nur auf `isConnected`.
+    private(set) var state: DeviceConnectionState = .disconnected
+
+    /// `true` nur, wenn eine vollstaendige `get_info`-Handshake lief und das
+    /// Geraet als AI-Monitor-Firmware identifiziert wurde. Ersatz fuer
+    /// alle Push-Gates, die frueher auf `isConnected` standen.
+    var isReadyForCommands: Bool { state == .connected }
 
     var isConnected: Bool { fileDescriptor >= 0 }
 
@@ -1337,7 +1371,8 @@ class SerialPortManager {
 
         fileDescriptor = fd
         connectedPort = port
-        NSLog("[Serial] Connected to %@ at 115200 baud", port)
+        state = .probing
+        NSLog("[Serial] Connected to %@ at 115200 baud (state=probing)", port)
 
         let newline: [UInt8] = [0x0A]
         newline.withUnsafeBufferPointer { buf in _ = Darwin.write(fd, buf.baseAddress!, 1) }
@@ -1347,42 +1382,108 @@ class SerialPortManager {
             guard let self = self, self.fileDescriptor >= 0 else { return }
             self.drainInput()
             let cmd = "{\"cmd\":\"get_info\"}\n"
-            if let cmdData = cmd.data(using: .utf8) {
-                let writeResult = cmdData.withUnsafeBytes { rawBuffer -> Int in
-                    guard let ptr = rawBuffer.baseAddress else { return -1 }
-                    return Darwin.write(self.fileDescriptor, ptr, rawBuffer.count)
-                }
-                NSLog("[Serial] Sent get_info (%d bytes)", writeResult)
-                if writeResult > 0 {
-                    for _ in 0..<5 {
-                        guard let line = self.readLine(timeout: 2.0) else { break }
-                        NSLog("[Serial] read: %@", line)
-                        guard line.hasPrefix("{") else { continue }
-                        if let jsonData = line.data(using: .utf8),
-                           let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                           let type = json["type"] as? String, type == "info",
-                           let version = json["version"] as? String {
-                            self.deviceFirmwareVersion = version
-                            Settings.shared.installedFirmwareVersion = "v\(version)"
-                            NSLog("[Serial] ESP32 firmware: v%@", version)
-
-                            // Ab FW v2.10.0: MAC extrahieren und Per-Device-
-                            // Registry-Lookup machen. Alte FW (ohne `mac`):
-                            // Pseudo-MAC `kLegacyDeviceMAC` nutzen.
-                            let reportedMAC = (json["mac"] as? String)?
-                                .lowercased()
-                                .trimmingCharacters(in: .whitespaces)
-                            let effectiveMAC: String = (reportedMAC?.isEmpty ?? true)
-                                ? kLegacyDeviceMAC
-                                : reportedMAC!
-                            self.resolveDeviceProfile(forMAC: effectiveMAC,
-                                                     reportedBrightness: json["brightness"] as? Int)
-                            break
-                        }
+            guard let cmdData = cmd.data(using: .utf8) else { return }
+            let writeResult = cmdData.withUnsafeBytes { rawBuffer -> Int in
+                guard let ptr = rawBuffer.baseAddress else { return -1 }
+                return Darwin.write(self.fileDescriptor, ptr, rawBuffer.count)
+            }
+            NSLog("[Serial] Sent get_info (%d bytes)", writeResult)
+            var handled = false
+            if writeResult > 0 {
+                // Hartes Gesamt-Timeout `kGetInfoTimeout`. readLine() nutzt
+                // intern ein eigenes Deadline-Fenster; wir begrenzen die Summe.
+                let probeDeadline = Date().addingTimeInterval(self.kGetInfoTimeout)
+                while Date() < probeDeadline && self.fileDescriptor >= 0 {
+                    let remaining = probeDeadline.timeIntervalSinceNow
+                    if remaining <= 0 { break }
+                    guard let line = self.readLine(timeout: min(remaining, 1.0)) else { continue }
+                    NSLog("[Serial] read: %@", line)
+                    guard line.hasPrefix("{") else { continue }
+                    guard let jsonData = line.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                          let type = json["type"] as? String, type == "info",
+                          let version = json["version"] as? String else {
+                        continue
                     }
+                    self.deviceFirmwareVersion = version
+                    Settings.shared.installedFirmwareVersion = "v\(version)"
+                    NSLog("[Serial] ESP32 firmware: v%@ (state=connected)", version)
+
+                    // Ab FW v2.10.0: MAC extrahieren und Per-Device-
+                    // Registry-Lookup machen. Alte FW (ohne `mac`):
+                    // Pseudo-MAC `kLegacyDeviceMAC` nutzen.
+                    let reportedMAC = (json["mac"] as? String)?
+                        .lowercased()
+                        .trimmingCharacters(in: .whitespaces)
+                    let effectiveMAC: String = (reportedMAC?.isEmpty ?? true)
+                        ? kLegacyDeviceMAC
+                        : reportedMAC!
+                    self.state = .connected
+                    self.resolveDeviceProfile(forMAC: effectiveMAC,
+                                             reportedBrightness: json["brightness"] as? Int)
+                    handled = true
+                    break
                 }
             }
+
+            if !handled && self.fileDescriptor >= 0 {
+                // Kein parsebarer info-Response innerhalb `kGetInfoTimeout`
+                // erhalten → Fremd-Firmware. WICHTIG: KEIN
+                // resolveDeviceProfile, KEIN currentMAC-Update, KEINE neue
+                // Profilanlage, KEIN Legacy-Migrate. Der letzte bekannte
+                // aktive DeviceProfile-Kontext (currentMAC) bleibt
+                // unveraendert — aber das SettingsWindow zeigt in diesem
+                // State bewusst keine Profil-Werte an (siehe updateDeviceRow
+                // / UI-Gates).
+                self.state = .foreignFirmware
+                NSLog("[Serial] get_info timeout (%.1fs) — treating as foreign firmware", self.kGetInfoTimeout)
+                // Grenzfall: Fremd-FW, die spaeter doch antwortet (z. B. der
+                // User hat in der Zwischenzeit einen anderen CYD auf AI-
+                // Monitor-FW angeschlossen). Wir lauschen noch ein paar
+                // Sekunden hintergrundig — wenn ein info-Response kommt,
+                // stufen wir auf .connected hoch.
+                self.watchForLateInfoResponse()
+            }
+
             DispatchQueue.main.async { self.onConnect?() }
+        }
+    }
+
+    /// Wird nach `.foreignFirmware` einmal gestartet. Hoert maximal
+    /// `kLateResponseWindow` Sekunden auf weiteren Input — falls doch noch
+    /// eine `info`-Response reinkommt (User hat zwischendurch flashen
+    /// gestartet, oder ein Device bootet spaet), stufen wir auf
+    /// `.connected` hoch und loesen onConnect erneut aus.
+    private func watchForLateInfoResponse() {
+        let kLateResponseWindow: TimeInterval = 8
+        let probeFD = self.fileDescriptor
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            let deadline = Date().addingTimeInterval(kLateResponseWindow)
+            while Date() < deadline && self.fileDescriptor == probeFD && self.state == .foreignFirmware {
+                let remaining = deadline.timeIntervalSinceNow
+                if remaining <= 0 { break }
+                guard let line = self.readLine(timeout: min(remaining, 1.0)) else { continue }
+                guard line.hasPrefix("{") else { continue }
+                guard let jsonData = line.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                      let type = json["type"] as? String, type == "info",
+                      let version = json["version"] as? String else { continue }
+                self.deviceFirmwareVersion = version
+                Settings.shared.installedFirmwareVersion = "v\(version)"
+                let reportedMAC = (json["mac"] as? String)?
+                    .lowercased()
+                    .trimmingCharacters(in: .whitespaces)
+                let effectiveMAC: String = (reportedMAC?.isEmpty ?? true)
+                    ? kLegacyDeviceMAC
+                    : reportedMAC!
+                self.state = .connected
+                NSLog("[Serial] Late info-response received — upgrading foreignFirmware → connected (v%@)", version)
+                self.resolveDeviceProfile(forMAC: effectiveMAC,
+                                         reportedBrightness: json["brightness"] as? Int)
+                DispatchQueue.main.async { self.onConnect?() }
+                return
+            }
         }
     }
 
@@ -1390,6 +1491,7 @@ class SerialPortManager {
         if fileDescriptor >= 0 { Darwin.close(fileDescriptor); fileDescriptor = -1 }
         connectedPort = nil
         lastDisconnectAt = Date()
+        state = .disconnected
     }
 
     /// Mappt eine per `get_info` gemeldete MAC auf ein `DeviceProfile`. Legt ein
@@ -1593,7 +1695,7 @@ class UsageMonitor {
     // ---- Sende-Funktionen ----
 
     func sendThemeToESP32() {
-        guard serialPort.isConnected else { return }
+        guard serialPort.isReadyForCommands else { return }
         let mode = Settings.shared.themeMode
         let resolvedDark: Bool
         switch mode {
@@ -1611,7 +1713,7 @@ class UsageMonitor {
     }
 
     func sendLanguageToESP32() {
-        guard serialPort.isConnected else { return }
+        guard serialPort.isReadyForCommands else { return }
         let lang = Settings.shared.language
         let cmd = "{\"cmd\":\"set_language\",\"value\":\"\(lang)\"}"
         if serialPort.sendJSON(cmd) { NSLog("[Serial] Sent set_language: %@", lang) }
@@ -1619,7 +1721,7 @@ class UsageMonitor {
     }
 
     func sendOrientationToESP32() {
-        guard serialPort.isConnected else { return }
+        guard serialPort.isReadyForCommands else { return }
         let orient = Settings.shared.orientation
         let cmd = "{\"cmd\":\"set_orientation\",\"value\":\"\(orient)\"}"
         if serialPort.sendJSON(cmd) { NSLog("[Serial] Sent set_orientation: %@", orient) }
@@ -1640,7 +1742,7 @@ class UsageMonitor {
     func sendBrightnessToESP32(_ percent: Int) {
         let clamped = max(5, min(100, percent))
         Settings.shared.lastKnownBrightness = clamped
-        guard serialPort.isConnected else { return }
+        guard serialPort.isReadyForCommands else { return }
         let cmd = "{\"cmd\":\"set_brightness\",\"value\":\(clamped)}"
         if serialPort.sendJSON(cmd) { NSLog("[Serial] Sent set_brightness: %d", clamped) }
     }
@@ -1654,7 +1756,7 @@ class UsageMonitor {
     }
 
     fileprivate func sendUsageToESP32() {
-        guard serialPort.isConnected else { return }
+        guard serialPort.isReadyForCommands else { return }
         guard let entry = codexBar.lastEntry else { return }
 
         let primaryPercent = Int((entry.primary?.usedPercent ?? 0).rounded())

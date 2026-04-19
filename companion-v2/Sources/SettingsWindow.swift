@@ -568,25 +568,51 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// Aktualisiert die Geräte-Zeile basierend auf Verbindungsstatus +
     /// DeviceRegistry. Im Edit-Modus wird nichts überschrieben.
+    /// Ab v1.14.2: drei Darstellungen — `.connected` (normaler Geraetename
+    /// inkl. Edit-Button), `.foreignFirmware` (roter Warnhinweis statt Name,
+    /// kein Edit) und `.disconnected`/`.probing` (dimmed „—").
     private func updateDeviceRow() {
         guard deviceNameLabel != nil else { return }
         if isEditingDeviceName { return }
-        let connected = monitor?.serialPort.isConnected ?? false
-        if connected, let profile = DeviceRegistry.shared.currentProfile() {
-            deviceNameLabel.stringValue = profile.friendlyName
-            deviceNameLabel.textColor = .labelColor
-            deviceEditButton.isEnabled = true
-            deviceEditButton.isHidden = false
-            // Tooltip zeigt die MAC (legacy-device bei alter FW).
-            let macTip: String
-            if profile.mac == kLegacyDeviceMAC {
-                macTip = "MAC: — (Firmware < v2.10.0)"
+        let state = monitor?.serialPort.state ?? .disconnected
+        switch state {
+        case .connected:
+            if let profile = DeviceRegistry.shared.currentProfile() {
+                deviceNameLabel.stringValue = profile.friendlyName
+                deviceNameLabel.textColor = .labelColor
+                deviceEditButton.isEnabled = true
+                deviceEditButton.isHidden = false
+                let macTip: String
+                if profile.mac == kLegacyDeviceMAC {
+                    macTip = "MAC: — (Firmware < v2.10.0)"
+                } else {
+                    macTip = "MAC: \(profile.mac)"
+                }
+                deviceNameLabel.toolTip = macTip
+                deviceRow.toolTip = macTip
             } else {
-                macTip = "MAC: \(profile.mac)"
+                deviceNameLabel.stringValue = "— (kein Profil)"
+                deviceNameLabel.textColor = .tertiaryLabelColor
+                deviceEditButton.isEnabled = false
+                deviceEditButton.isHidden = true
+                deviceNameLabel.toolTip = nil
+                deviceRow.toolTip = nil
             }
-            deviceNameLabel.toolTip = macTip
-            deviceRow.toolTip = macTip
-        } else {
+        case .foreignFirmware:
+            deviceNameLabel.stringValue = "Fremde Firmware — bitte flashen"
+            deviceNameLabel.textColor = .systemRed
+            deviceEditButton.isEnabled = false
+            deviceEditButton.isHidden = true
+            deviceNameLabel.toolTip = "Dieses ESP32-Geraet antwortet nicht auf get_info und hat vermutlich keine AI-Monitor-Firmware."
+            deviceRow.toolTip = deviceNameLabel.toolTip
+        case .probing:
+            deviceNameLabel.stringValue = "— (Geraete-Handshake …)"
+            deviceNameLabel.textColor = .secondaryLabelColor
+            deviceEditButton.isEnabled = false
+            deviceEditButton.isHidden = true
+            deviceNameLabel.toolTip = nil
+            deviceRow.toolTip = nil
+        case .disconnected:
             deviceNameLabel.stringValue = "— (nicht verbunden)"
             deviceNameLabel.textColor = .tertiaryLabelColor
             deviceEditButton.isEnabled = false
@@ -594,6 +620,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             deviceNameLabel.toolTip = nil
             deviceRow.toolTip = nil
         }
+    }
+
+    /// Ab v1.14.2: Display-Controls (Theme/Ausrichtung/Sprache/Zeitzone/
+    /// Helligkeit) sind nur aktiv, wenn ein Geraet mit AI-Monitor-FW
+    /// verbunden ist. Bei `.foreignFirmware`/`.disconnected`/`.probing` werden
+    /// Werte auf „—" zurueckgestellt und die Controls disabled — damit keine
+    /// Settings an ein Fremd-Geraet oder ins Leere gepusht werden.
+    private func updateDisplayControlsEnabled() {
+        let ready = (monitor?.serialPort.state == .connected)
+        let controls: [NSControl?] = [themePopup, orientationPopup, languagePopup, timeZonePopup, brightnessSlider]
+        controls.forEach { $0?.isEnabled = ready }
+        brightnessValueLabel?.textColor = ready ? .secondaryLabelColor : .tertiaryLabelColor
     }
 
     private func buildFirmwareBox() -> NSView {
@@ -740,12 +778,34 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
 
         // Port
+        // Ab v1.14.2: Dot-Farbe spiegelt den Handshake-State wider — gruen
+        // nur bei `.connected`, orange bei `.foreignFirmware` (Port offen,
+        // aber keine AI-Monitor-FW), grau bei `.probing`/`.disconnected`.
         let sp = monitor.serialPort
         if sp.isConnected, let p = sp.connectedPort {
-            portStatusDot.stringValue = "\u{25CF}"
-            portStatusDot.textColor = .systemGreen
-            portStatusLabel.stringValue = "verbunden (\((p as NSString).lastPathComponent))"
-            portStatusLabel.textColor = .labelColor
+            let short = (p as NSString).lastPathComponent
+            switch sp.state {
+            case .connected:
+                portStatusDot.stringValue = "\u{25CF}"
+                portStatusDot.textColor = .systemGreen
+                portStatusLabel.stringValue = "verbunden (\(short))"
+                portStatusLabel.textColor = .labelColor
+            case .foreignFirmware:
+                portStatusDot.stringValue = "\u{25CF}"
+                portStatusDot.textColor = .systemOrange
+                portStatusLabel.stringValue = "Port offen, fremde Firmware (\(short))"
+                portStatusLabel.textColor = .systemOrange
+            case .probing:
+                portStatusDot.stringValue = "\u{25CF}"
+                portStatusDot.textColor = .systemYellow
+                portStatusLabel.stringValue = "Handshake … (\(short))"
+                portStatusLabel.textColor = .secondaryLabelColor
+            case .disconnected:
+                portStatusDot.stringValue = "\u{25CB}"
+                portStatusDot.textColor = .secondaryLabelColor
+                portStatusLabel.stringValue = "nicht verbunden"
+                portStatusLabel.textColor = .secondaryLabelColor
+            }
         } else {
             portStatusDot.stringValue = "\u{25CB}"
             portStatusDot.textColor = .secondaryLabelColor
@@ -755,28 +815,52 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         rebuildPortPopup()
 
         // Firmware
+        // Ab v1.14.2: bei `.foreignFirmware` zeigen wir „Installiert: unbekannt"
+        // (die in UserDefaults gecachte Version stammt vom zuletzt aktiven
+        // AI-Monitor-Geraet und waere hier irrefuehrend) + einen prominenten
+        // Flash-Aufruf. Der Flash-Flow selbst laeuft esptool-seitig gegen
+        // den Bootloader und ist damit unabhaengig von der aktuellen FW.
         let fw = FirmwareManager.shared
-        fwVersionLabel.stringValue = "Installiert: \(fw.installedVersionDisplay)"
-        if fw.hasUpdate {
-            fwUpdateLabel.stringValue = "Update verfügbar: \(fw.latestVersionDisplay)"
-            fwUpdateLabel.textColor = .systemBlue
-            fwFlashButton.isEnabled = sp.isConnected
-            fwFlashButton.title = "Firmware flashen …"
-        } else if fw.isFlashing {
-            fwUpdateLabel.stringValue = "Flash läuft …"
-            fwUpdateLabel.textColor = .secondaryLabelColor
-            fwFlashButton.isEnabled = false
-            fwFlashButton.title = "flashing …"
-        } else if fw.isDownloading {
-            fwUpdateLabel.stringValue = "Download läuft …"
-            fwUpdateLabel.textColor = .secondaryLabelColor
-            fwFlashButton.isEnabled = false
-            fwFlashButton.title = "downloading …"
+        let isForeign = (sp.state == .foreignFirmware)
+        if isForeign {
+            fwVersionLabel.stringValue = "Installiert: unbekannt"
+            fwUpdateLabel.stringValue = "Dieses Geraet hat keine AI-Monitor-Firmware. Jetzt flashen, um loszulegen."
+            fwUpdateLabel.textColor = .systemRed
+            if fw.isFlashing {
+                fwFlashButton.isEnabled = false
+                fwFlashButton.title = "flashing …"
+            } else if fw.isDownloading {
+                fwFlashButton.isEnabled = false
+                fwFlashButton.title = "downloading …"
+            } else {
+                fwFlashButton.isEnabled = true
+                fwFlashButton.title = "Firmware flashen"
+                fwFlashButton.keyEquivalent = "\r"
+            }
         } else {
-            fwUpdateLabel.stringValue = "Aktuell."
-            fwUpdateLabel.textColor = .secondaryLabelColor
-            fwFlashButton.isEnabled = false
-            fwFlashButton.title = "Firmware flashen …"
+            fwFlashButton.keyEquivalent = ""
+            fwVersionLabel.stringValue = "Installiert: \(fw.installedVersionDisplay)"
+            if fw.hasUpdate {
+                fwUpdateLabel.stringValue = "Update verfügbar: \(fw.latestVersionDisplay)"
+                fwUpdateLabel.textColor = .systemBlue
+                fwFlashButton.isEnabled = (sp.state == .connected)
+                fwFlashButton.title = "Firmware flashen …"
+            } else if fw.isFlashing {
+                fwUpdateLabel.stringValue = "Flash läuft …"
+                fwUpdateLabel.textColor = .secondaryLabelColor
+                fwFlashButton.isEnabled = false
+                fwFlashButton.title = "flashing …"
+            } else if fw.isDownloading {
+                fwUpdateLabel.stringValue = "Download läuft …"
+                fwUpdateLabel.textColor = .secondaryLabelColor
+                fwFlashButton.isEnabled = false
+                fwFlashButton.title = "downloading …"
+            } else {
+                fwUpdateLabel.stringValue = "Aktuell."
+                fwUpdateLabel.textColor = .secondaryLabelColor
+                fwFlashButton.isEnabled = false
+                fwFlashButton.title = "Firmware flashen …"
+            }
         }
 
         // Inline Flash-Progress — v1.12.0 mit mehrstufigem Phase-Label unter
@@ -825,25 +909,41 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         updateDeviceRow()
 
         // Display-Settings
-        switch Settings.shared.orientation {
-        case "landscape_left", "landscape": orientationPopup.selectItem(at: 1)
-        case "landscape_right": orientationPopup.selectItem(at: 2)
-        default: orientationPopup.selectItem(at: 0)
-        }
-        languagePopup.selectItem(at: Settings.shared.language == "en" ? 1 : 0)
-        switch Settings.shared.themeMode {
-        case "dark": themePopup.selectItem(at: 1)
-        case "light": themePopup.selectItem(at: 2)
-        default: themePopup.selectItem(at: 0)
-        }
-
-        if brightnessSlider != nil {
-            let br = Settings.shared.lastKnownBrightness
-            if Int(brightnessSlider.doubleValue.rounded()) != br {
-                brightnessSlider.doubleValue = Double(br)
+        // Ab v1.14.2: nur in State `.connected` werden die Control-Werte aus
+        // dem aktiven DeviceProfile gelesen. In allen anderen Zustaenden
+        // (`.foreignFirmware`, `.probing`, `.disconnected`) zeigen wir keine
+        // profil-spezifischen Werte — stattdessen „—" — damit offensichtlich
+        // ist, dass hier nichts aktiv gepusht wird.
+        let ready = (sp.state == .connected)
+        if ready {
+            switch Settings.shared.orientation {
+            case "landscape_left", "landscape": orientationPopup.selectItem(at: 1)
+            case "landscape_right": orientationPopup.selectItem(at: 2)
+            default: orientationPopup.selectItem(at: 0)
             }
-            brightnessValueLabel.stringValue = "\(br) %"
+            languagePopup.selectItem(at: Settings.shared.language == "en" ? 1 : 0)
+            switch Settings.shared.themeMode {
+            case "dark": themePopup.selectItem(at: 1)
+            case "light": themePopup.selectItem(at: 2)
+            default: themePopup.selectItem(at: 0)
+            }
+            if brightnessSlider != nil {
+                let br = Settings.shared.lastKnownBrightness
+                if Int(brightnessSlider.doubleValue.rounded()) != br {
+                    brightnessSlider.doubleValue = Double(br)
+                }
+                brightnessValueLabel.stringValue = "\(br) %"
+            }
+        } else {
+            // Popups auf den ersten „neutralen" Eintrag, Brightness-Label „—".
+            orientationPopup.selectItem(at: 0)
+            languagePopup.selectItem(at: 0)
+            themePopup.selectItem(at: 0)
+            if brightnessSlider != nil {
+                brightnessValueLabel.stringValue = "—"
+            }
         }
+        updateDisplayControlsEnabled()
 
         // Footer-Version (falls kAppVersion sich in einem Hot-Reload mal aendert)
         footerVersionLabel?.stringValue = "AI Monitor v\(kAppVersion)"
@@ -854,15 +954,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// Für Timer-Tick (Alter des letzten Updates).
     private func refreshLiveLabels() {
         guard let monitor = monitor else { return }
-        if let d = monitor.lastUpdateDate {
-            let age = Int(Date().timeIntervalSince(d))
-            let txt: String
-            if age < 60 { txt = "vor \(age) s" }
-            else if age < 3600 { txt = "vor \(age/60) m" }
-            else { txt = "vor \(age/3600) h \((age%3600)/60) m" }
-            lastUpdateLabel.stringValue = "Letztes Update an ESP32: \(txt)"
+        // Ab v1.14.2: „Letztes Update an ESP32" nur im State `.connected`
+        // anzeigen — sonst ist die Aussage nicht definiert.
+        let ready = (monitor.serialPort.state == .connected)
+        if !ready {
+            lastUpdateLabel.stringValue = ""
+            lastUpdateLabel.isHidden = true
         } else {
-            lastUpdateLabel.stringValue = "Letztes Update an ESP32: —"
+            lastUpdateLabel.isHidden = false
+            if let d = monitor.lastUpdateDate {
+                let age = Int(Date().timeIntervalSince(d))
+                let txt: String
+                if age < 60 { txt = "vor \(age) s" }
+                else if age < 3600 { txt = "vor \(age/60) m" }
+                else { txt = "vor \(age/3600) h \((age%3600)/60) m" }
+                lastUpdateLabel.stringValue = "Letztes Update an ESP32: \(txt)"
+            } else {
+                lastUpdateLabel.stringValue = "Letztes Update an ESP32: —"
+            }
         }
 
         // Flash-Fortschritts-Text live nachziehen (Phase-Label + Write-%)
