@@ -1,17 +1,11 @@
 /**
  * SettingsWindow.swift — Einziges sichtbares UI der App (LSUIElement=YES).
  *
- * Enthält alle Features, die früher im Menubar-Menü waren:
- *  - Provider-Umschalter (Claude / Codex) — ab v1.10.0, ganz oben
- *  - Port-Status + Port-Auswahl
- *  - CodexBar-Status (OK / stale / missing / wrong version)
- *  - Firmware-Version + Flash-Button + Flash-/Download-Fortschritt
- *  - Theme (System / Dark / Light) — wirkt auf ESP32
- *  - Orientation
- *  - Sprache (DE / EN)
- *  - Brightness (set_brightness, Firmware v2.8.0+)
- *  - Letztes Update
- *  - About
+ * Ab v1.11.0: Querformat-Layout, 960×560, nicht resizable. Zwei-Spalten-Split
+ * statt langer vertikaler Liste. Header mit Provider-Umschalter rechts.
+ * „Über / Updates / Beenden" liegen im nativen macOS-App-Menü — falls das
+ * aus irgendeinem Grund nicht erscheint, springen dezente Footer-Links ein
+ * (Fallback, siehe AppDelegate + updateFooterFallback()).
  */
 
 import Cocoa
@@ -21,36 +15,48 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // Referenzen, die von aussen injiziert werden
     weak var monitor: UsageMonitor?
 
-    // Views (re-used via update())
+    // Header
     private var providerSegmented: NSSegmentedControl!
+
+    // Linke Spalte — CodexBar
+    private var codexBarStatusDot: NSTextField!
     private var codexBarStatusLabel: NSTextField!
-    private var codexBarDetailLabel: NSTextField!
+    private var codexBarValuesLabel: NSTextField!
+    private var codexBarResetSessionLabel: NSTextField!
+    private var codexBarResetWeeklyLabel: NSTextField!
+    private var codexBarReloadButton: NSButton!
+
+    // Linke Spalte — Port
+    private var portStatusDot: NSTextField!
     private var portStatusLabel: NSTextField!
     private var portPopup: NSPopUpButton!
     private var portRefreshButton: NSButton!
 
+    // Rechte Spalte — Display
+    private var themePopup: NSPopUpButton!
+    private var orientationPopup: NSPopUpButton!
+    private var languagePopup: NSPopUpButton!
+    private var brightnessSlider: NSSlider!
+    private var brightnessValueLabel: NSTextField!
+    private var lastUpdateLabel: NSTextField!
+
+    // Rechte Spalte — Firmware
     private var fwVersionLabel: NSTextField!
     private var fwUpdateLabel: NSTextField!
     private var fwFlashButton: NSButton!
     private var fwProgressBar: NSProgressIndicator!
     private var fwProgressLabel: NSTextField!
 
-    private var languagePopup: NSPopUpButton!
-    private var orientationPopup: NSPopUpButton!
-    private var themePopup: NSPopUpButton!
-    private var brightnessSlider: NSSlider!
-    private var brightnessValueLabel: NSTextField!
-
-    private var lastUpdateLabel: NSTextField!
-
-    private var appVersionLabel: NSTextField!
-    private var appUpdateButton: NSButton!
+    // Footer
+    private var footerVersionLabel: NSTextField!
+    private var footerAboutButton: NSButton!
+    private var footerUpdateButton: NSButton!
 
     private var refreshTimer: Timer?
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 560),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -58,6 +64,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.title = "AI Monitor"
         window.isReleasedWhenClosed = false
         window.center()
+        // Fixe Groesse — kein Resize.
+        window.minSize = NSSize(width: 960, height: 560)
+        window.maxSize = NSSize(width: 960, height: 560)
         self.init(window: window)
         window.delegate = self
         buildUI()
@@ -92,63 +101,75 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildUI() {
         guard let content = window?.contentView else { return }
 
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 18
-        stack.edgeInsets = NSEdgeInsets(top: 18, left: 20, bottom: 18, right: 20)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
+        // Header (h=48) oben, Footer (h=28) unten, dazwischen zwei Spalten 50/50.
+        let header = buildHeader()
+        let headerDivider = makeHorizontalDivider()
+        let footerDivider = makeHorizontalDivider()
+        let footer = buildFooter()
+        let leftColumn = buildLeftColumn()
+        let rightColumn = buildRightColumn()
+        let columnDivider = makeVerticalDivider()
+
+        [header, headerDivider, leftColumn, rightColumn, columnDivider, footerDivider, footer].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview($0)
+        }
+
+        let leftGuide = content.leadingAnchor
+        let rightGuide = content.trailingAnchor
+
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: content.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            // Header
+            header.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
+            header.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
+            header.topAnchor.constraint(equalTo: content.topAnchor, constant: 0),
+            header.heightAnchor.constraint(equalToConstant: 48),
+
+            headerDivider.leadingAnchor.constraint(equalTo: leftGuide),
+            headerDivider.trailingAnchor.constraint(equalTo: rightGuide),
+            headerDivider.topAnchor.constraint(equalTo: header.bottomAnchor),
+            headerDivider.heightAnchor.constraint(equalToConstant: 1),
+
+            // Footer
+            footerDivider.leadingAnchor.constraint(equalTo: leftGuide),
+            footerDivider.trailingAnchor.constraint(equalTo: rightGuide),
+            footerDivider.bottomAnchor.constraint(equalTo: footer.topAnchor),
+            footerDivider.heightAnchor.constraint(equalToConstant: 1),
+
+            footer.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
+            footer.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
+            footer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: 0),
+            footer.heightAnchor.constraint(equalToConstant: 28),
+
+            // Linke Spalte
+            leftColumn.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
+            leftColumn.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 16),
+            leftColumn.bottomAnchor.constraint(lessThanOrEqualTo: footerDivider.topAnchor, constant: -16),
+            leftColumn.widthAnchor.constraint(equalToConstant: 440),
+
+            // Vertikaler Divider zwischen den Spalten
+            columnDivider.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            columnDivider.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 12),
+            columnDivider.bottomAnchor.constraint(equalTo: footerDivider.topAnchor, constant: -12),
+            columnDivider.widthAnchor.constraint(equalToConstant: 1),
+
+            // Rechte Spalte
+            rightColumn.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
+            rightColumn.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 16),
+            rightColumn.bottomAnchor.constraint(lessThanOrEqualTo: footerDivider.topAnchor, constant: -16),
+            rightColumn.widthAnchor.constraint(equalToConstant: 440),
         ])
-
-        stack.addArrangedSubview(buildHeader())
-        stack.addArrangedSubview(makeSeparator())
-        stack.addArrangedSubview(buildProviderSection())
-        stack.addArrangedSubview(makeSeparator())
-        stack.addArrangedSubview(buildCodexBarSection())
-        stack.addArrangedSubview(makeSeparator())
-        stack.addArrangedSubview(buildPortSection())
-        stack.addArrangedSubview(makeSeparator())
-        stack.addArrangedSubview(buildFirmwareSection())
-        stack.addArrangedSubview(makeSeparator())
-        stack.addArrangedSubview(buildDisplaySection())
-        stack.addArrangedSubview(makeSeparator())
-        stack.addArrangedSubview(buildAppSection())
     }
 
-    private func makeSeparator() -> NSView {
-        let v = NSBox()
-        v.boxType = .separator
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        v.widthAnchor.constraint(equalToConstant: 480).isActive = true
-        return v
-    }
+    // MARK: - Header
 
     private func buildHeader() -> NSView {
+        let container = NSView()
+
         let title = NSTextField(labelWithString: "AI Monitor")
-        title.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
-
-        let subtitle = NSTextField(labelWithString: "Claude-Usage aus CodexBar -> ESP32-Display")
-        subtitle.font = NSFont.systemFont(ofSize: 12)
-        subtitle.textColor = .secondaryLabelColor
-
-        let v = NSStackView(views: [title, subtitle])
-        v.orientation = .vertical
-        v.alignment = .leading
-        v.spacing = 2
-        return v
-    }
-
-    // --- Provider-Umschalter (Claude / Codex) ---
-
-    private func buildProviderSection() -> NSView {
-        let heading = makeSectionHeading("Provider")
+        title.font = NSFont.systemFont(ofSize: 20, weight: .bold)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(title)
 
         providerSegmented = NSSegmentedControl(labels: ["Claude", "Codex"],
                                                trackingMode: .selectOne,
@@ -156,84 +177,255 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                                                action: #selector(providerChosen))
         providerSegmented.segmentStyle = .rounded
         providerSegmented.selectedSegment = (Settings.shared.selectedProvider == "codex") ? 1 : 0
+        providerSegmented.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(providerSegmented)
 
-        let hint = NSTextField(labelWithString: "Welche CodexBar-Datenquelle auf dem Display anzeigen. Umschalten überträgt sofort an den ESP32.")
-        hint.font = NSFont.systemFont(ofSize: 11)
-        hint.textColor = .secondaryLabelColor
-        hint.lineBreakMode = .byWordWrapping
-        hint.maximumNumberOfLines = 2
-        hint.preferredMaxLayoutWidth = 480
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            title.centerYAnchor.constraint(equalTo: container.centerYAnchor),
 
-        let stack = NSStackView(views: [heading, providerSegmented, hint])
+            providerSegmented.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            providerSegmented.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+        return container
+    }
+
+    // MARK: - Footer
+
+    private func buildFooter() -> NSView {
+        let container = NSView()
+
+        footerVersionLabel = NSTextField(labelWithString: "AI Monitor v\(kAppVersion)")
+        footerVersionLabel.font = NSFont.systemFont(ofSize: 11)
+        footerVersionLabel.textColor = .tertiaryLabelColor
+        footerVersionLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(footerVersionLabel)
+
+        // Fallback-Links (versteckt, wenn das App-Menue erfolgreich montiert wurde)
+        footerAboutButton = makeLinkButton("Über AI Monitor", action: #selector(showAbout))
+        footerUpdateButton = makeLinkButton("Nach Updates suchen …", action: #selector(checkAppUpdate))
+        footerAboutButton.isHidden = true
+        footerUpdateButton.isHidden = true
+        container.addSubview(footerAboutButton)
+        container.addSubview(footerUpdateButton)
+
+        NSLayoutConstraint.activate([
+            footerVersionLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            footerVersionLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+
+            footerUpdateButton.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            footerUpdateButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+
+            footerAboutButton.trailingAnchor.constraint(equalTo: footerUpdateButton.leadingAnchor, constant: -16),
+            footerAboutButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+        return container
+    }
+
+    private func makeLinkButton(_ title: String, action: Selector) -> NSButton {
+        let b = NSButton(title: title, target: self, action: action)
+        b.isBordered = false
+        b.bezelStyle = .inline
+        b.contentTintColor = .secondaryLabelColor
+        b.font = NSFont.systemFont(ofSize: 11)
+        b.translatesAutoresizingMaskIntoConstraints = false
+        let ps = NSMutableParagraphStyle()
+        ps.alignment = .right
+        b.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: ps,
+        ])
+        return b
+    }
+
+    /// Wenn das macOS-App-Menue erfolgreich mit den Menueeintraegen montiert ist,
+    /// bleiben die Footer-Buttons unsichtbar. Wenn nicht, werden sie eingeblendet.
+    func setFooterFallbackVisible(_ visible: Bool) {
+        footerAboutButton?.isHidden = !visible
+        footerUpdateButton?.isHidden = !visible
+    }
+
+    // MARK: - Linke Spalte
+
+    private func buildLeftColumn() -> NSView {
+        let codexBox = buildCodexBarBox()
+        let portBox = buildPortBox()
+
+        let stack = NSStackView(views: [codexBox, portBox])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = 20
         return stack
     }
 
-    // --- CodexBar ---
-
-    private func buildCodexBarSection() -> NSView {
+    private func buildCodexBarBox() -> NSView {
         let heading = makeSectionHeading("CodexBar-Datenquelle")
 
-        codexBarStatusLabel = NSTextField(labelWithString: "Status: …")
+        codexBarStatusDot = NSTextField(labelWithString: "\u{25CF}")
+        codexBarStatusDot.font = NSFont.systemFont(ofSize: 13)
+        codexBarStatusDot.textColor = .secondaryLabelColor
+
+        codexBarStatusLabel = NSTextField(labelWithString: "…")
         codexBarStatusLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
 
-        codexBarDetailLabel = NSTextField(labelWithString: "")
-        codexBarDetailLabel.font = NSFont.systemFont(ofSize: 11)
-        codexBarDetailLabel.textColor = .secondaryLabelColor
-        codexBarDetailLabel.lineBreakMode = .byWordWrapping
-        codexBarDetailLabel.maximumNumberOfLines = 3
-        codexBarDetailLabel.preferredMaxLayoutWidth = 480
+        let statusRow = NSStackView(views: [codexBarStatusDot, codexBarStatusLabel])
+        statusRow.orientation = .horizontal
+        statusRow.spacing = 6
 
-        let refresh = NSButton(title: "Jetzt neu laden", target: self, action: #selector(reloadCodexBar))
-        refresh.bezelStyle = .rounded
-        refresh.controlSize = .small
+        codexBarValuesLabel = NSTextField(labelWithString: "Session: — · Weekly: —")
+        codexBarValuesLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
 
-        let stack = NSStackView(views: [heading, codexBarStatusLabel, codexBarDetailLabel, refresh])
+        codexBarResetSessionLabel = NSTextField(labelWithString: "")
+        codexBarResetSessionLabel.font = NSFont.systemFont(ofSize: 11)
+        codexBarResetSessionLabel.textColor = .secondaryLabelColor
+
+        codexBarResetWeeklyLabel = NSTextField(labelWithString: "")
+        codexBarResetWeeklyLabel.font = NSFont.systemFont(ofSize: 11)
+        codexBarResetWeeklyLabel.textColor = .secondaryLabelColor
+
+        codexBarReloadButton = NSButton(title: "Jetzt neu laden", target: self, action: #selector(reloadCodexBar))
+        codexBarReloadButton.bezelStyle = .rounded
+        codexBarReloadButton.controlSize = .small
+
+        let spacerBeforeButton = NSView()
+        spacerBeforeButton.translatesAutoresizingMaskIntoConstraints = false
+        spacerBeforeButton.heightAnchor.constraint(equalToConstant: 4).isActive = true
+
+        let stack = NSStackView(views: [
+            heading,
+            statusRow,
+            codexBarValuesLabel,
+            codexBarResetSessionLabel,
+            codexBarResetWeeklyLabel,
+            spacerBeforeButton,
+            codexBarReloadButton,
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = 8
         return stack
     }
 
-    // --- Port ---
-
-    private func buildPortSection() -> NSView {
+    private func buildPortBox() -> NSView {
         let heading = makeSectionHeading("USB-Verbindung zum ESP32")
 
-        portStatusLabel = NSTextField(labelWithString: "Port: nicht verbunden")
+        portStatusDot = NSTextField(labelWithString: "\u{25CB}")
+        portStatusDot.font = NSFont.systemFont(ofSize: 13)
+        portStatusDot.textColor = .secondaryLabelColor
+
+        portStatusLabel = NSTextField(labelWithString: "nicht verbunden")
         portStatusLabel.font = NSFont.systemFont(ofSize: 13)
+
+        let statusRow = NSStackView(views: [portStatusDot, portStatusLabel])
+        statusRow.orientation = .horizontal
+        statusRow.spacing = 6
 
         portPopup = NSPopUpButton()
         portPopup.target = self
         portPopup.action = #selector(portChosen)
+        portPopup.translatesAutoresizingMaskIntoConstraints = false
+        portPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         portRefreshButton = NSButton(title: "Ports neu scannen", target: self, action: #selector(refreshPorts))
         portRefreshButton.bezelStyle = .rounded
         portRefreshButton.controlSize = .small
 
-        let row = NSStackView(views: [portPopup, portRefreshButton])
-        row.orientation = .horizontal
-        row.spacing = 8
+        let controlRow = NSStackView(views: [portPopup, portRefreshButton])
+        controlRow.orientation = .horizontal
+        controlRow.spacing = 8
 
-        let stack = NSStackView(views: [heading, portStatusLabel, row])
+        let stack = NSStackView(views: [heading, statusRow, controlRow])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = 8
         return stack
     }
 
-    // --- Firmware ---
+    // MARK: - Rechte Spalte
 
-    private func buildFirmwareSection() -> NSView {
+    private func buildRightColumn() -> NSView {
+        let displayBox = buildDisplayBox()
+        let firmwareBox = buildFirmwareBox()
+
+        let stack = NSStackView(views: [displayBox, firmwareBox])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 20
+        return stack
+    }
+
+    private func buildDisplayBox() -> NSView {
+        let heading = makeSectionHeading("Display-Einstellungen")
+
+        // Theme
+        themePopup = NSPopUpButton()
+        themePopup.addItems(withTitles: ["Automatisch (macOS)", "Dark", "Light"])
+        themePopup.target = self
+        themePopup.action = #selector(themeChosen)
+        let themeRow = twoColumnRow("Theme", themePopup)
+
+        // Orientation
+        orientationPopup = NSPopUpButton()
+        orientationPopup.addItems(withTitles: [
+            "Hochformat",
+            "Querformat (USB links)",
+            "Querformat (USB rechts)"
+        ])
+        orientationPopup.target = self
+        orientationPopup.action = #selector(orientationChosen)
+        let orientRow = twoColumnRow("Ausrichtung", orientationPopup)
+
+        // Language
+        languagePopup = NSPopUpButton()
+        languagePopup.addItems(withTitles: ["Deutsch", "English"])
+        languagePopup.target = self
+        languagePopup.action = #selector(languageChosen)
+        let langRow = twoColumnRow("Sprache", languagePopup)
+
+        // Brightness
+        brightnessSlider = NSSlider(value: Double(Settings.shared.lastKnownBrightness),
+                                    minValue: 5, maxValue: 100,
+                                    target: self, action: #selector(brightnessChanged))
+        brightnessSlider.isContinuous = true
+        brightnessSlider.numberOfTickMarks = 0
+        brightnessSlider.translatesAutoresizingMaskIntoConstraints = false
+        brightnessSlider.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        brightnessValueLabel = NSTextField(labelWithString: "\(Settings.shared.lastKnownBrightness) %")
+        brightnessValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        brightnessValueLabel.textColor = .secondaryLabelColor
+        brightnessValueLabel.translatesAutoresizingMaskIntoConstraints = false
+        brightnessValueLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        brightnessValueLabel.alignment = .right
+        let brightControls = NSStackView(views: [brightnessSlider, brightnessValueLabel])
+        brightControls.orientation = .horizontal
+        brightControls.spacing = 8
+        let brightRow = twoColumnRow("Helligkeit", brightControls)
+
+        lastUpdateLabel = NSTextField(labelWithString: "Letztes Update an ESP32: —")
+        lastUpdateLabel.font = NSFont.systemFont(ofSize: 11)
+        lastUpdateLabel.textColor = .secondaryLabelColor
+
+        let rowsStack = NSStackView(views: [themeRow, orientRow, langRow, brightRow])
+        rowsStack.orientation = .vertical
+        rowsStack.alignment = .leading
+        rowsStack.spacing = 8
+
+        let stack = NSStackView(views: [heading, rowsStack, lastUpdateLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        return stack
+    }
+
+    private func buildFirmwareBox() -> NSView {
         let heading = makeSectionHeading("Firmware")
 
-        fwVersionLabel = NSTextField(labelWithString: "Installiert: -")
+        fwVersionLabel = NSTextField(labelWithString: "Installiert: —")
         fwVersionLabel.font = NSFont.systemFont(ofSize: 13)
 
         fwUpdateLabel = NSTextField(labelWithString: "")
-        fwUpdateLabel.font = NSFont.systemFont(ofSize: 11)
+        fwUpdateLabel.font = NSFont.systemFont(ofSize: 12)
         fwUpdateLabel.textColor = .secondaryLabelColor
 
         fwFlashButton = NSButton(title: "Firmware flashen …", target: self, action: #selector(flashFirmware))
@@ -246,124 +438,59 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         fwProgressBar.maxValue = 100
         fwProgressBar.isHidden = true
         fwProgressBar.translatesAutoresizingMaskIntoConstraints = false
-        fwProgressBar.widthAnchor.constraint(equalToConstant: 480).isActive = true
+        fwProgressBar.widthAnchor.constraint(equalToConstant: 360).isActive = true
 
         fwProgressLabel = NSTextField(labelWithString: "")
-        fwProgressLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        fwProgressLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         fwProgressLabel.textColor = .secondaryLabelColor
         fwProgressLabel.isHidden = true
 
-        let stack = NSStackView(views: [heading, fwVersionLabel, fwUpdateLabel, fwFlashButton, fwProgressBar, fwProgressLabel])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 6
-        return stack
-    }
-
-    // --- Display-Settings ---
-
-    private func buildDisplaySection() -> NSView {
-        let heading = makeSectionHeading("Display-Einstellungen")
-
-        // Theme
-        let themeLabel = NSTextField(labelWithString: "Theme")
-        themePopup = NSPopUpButton()
-        themePopup.addItems(withTitles: ["Automatisch (macOS)", "Dark", "Light"])
-        themePopup.target = self
-        themePopup.action = #selector(themeChosen)
-        let themeRow = twoColumnRow(themeLabel, themePopup)
-
-        // Orientation
-        let orientLabel = NSTextField(labelWithString: "Ausrichtung")
-        orientationPopup = NSPopUpButton()
-        orientationPopup.addItems(withTitles: ["Hochformat", "Querformat (USB links)", "Querformat (USB rechts)"])
-        orientationPopup.target = self
-        orientationPopup.action = #selector(orientationChosen)
-        let orientRow = twoColumnRow(orientLabel, orientationPopup)
-
-        // Language
-        let langLabel = NSTextField(labelWithString: "Sprache")
-        languagePopup = NSPopUpButton()
-        languagePopup.addItems(withTitles: ["Deutsch", "English"])
-        languagePopup.target = self
-        languagePopup.action = #selector(languageChosen)
-        let langRow = twoColumnRow(langLabel, languagePopup)
-
-        // Brightness (5..100 %, persisted in ESP32 NVS, firmware v2.8.0+)
-        let brightLabel = NSTextField(labelWithString: "Helligkeit")
-        brightnessSlider = NSSlider(value: Double(Settings.shared.lastKnownBrightness),
-                                    minValue: 5, maxValue: 100,
-                                    target: self, action: #selector(brightnessChanged))
-        brightnessSlider.isContinuous = true
-        brightnessSlider.numberOfTickMarks = 0
-        brightnessSlider.widthAnchor.constraint(equalToConstant: 220).isActive = true
-        brightnessValueLabel = NSTextField(labelWithString: "\(Settings.shared.lastKnownBrightness) %")
-        brightnessValueLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        brightnessValueLabel.textColor = .secondaryLabelColor
-        brightnessValueLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        brightnessValueLabel.alignment = .right
-        let brightControls = NSStackView(views: [brightnessSlider, brightnessValueLabel])
-        brightControls.orientation = .horizontal
-        brightControls.spacing = 8
-        let brightRow = twoColumnRow(brightLabel, brightControls)
-
-        lastUpdateLabel = NSTextField(labelWithString: "Letztes Update: -")
-        lastUpdateLabel.font = NSFont.systemFont(ofSize: 11)
-        lastUpdateLabel.textColor = .secondaryLabelColor
-
-        let stack = NSStackView(views: [heading, themeRow, orientRow, langRow, brightRow, lastUpdateLabel])
+        let stack = NSStackView(views: [
+            heading,
+            fwVersionLabel,
+            fwUpdateLabel,
+            fwFlashButton,
+            fwProgressBar,
+            fwProgressLabel,
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
         return stack
     }
 
-    // --- App-Version / About ---
-
-    private func buildAppSection() -> NSView {
-        let heading = makeSectionHeading("App")
-
-        appVersionLabel = NSTextField(labelWithString: "AI Monitor v\(kAppVersion)")
-        appVersionLabel.font = NSFont.systemFont(ofSize: 13)
-
-        appUpdateButton = NSButton(title: "Nach App-Updates suchen …", target: self, action: #selector(checkAppUpdate))
-        appUpdateButton.bezelStyle = .rounded
-        appUpdateButton.controlSize = .small
-
-        let aboutButton = NSButton(title: "Über AI Monitor", target: self, action: #selector(showAbout))
-        aboutButton.bezelStyle = .rounded
-        aboutButton.controlSize = .small
-
-        let quitButton = NSButton(title: "Beenden", target: self, action: #selector(quitApp))
-        quitButton.bezelStyle = .rounded
-        quitButton.controlSize = .small
-
-        let buttonRow = NSStackView(views: [appUpdateButton, aboutButton, quitButton])
-        buttonRow.orientation = .horizontal
-        buttonRow.spacing = 8
-
-        let stack = NSStackView(views: [heading, appVersionLabel, buttonRow])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 6
-        return stack
-    }
+    // MARK: - Shared builders
 
     private func makeSectionHeading(_ text: String) -> NSTextField {
         let l = NSTextField(labelWithString: text)
-        l.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        l.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         return l
     }
 
-    private func twoColumnRow(_ label: NSView, _ control: NSView) -> NSView {
+    private func makeHorizontalDivider() -> NSView {
+        let v = NSBox()
+        v.boxType = .separator
+        return v
+    }
+
+    private func makeVerticalDivider() -> NSView {
+        let v = NSView()
+        v.wantsLayer = true
+        v.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        return v
+    }
+
+    private func twoColumnRow(_ labelText: String, _ control: NSView) -> NSView {
+        let label = NSTextField(labelWithString: labelText)
+        label.font = NSFont.systemFont(ofSize: 13)
+        label.alignment = .left
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: 100).isActive = true
+
         let row = NSStackView(views: [label, control])
         row.orientation = .horizontal
         row.spacing = 12
         row.distribution = .fill
-        if let l = label as? NSTextField {
-            l.widthAnchor.constraint(equalToConstant: 100).isActive = true
-            l.alignment = .left
-        }
         return row
     }
 
@@ -383,38 +510,68 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // CodexBar
         let src = monitor.codexBar
         let entry = src.lastEntry
-        codexBarStatusLabel.stringValue = "Status: " + src.status.shortLabel
-        codexBarStatusLabel.textColor = src.status.isOK ? .systemGreen : .systemOrange
+        codexBarStatusLabel.stringValue = src.status.shortLabel
+        if src.status.isOK {
+            codexBarStatusDot.stringValue = "\u{25CF}"
+            codexBarStatusDot.textColor = .systemGreen
+            codexBarStatusLabel.textColor = .labelColor
+        } else {
+            codexBarStatusDot.stringValue = "\u{25CF}"
+            codexBarStatusDot.textColor = .systemOrange
+            codexBarStatusLabel.textColor = .systemOrange
+        }
+
         if let e = entry, src.status.isOK {
             let sp = Int((e.primary?.usedPercent ?? 0).rounded())
             let wp = Int((e.secondary?.usedPercent ?? 0).rounded())
-            var detail = "Session: \(sp) %   ·   Weekly: \(wp) %"
-            if let reset = e.primary?.resetDescription { detail += "\nSession-Reset: \(reset)" }
-            if let reset = e.secondary?.resetDescription { detail += "\nWeekly-Reset: \(reset)" }
-            codexBarDetailLabel.stringValue = detail
+            codexBarValuesLabel.stringValue = "Session: \(sp) %   ·   Weekly: \(wp) %"
+            if let reset = e.primary?.resetDescription {
+                codexBarResetSessionLabel.stringValue = "Session-Reset: \(reset)"
+                codexBarResetSessionLabel.isHidden = false
+            } else {
+                codexBarResetSessionLabel.stringValue = ""
+                codexBarResetSessionLabel.isHidden = true
+            }
+            if let reset = e.secondary?.resetDescription {
+                codexBarResetWeeklyLabel.stringValue = "Weekly-Reset: \(reset)"
+                codexBarResetWeeklyLabel.isHidden = false
+            } else {
+                codexBarResetWeeklyLabel.stringValue = ""
+                codexBarResetWeeklyLabel.isHidden = true
+            }
         } else {
+            codexBarValuesLabel.stringValue = "Session: — · Weekly: —"
+            let msg: String
             switch src.status {
             case .missing:
                 let providerLabel = (src.provider == "codex") ? "Codex" : "Claude"
-                codexBarDetailLabel.stringValue = "Keine \(providerLabel)-Daten in CodexBar gefunden. Ist der Provider in CodexBar aktiviert und wurde er einmal genutzt?"
+                msg = "Keine \(providerLabel)-Daten in CodexBar gefunden."
             case .stale(let age):
-                codexBarDetailLabel.stringValue = "Daten sind \(age/60) Minuten alt. AI Monitor sendet nichts Neues an den ESP32, bis CodexBar wieder aktualisiert."
+                msg = "Daten sind \(age/60) Minuten alt."
             case .wrongVersion(let f, let e):
-                codexBarDetailLabel.stringValue = "Schema-Version unerwartet: claude.json version=\(f), erwartet \(e). AI Monitor-Update nötig."
-            case .parseError(let msg):
-                codexBarDetailLabel.stringValue = "Konnte Snapshot nicht parsen: \(msg)"
+                msg = "Schema-Version unerwartet: \(f), erwartet \(e)."
+            case .parseError(let m):
+                msg = "Parse-Fehler: \(m)"
             default:
-                codexBarDetailLabel.stringValue = ""
+                msg = ""
             }
+            codexBarResetSessionLabel.stringValue = msg
+            codexBarResetSessionLabel.isHidden = msg.isEmpty
+            codexBarResetWeeklyLabel.stringValue = ""
+            codexBarResetWeeklyLabel.isHidden = true
         }
 
         // Port
         let sp = monitor.serialPort
         if sp.isConnected, let p = sp.connectedPort {
-            portStatusLabel.stringValue = "Port: \u{25CF} verbunden (\((p as NSString).lastPathComponent))"
-            portStatusLabel.textColor = .systemGreen
+            portStatusDot.stringValue = "\u{25CF}"
+            portStatusDot.textColor = .systemGreen
+            portStatusLabel.stringValue = "verbunden (\((p as NSString).lastPathComponent))"
+            portStatusLabel.textColor = .labelColor
         } else {
-            portStatusLabel.stringValue = "Port: \u{25CB} nicht verbunden"
+            portStatusDot.stringValue = "\u{25CB}"
+            portStatusDot.textColor = .secondaryLabelColor
+            portStatusLabel.stringValue = "nicht verbunden"
             portStatusLabel.textColor = .secondaryLabelColor
         }
         rebuildPortPopup()
@@ -429,10 +586,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             fwFlashButton.title = "Firmware flashen …"
         } else if fw.isFlashing {
             fwUpdateLabel.stringValue = "Flash läuft …"
+            fwUpdateLabel.textColor = .secondaryLabelColor
             fwFlashButton.isEnabled = false
             fwFlashButton.title = "flashing …"
         } else if fw.isDownloading {
             fwUpdateLabel.stringValue = "Download läuft …"
+            fwUpdateLabel.textColor = .secondaryLabelColor
             fwFlashButton.isEnabled = false
             fwFlashButton.title = "downloading …"
         } else {
@@ -442,11 +601,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             fwFlashButton.title = "Firmware flashen …"
         }
 
-        // Progress
+        // Inline Flash-Progress
         if fw.isFlashing {
             fwProgressBar.isHidden = false
             fwProgressLabel.isHidden = false
-            // flashProgress ist Freitext ("Writing at 0x... (12 %)")
             fwProgressLabel.stringValue = fw.flashProgress
             fwProgressBar.isIndeterminate = true
             fwProgressBar.startAnimation(nil)
@@ -476,8 +634,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         default: themePopup.selectItem(at: 0)
         }
 
-        // Brightness: UI auf den zuletzt bekannten Wert ziehen (wird per
-        // get_info beim Connect nachgeführt).
         if brightnessSlider != nil {
             let br = Settings.shared.lastKnownBrightness
             if Int(brightnessSlider.doubleValue.rounded()) != br {
@@ -485,6 +641,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             }
             brightnessValueLabel.stringValue = "\(br) %"
         }
+
+        // Footer-Version (falls kAppVersion sich in einem Hot-Reload mal aendert)
+        footerVersionLabel?.stringValue = "AI Monitor v\(kAppVersion)"
 
         refreshLiveLabels()
     }
@@ -495,12 +654,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let d = monitor.lastUpdateDate {
             let age = Int(Date().timeIntervalSince(d))
             let txt: String
-            if age < 60 { txt = "vor \(age)s" }
-            else if age < 3600 { txt = "vor \(age/60)m" }
-            else { txt = "vor \(age/3600)h \((age%3600)/60)m" }
+            if age < 60 { txt = "vor \(age) s" }
+            else if age < 3600 { txt = "vor \(age/60) m" }
+            else { txt = "vor \(age/3600) h \((age%3600)/60) m" }
             lastUpdateLabel.stringValue = "Letztes Update an ESP32: \(txt)"
         } else {
-            lastUpdateLabel.stringValue = "Letztes Update an ESP32: -"
+            lastUpdateLabel.stringValue = "Letztes Update an ESP32: —"
         }
 
         // Flash-Fortschritts-Text live nachziehen
@@ -524,7 +683,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         for p in available {
             portPopup.addItem(withTitle: (p as NSString).lastPathComponent)
         }
-        // selected item
         if let manual = Settings.shared.manualPortPath,
            let idx = available.firstIndex(of: manual) {
             portPopup.selectItem(at: idx + 1)
@@ -594,22 +752,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         monitor?.sendBrightnessToESP32(pct)
     }
 
-    @objc private func flashFirmware() {
+    @objc fileprivate func flashFirmware() {
         (NSApp.delegate as? AppDelegate)?.runFirmwareFlash()
     }
 
-    @objc private func checkAppUpdate() {
+    @objc fileprivate func checkAppUpdate() {
         (NSApp.delegate as? AppDelegate)?.runAppUpdateCheck()
     }
 
-    @objc private func showAbout() {
+    @objc fileprivate func showAbout() {
         let alert = NSAlert()
         alert.messageText = "AI Monitor v\(kAppVersion)"
         alert.informativeText = """
         macOS-Hintergrund-App für das ESP32-Usage-Display.
 
-        Liest Claude-Usage aus der lokalen CodexBar-App \
-        (widget-snapshot.json im Group Container) und sendet Session- und Weekly-Werte per USB-Serial an das ESP32-Display.
+        Liest Claude- und Codex-Nutzung aus der lokalen CodexBar-App \
+        (widget-snapshot.json im Group Container) und sendet Session- und \
+        Weekly-Werte per USB-Serial an das ESP32-Display.
 
         Repo: github.com/tobymarks/esp32-ai-monitor
         """
@@ -618,7 +777,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         alert.runModal()
     }
 
-    @objc private func quitApp() {
+    @objc fileprivate func quitApp() {
         NSApplication.shared.terminate(nil)
     }
 }

@@ -1,11 +1,15 @@
 /**
- * AI Monitor v1.10.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.11.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude ODER Codex — per Umschalter im Settings-Fenster.
  * UI-Modus: LSUIElement=YES, unsichtbar. Kein Menubar-Icon. Settings-Fenster beim Launch
  * und beim Reopen-Event (Spotlight / Finder-Doppelklick).
  * ESP32-Protokoll: Envelope um `provider`-Feld erweitert (String, „claude"|„codex").
+ *
+ * v1.11.0: Settings-Fenster auf Querformat (960×560, nicht resizable) umgebaut,
+ * „Über/Updates/Beenden" in nativen macOS-App-Menü verschoben (mit Footer-Fallback,
+ * falls das Menü unter .accessory nicht erscheint).
  *
  * Build: ./build.sh
  * Run:   open "build/AI Monitor.app"
@@ -24,7 +28,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.10.0"
+let kAppVersion = "1.11.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 let kUserDefaultsSuite = "de.aimonitor.app"
@@ -1182,12 +1186,136 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Native macOS-Menueleiste aufbauen (vor Fenster-Anzeige).
+        // Unter .accessory + LSUIElement=YES erscheint die Menueleiste nur, wenn
+        // das Fenster Key-Fenster ist — das ist nach makeKeyAndOrderFront der Fall.
+        // Falls Apple das Verhalten irgendwann aendert, blendet setFooterFallbackVisible
+        // Footer-Links ein.
+        installMainMenu()
+
         // Settings-Fenster bauen + initial zeigen
         settingsController = SettingsWindowController()
         settingsController.monitor = monitor
         settingsController.show()
 
+        // Fallback-Erkennung: wenn NSApp.mainMenu nach dem Anzeigen nicht gesetzt
+        // oder leer ist, zeigen wir die Footer-Links. In der Praxis setzen wir
+        // mainMenu zuvor selbst, also ist der Fallback nur aktiv, wenn etwas sehr
+        // Ungewoehnliches passiert.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            let hasMenu = (NSApp.mainMenu?.numberOfItems ?? 0) > 0
+            self?.settingsController?.setFooterFallbackVisible(!hasMenu)
+        }
+
         NSLog("[App] AI Monitor v%@ started (LSUIElement, CodexBar source)", kAppVersion)
+    }
+
+    // ---- Native macOS-Menueleiste ----
+
+    private func installMainMenu() {
+        let mainMenu = NSMenu()
+
+        // App-Menue (Titel = App-Name, kommt vom System uebernommen)
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        let appMenu = NSMenu(title: "AI Monitor")
+
+        let aboutItem = NSMenuItem(title: "Über AI Monitor",
+                                   action: #selector(menuShowAbout),
+                                   keyEquivalent: "")
+        aboutItem.target = self
+        appMenu.addItem(aboutItem)
+
+        let updateItem = NSMenuItem(title: "Nach Updates suchen …",
+                                    action: #selector(menuCheckAppUpdate),
+                                    keyEquivalent: "")
+        updateItem.target = self
+        appMenu.addItem(updateItem)
+
+        appMenu.addItem(.separator())
+
+        let prefsItem = NSMenuItem(title: "Einstellungen …",
+                                   action: #selector(menuShowSettings),
+                                   keyEquivalent: ",")
+        prefsItem.keyEquivalentModifierMask = [.command]
+        prefsItem.target = self
+        appMenu.addItem(prefsItem)
+
+        appMenu.addItem(.separator())
+
+        let hideItem = NSMenuItem(title: "AI Monitor ausblenden",
+                                  action: #selector(NSApplication.hide(_:)),
+                                  keyEquivalent: "h")
+        hideItem.keyEquivalentModifierMask = [.command]
+        appMenu.addItem(hideItem)
+
+        let hideOthersItem = NSMenuItem(title: "Andere ausblenden",
+                                        action: #selector(NSApplication.hideOtherApplications(_:)),
+                                        keyEquivalent: "h")
+        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthersItem)
+
+        let showAllItem = NSMenuItem(title: "Alle einblenden",
+                                     action: #selector(NSApplication.unhideAllApplications(_:)),
+                                     keyEquivalent: "")
+        appMenu.addItem(showAllItem)
+
+        appMenu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "AI Monitor beenden",
+                                  action: #selector(NSApplication.terminate(_:)),
+                                  keyEquivalent: "q")
+        quitItem.keyEquivalentModifierMask = [.command]
+        appMenu.addItem(quitItem)
+
+        appMenuItem.submenu = appMenu
+
+        // Fenster-Menue (Minimize + Schliessen — Standard-Slots)
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "Fenster")
+
+        let minimizeItem = NSMenuItem(title: "Im Dock ablegen",
+                                      action: #selector(NSWindow.performMiniaturize(_:)),
+                                      keyEquivalent: "m")
+        minimizeItem.keyEquivalentModifierMask = [.command]
+        windowMenu.addItem(minimizeItem)
+
+        let closeItem = NSMenuItem(title: "Schließen",
+                                   action: #selector(NSWindow.performClose(_:)),
+                                   keyEquivalent: "w")
+        closeItem.keyEquivalentModifierMask = [.command]
+        windowMenu.addItem(closeItem)
+
+        windowMenuItem.submenu = windowMenu
+        NSApp.windowsMenu = windowMenu
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func menuShowAbout() {
+        let alert = NSAlert()
+        alert.messageText = "AI Monitor v\(kAppVersion)"
+        alert.informativeText = """
+        macOS-Hintergrund-App für das ESP32-Usage-Display.
+
+        Liest Claude- und Codex-Nutzung aus der lokalen CodexBar-App \
+        (widget-snapshot.json im Group Container) und sendet Session- und \
+        Weekly-Werte per USB-Serial an das ESP32-Display.
+
+        Repo: github.com/tobymarks/esp32-ai-monitor
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    @objc private func menuCheckAppUpdate() {
+        runAppUpdateCheck()
+    }
+
+    @objc private func menuShowSettings() {
+        settingsController?.show()
     }
 
     /// Wird aufgerufen, wenn die App aus Spotlight/Finder erneut gestartet wird.
