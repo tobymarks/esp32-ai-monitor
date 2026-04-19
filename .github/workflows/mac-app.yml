@@ -71,16 +71,28 @@ jobs:
           path: companion-v2/build/AIMonitor.dmg
           if-no-files-found: warn
 
-      - name: Attach assets to GitHub Release
+      # Ab v1.13.0: Der CI-Build ist nur ad-hoc-signiert und würde manuell
+      # hochgeladene, signierte + notarisierte + gestapelte Assets vom lokalen
+      # Build überschreiben. Guard: Nur hochladen, wenn keine Release-Assets
+      # existieren (= CI läuft vor dem manuellen Release-Upload) ODER wenn
+      # explizit per workflow_dispatch mit upload_to_release=true getriggert.
+      # Sobald Tobias die Signing-Secrets (.p12 Base64 + Notary-Creds) als
+      # GitHub-Secrets hinterlegt, wird dieser Guard entfernt und CI übernimmt
+      # Signing/Notarization komplett.
+      - name: Attach assets to GitHub Release (guarded)
         if: startsWith(github.ref, 'refs/tags/app-v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          echo "Uploading assets to release $TAG"
-          # Release muss bereits existieren (wir legen ihn aktuell per curl
-          # manuell an). Assets nach-hochladen — --clobber überschreibt
-          # vorhandene Assets mit gleichem Namen.
+          # Prüfe, ob AIMonitor.zip bereits als Release-Asset existiert. Wenn
+          # ja: lokaler Build war zuerst da (signiert + stapled) — CI-Assets
+          # NICHT überschreiben.
+          if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | grep -q "^AIMonitor.zip$"; then
+            echo "Release $TAG already has AIMonitor.zip — assuming stapled local build. Skipping CI upload."
+            exit 0
+          fi
+          echo "No existing assets — uploading CI build to $TAG."
           gh release upload "$TAG" \
             companion-v2/build/AIMonitor.zip \
             companion-v2/build/AIMonitor.dmg \
