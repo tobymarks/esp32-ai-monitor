@@ -439,7 +439,6 @@ void ui_dashboard_update(const MonitorState &state) {
     // ---- Session + Weekly blocks ----
     if (state.usage.valid) {
         char buf[32];
-        char reset_buf[48];
 
         // --- Session percent ---
         format_percentage(state.usage.five_hour_utilization, buf, sizeof(buf));
@@ -459,10 +458,9 @@ void ui_dashboard_update(const MonitorState &state) {
             lv_obj_set_style_bg_color(bar_session, session_color, LV_PART_INDICATOR);
         }
 
-        // --- Session reset ---
-        format_countdown_long(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
-        snprintf(reset_buf, sizeof(reset_buf), L(STR_RESETS_IN), buf);
-        lv_label_set_text(lbl_session_reset, reset_buf);
+        // --- Session reset (compact, no "Reset in" prefix) ---
+        format_reset_compact(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
+        lv_label_set_text(lbl_session_reset, buf);
 
         // --- Weekly percent ---
         format_percentage(state.usage.seven_day_utilization, buf, sizeof(buf));
@@ -482,14 +480,10 @@ void ui_dashboard_update(const MonitorState &state) {
             lv_obj_set_style_bg_color(bar_weekly, weekly_color, LV_PART_INDICATOR);
         }
 
-        // --- Weekly reset (formatted target date for portrait; shorter
-        //     countdown for landscape so it fits under the arc) ---
-        char wbuf[48];
-        if (landscape_layout) {
-            format_countdown(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
-        } else {
-            format_reset_date(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
-        }
+        // --- Weekly reset (unified compact form in both orientations,
+        //     no "Reset in" prefix) ---
+        char wbuf[32];
+        format_reset_compact(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
         lv_label_set_text(lbl_weekly_reset, wbuf);
 
     } else if (strlen(state.usage.error) > 0) {

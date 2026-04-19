@@ -51,6 +51,11 @@ void format_countdown_long(time_t reset_epoch, char *buf, size_t len);
 // Format reset as target date: "Freitag, 18:00 Uhr" / "Friday, 6:00 PM"
 void format_reset_date(time_t reset_epoch, char *buf, size_t len);
 
+// Format reset as compact countdown, abbreviated, no prefix:
+//   "4 Tg. 13 Std." / "1 Std. 46 Min." / "46 Min." / "< 1 Min."
+// (EN fallback: "4d 13h" / "1h 46m" / "46m" / "< 1m")
+void format_reset_compact(time_t reset_epoch, char *buf, size_t len);
+
 // Return bar color based on utilization level
 lv_color_t ui_bar_color(float utilization);
 

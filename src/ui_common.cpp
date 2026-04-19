@@ -276,6 +276,59 @@ void format_countdown_long(time_t reset_epoch, char *buf, size_t len) {
 }
 
 // ============================================================
+// Compact reset countdown, abbreviated, no prefix.
+//   DE: "4 Tg. 13 Std." / "1 Std. 46 Min." / "46 Min." / "< 1 Min."
+//   EN: "4d 13h"        / "1h 46m"         / "46m"    / "< 1m"
+// Exact multiples (no sub-unit remainder) omit the smaller unit,
+// e.g. exactly 4 days -> "4 Tg." instead of "4 Tg. 0 Std.".
+// Numeric values never carry leading zeros.
+// ============================================================
+void format_reset_compact(time_t reset_epoch, char *buf, size_t len) {
+    if (reset_epoch <= 0) {
+        snprintf(buf, len, "--");
+        return;
+    }
+    time_t now = time(nullptr);
+    long diff = (long)(reset_epoch - now);
+
+    // Below one minute (including already-elapsed resets) -> "< 1 Min."
+    if (diff < 60) {
+        snprintf(buf, len, g_language == LANG_DE ? "< 1 Min." : "< 1m");
+        return;
+    }
+
+    long days  = diff / 86400;
+    long hours = (diff % 86400) / 3600;
+    long mins  = (diff % 3600) / 60;
+
+    if (g_language == LANG_DE) {
+        if (days > 0 && hours > 0) {
+            snprintf(buf, len, "%ld Tg. %ld Std.", days, hours);
+        } else if (days > 0) {
+            snprintf(buf, len, "%ld Tg.", days);
+        } else if (hours > 0 && mins > 0) {
+            snprintf(buf, len, "%ld Std. %ld Min.", hours, mins);
+        } else if (hours > 0) {
+            snprintf(buf, len, "%ld Std.", hours);
+        } else {
+            snprintf(buf, len, "%ld Min.", mins);
+        }
+    } else {
+        if (days > 0 && hours > 0) {
+            snprintf(buf, len, "%ldd %ldh", days, hours);
+        } else if (days > 0) {
+            snprintf(buf, len, "%ldd", days);
+        } else if (hours > 0 && mins > 0) {
+            snprintf(buf, len, "%ldh %ldm", hours, mins);
+        } else if (hours > 0) {
+            snprintf(buf, len, "%ldh", hours);
+        } else {
+            snprintf(buf, len, "%ldm", mins);
+        }
+    }
+}
+
+// ============================================================
 // Reset date: "Freitag, 18:00 Uhr" / "Friday, 6:00 PM"
 // ============================================================
 void format_reset_date(time_t reset_epoch, char *buf, size_t len) {
