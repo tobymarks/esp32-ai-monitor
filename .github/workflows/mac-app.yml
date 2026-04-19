@@ -36,6 +36,14 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Install PlatformIO (fuer esptool-Bundle in AI Monitor.app)
+        run: |
+          # build.sh kopiert das PlatformIO-esptool-Package in die App-Bundle-
+          # Resources. Ohne diesen Step faellt die gebaute App auf system-
+          # installiertes esptool zurueck und das ZIP/DMG ist ~8x kleiner.
+          python3 -m pip install --user --upgrade platformio
+          python3 -m platformio platform install espressif32 || true
+
       - name: Build AI Monitor.app (ad-hoc signing)
         working-directory: companion-v2
         run: |
