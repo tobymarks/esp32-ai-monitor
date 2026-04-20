@@ -37,12 +37,22 @@ static size_t serial_buf_pos = 0;
 static MonitorState state;
 static bool new_data_flag = false;
 static char display_time[6] = "--:--";
+static unsigned long last_toggle_provider_event_ms = 0;
 
 // ============================================================
 // Getter: display time string sent by Mac companion app
 // ============================================================
 const char* serial_get_display_time() {
     return display_time;
+}
+
+void serial_send_toggle_provider_request() {
+    const unsigned long now = millis();
+    if ((now - last_toggle_provider_event_ms) < 250) {
+        return;
+    }
+    last_toggle_provider_event_ms = now;
+    Serial.println("{\"type\":\"event\",\"event\":\"toggle_provider\",\"source\":\"touch\"}");
 }
 
 // ============================================================
@@ -359,6 +369,7 @@ void serial_receiver_init() {
     strlcpy(state.status, L(STR_WAITING), sizeof(state.status));
     new_data_flag = false;
     strlcpy(display_time, "--:--", sizeof(display_time));
+    last_toggle_provider_event_ms = 0;
 
     Serial.println("[Serial] Receiver initialized — waiting for USB data");
 }

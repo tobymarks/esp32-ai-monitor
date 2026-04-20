@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.12.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.15.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude ODER Codex — per Umschalter im Settings-Fenster.
@@ -7,9 +7,8 @@
  * und beim Reopen-Event (Spotlight / Finder-Doppelklick).
  * ESP32-Protokoll: Envelope um `provider`-Feld erweitert (String, „claude"|„codex").
  *
- * v1.12.0: Backlog-Batch (Zeitzone konfigurierbar, CI/CD Mac-Build, DMG-Wrapper,
- * mehrstufige Firmware-Flash-Phasen, UserDefaults-Suite-Warning gefixt,
- * Flaticon-Attribution im About-Dialog, Remote-URL Legacy-PAT-Cleanup).
+ * v1.15.1: ESP32-Tap kann den Provider direkt anfordern; die App liest das
+ * Event asynchron vom Serial-Port und toggelt Claude/Codex ohne Reconnect.
  *
  * Build: ./build.sh
  * Run:   open "build/AI Monitor.app"
@@ -28,7 +27,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.15.0"
+let kAppVersion = "1.15.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -1363,6 +1362,8 @@ class SerialPortManager {
     private(set) var connectedPort: String?
     private var scanTimer: Timer?
     private var lastDisconnectAt: Date?
+    private let eventReaderQueue = DispatchQueue(label: "de.aimonitor.serial.events", qos: .utility)
+    private var eventReaderGeneration: UInt64 = 0
     // Nach einem Firmware-Reboot (Legacy-Pfad) dauerte das Wiederherstellen der
     // USB-CDC-Schnittstelle ~2-3 s. Frueher: 5 s Blockwindow = spuerbarer Delay.
     // v1.9.0: auf 1 s reduziert, da v2.8.0-Firmware orientation/theme ohne Reboot
@@ -1374,6 +1375,7 @@ class SerialPortManager {
     /// ueberschreiben. 5 s deckt auch langsamere CYD-Klone ab.
     private let kGetInfoTimeout: TimeInterval = 5
     var onConnect: (() -> Void)?
+    var onProviderToggleRequest: (() -> Void)?
     var deviceFirmwareVersion: String?
 
     /// Ab v1.14.2: Lebenszyklus-Status der aktuellen Verbindung. Die UI (und
@@ -1523,6 +1525,7 @@ class SerialPortManager {
                     self.resolveDeviceProfile(forMAC: effectiveMAC,
                                              reportedBrightness: json["brightness"] as? Int,
                                              reportedDisplay: reportedDisplay)
+                    self.startEventReader(for: fd)
                     handled = true
                     break
                 }
@@ -1587,6 +1590,7 @@ class SerialPortManager {
                 self.resolveDeviceProfile(forMAC: effectiveMAC,
                                          reportedBrightness: json["brightness"] as? Int,
                                          reportedDisplay: reportedDisplay)
+                self.startEventReader(for: probeFD)
                 DispatchQueue.main.async { self.onConnect?() }
                 return
             }
@@ -1598,6 +1602,7 @@ class SerialPortManager {
         connectedPort = nil
         lastDisconnectAt = Date()
         state = .disconnected
+        eventReaderGeneration &+= 1
     }
 
     /// Mappt eine per `get_info` gemeldete MAC auf ein `DeviceProfile`. Legt ein
@@ -1699,6 +1704,37 @@ class SerialPortManager {
         return send(data: data)
     }
 
+    private func startEventReader(for fd: Int32) {
+        guard fd >= 0 else { return }
+        eventReaderGeneration &+= 1
+        let generation = eventReaderGeneration
+        eventReaderQueue.async { [weak self] in
+            guard let self = self else { return }
+            while self.fileDescriptor == fd
+                    && self.state == .connected
+                    && self.eventReaderGeneration == generation {
+                guard let line = self.readLine(timeout: 1.0) else { continue }
+                self.handleIncomingDeviceLine(line)
+            }
+        }
+    }
+
+    private func handleIncomingDeviceLine(_ line: String) {
+        guard line.hasPrefix("{"),
+              let jsonData = line.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let type = (json["type"] as? String)?.lowercased() else {
+            return
+        }
+
+        if type == "event",
+           let event = (json["event"] as? String)?.lowercased(),
+           event == "toggle_provider" {
+            NSLog("[Serial] Device requested provider toggle")
+            DispatchQueue.main.async { self.onProviderToggleRequest?() }
+        }
+    }
+
     func readLine(timeout: TimeInterval = 2.0) -> String? {
         guard fileDescriptor >= 0 else { return nil }
         var buffer = [UInt8]()
@@ -1762,6 +1798,11 @@ class UsageMonitor {
         }
     }
 
+    func toggleSelectedProvider() {
+        let toggled = (codexBar.provider == "codex") ? "claude" : "codex"
+        setSelectedProvider(toggled)
+    }
+
     func start() {
         // CodexBar-Source: liefert neue Daten → Push an ESP32
         codexBar.onChange = { [weak self] in
@@ -1794,6 +1835,9 @@ class UsageMonitor {
             if self.codexBar.status.isOK {
                 self.sendUsageToESP32()
             }
+        }
+        serialPort.onProviderToggleRequest = { [weak self] in
+            self?.toggleSelectedProvider()
         }
         serialPort.startScanning()
 

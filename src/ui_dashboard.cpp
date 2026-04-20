@@ -19,13 +19,12 @@
  * +---------------------------+
  *
  * Touch:
- *   Tap         -> Detail screen
+ *   Tap         -> Toggle provider (Claude/Codex) via Mac app
  *   Long press  -> Settings screen
  */
 
 #include "ui_dashboard.h"
 #include "ui_common.h"
-#include "ui_detail.h"
 #include "ui_settings.h"
 #include "config.h"
 #include "localization.h"
@@ -100,9 +99,8 @@ static inline bool widgets_ready() {
 // ============================================================
 static void on_tap(lv_event_t *e) {
     (void)e;
-    if (state_stored && last_state.usage.valid) {
-        ui_detail_create(last_state);
-    }
+    serial_send_toggle_provider_request();
+    Serial.println("[UI] Tap -> toggle provider request");
 }
 
 static void on_long_press(lv_event_t *e) {
@@ -355,7 +353,7 @@ void ui_dashboard_create() {
     lv_obj_clear_flag(long_press_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(long_press_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(long_press_overlay, LV_OBJ_FLAG_CLICK_FOCUSABLE);
-    lv_obj_add_event_cb(long_press_overlay, on_tap, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(long_press_overlay, on_tap, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_add_event_cb(long_press_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
     lv_obj_move_to_index(long_press_overlay, 0);
 

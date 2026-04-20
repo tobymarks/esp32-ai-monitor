@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.15.0"
+APP_VERSION="1.15.1"
 
 # Developer ID Signing (ab v1.13.0) — optional. Wenn die Identity nicht im
 # Keychain ist (z.B. CI-Runner ohne Cert-Import), fallen wir auf Ad-hoc-Sign
@@ -58,12 +58,32 @@ cp Resources/MenuBarIconTemplate@2x.png "$APP/Contents/Resources/" 2>/dev/null |
 
 # Bundle esptool from PlatformIO (full package with dependencies)
 ESPTOOL_DIR="$HOME/.platformio/packages/tool-esptoolpy"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || true)}"
 if [ -d "$ESPTOOL_DIR" ]; then
   mkdir -p "$APP/Contents/Resources/esptool-pkg"
   cp "$ESPTOOL_DIR/esptool.py" "$APP/Contents/Resources/esptool-pkg/"
   cp -R "$ESPTOOL_DIR/esptool" "$APP/Contents/Resources/esptool-pkg/"
   cp -R "$ESPTOOL_DIR/_contrib" "$APP/Contents/Resources/esptool-pkg/" 2>/dev/null || true
-  echo "Bundled esptool package from PlatformIO"
+  if [ -n "$PYTHON_BIN" ]; then
+    "$PYTHON_BIN" -m pip install --disable-pip-version-check --no-compile --upgrade \
+      --target "$APP/Contents/Resources/esptool-pkg" \
+      "bitstring>=3.1.6,!=4.2.0" \
+      "cryptography>=2.1.4" \
+      "ecdsa>=0.16.0" \
+      "pyserial>=3.3" \
+      "reedsolo>=1.5.3,<1.8" \
+      "PyYAML>=5.1" \
+      "intelhex" \
+      "argcomplete>=3"
+    if "$PYTHON_BIN" "$APP/Contents/Resources/esptool-pkg/esptool.py" version >/dev/null 2>&1; then
+      echo "Bundled esptool package from PlatformIO (dependencies verified)"
+    else
+      echo "ERROR: Bundled esptool verification failed"
+      exit 1
+    fi
+  else
+    echo "WARNING: python3 not found, cannot vendor esptool dependencies"
+  fi
 else
   echo "WARNING: PlatformIO esptool not found at $ESPTOOL_DIR"
   echo "  Firmware flashing will use system-installed esptool (pip3 install esptool)"
