@@ -68,6 +68,10 @@ static bool state_stored = false;
 
 // Long-press overlay
 static lv_obj_t *long_press_overlay = nullptr;
+static uint32_t tap_press_started_ms = 0;
+static bool tap_long_press_handled = false;
+static lv_point_t tap_press_point = {0, 0};
+static bool tap_press_point_valid = false;
 
 // Splash overlay (shown until first data arrives)
 static lv_obj_t *splash_overlay     = nullptr;
@@ -97,14 +101,49 @@ static inline bool widgets_ready() {
 // ============================================================
 // Event handlers
 // ============================================================
-static void on_tap(lv_event_t *e) {
+static void on_press_start(lv_event_t *e) {
     (void)e;
+    tap_press_started_ms = lv_tick_get();
+    tap_long_press_handled = false;
+    tap_press_point_valid = false;
+
+    lv_indev_t *indev = lv_indev_active();
+    if (indev != nullptr) {
+        lv_indev_get_point(indev, &tap_press_point);
+        tap_press_point_valid = true;
+    }
+}
+
+static void on_tap_release(lv_event_t *e) {
+    (void)e;
+    if (tap_long_press_handled) {
+        return;
+    }
+
+    if (tap_press_started_ms == 0 || lv_tick_elaps(tap_press_started_ms) > 700) {
+        return;
+    }
+
+    lv_indev_t *indev = lv_indev_active();
+    if (tap_press_point_valid && indev != nullptr) {
+        lv_point_t release_point;
+        lv_indev_get_point(indev, &release_point);
+        int32_t dx = release_point.x - tap_press_point.x;
+        int32_t dy = release_point.y - tap_press_point.y;
+        if (dx < 0) dx = -dx;
+        if (dy < 0) dy = -dy;
+        if (dx > 24 || dy > 24) {
+            return;
+        }
+    }
+
     serial_send_toggle_provider_request();
     Serial.println("[UI] Tap -> toggle provider request");
 }
 
 static void on_long_press(lv_event_t *e) {
     (void)e;
+    tap_long_press_handled = true;
     ui_settings_create();
     Serial.println("[UI] Long press -> Settings screen");
 }
@@ -353,13 +392,17 @@ void ui_dashboard_create() {
     lv_obj_clear_flag(long_press_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(long_press_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(long_press_overlay, LV_OBJ_FLAG_CLICK_FOCUSABLE);
-    lv_obj_add_event_cb(long_press_overlay, on_tap, LV_EVENT_SHORT_CLICKED, nullptr);
+    lv_obj_add_event_cb(long_press_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(long_press_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
     lv_obj_add_event_cb(long_press_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
-    lv_obj_move_to_index(long_press_overlay, 0);
+    lv_obj_move_foreground(long_press_overlay);
 
     memset(&last_state, 0, sizeof(last_state));
     state_stored = false;
     first_data_received = false;
+    tap_press_started_ms = 0;
+    tap_long_press_handled = false;
+    tap_press_point_valid = false;
 
     // ---- Splash overlay (covers full screen until first data) ----
     splash_overlay = lv_obj_create(scr_dashboard);
