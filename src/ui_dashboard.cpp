@@ -486,9 +486,11 @@ void ui_dashboard_update(const MonitorState &state) {
 
         // --- Weekly reset (unified compact form in both orientations,
         //     no "Reset in" prefix) ---
-        char wbuf[32];
-        format_reset_compact(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
-        lv_label_set_text(lbl_weekly_reset, wbuf);
+        {
+            char wbuf[32];
+            format_reset_compact(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
+            lv_label_set_text(lbl_weekly_reset, wbuf);
+        }
 
     } else if (strlen(state.usage.error) > 0) {
         lv_label_set_text(lbl_session_pct,   "ERR");

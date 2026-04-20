@@ -23,7 +23,15 @@ lv_color_t UI_COLOR_ANTHROPIC  = lv_color_hex(0xD97757);
 lv_color_t UI_COLOR_OPENAI     = lv_color_hex(0x0ACF83);
 lv_color_t UI_COLOR_BAR_BG     = lv_color_hex(0x4A4945);
 lv_color_t UI_COLOR_BAR_GREEN  = lv_color_hex(0x27AE60);
-lv_color_t UI_COLOR_BAR_YELLOW = lv_color_hex(0xE8B923);
+#if defined(ST7789_DRIVER)
+  // ST7789-Panel + LVGL verschieben Gelb-Toene in den Hellblau-Bereich;
+  // empirisch kalibrierter Hex-Wert der auf dem Display als Gelb erscheint.
+  // Root-Cause im Framework nicht identifiziert — Workaround per Hex-Shift.
+  // Siehe Thread: Multi-Kandidaten-Test am 2026-04-19/20.
+  lv_color_t UI_COLOR_BAR_YELLOW = lv_color_hex(0x23FFE8);
+#else
+  lv_color_t UI_COLOR_BAR_YELLOW = lv_color_hex(0xE8B923);
+#endif
 lv_color_t UI_COLOR_BAR_ORANGE = lv_color_hex(0xE67E22);
 lv_color_t UI_COLOR_BAR_RED    = lv_color_hex(0xE74C3C);
 lv_color_t UI_COLOR_SUCCESS    = lv_color_hex(0x27AE60);
@@ -49,7 +57,14 @@ void ui_apply_theme(uint8_t theme) {
         UI_COLOR_OPENAI     = lv_color_hex(0x04875F);  // 4.6:1 auf BG
         UI_COLOR_BAR_BG     = lv_color_hex(0xCFCBB8);  // deutlicher Bar-Track
         UI_COLOR_BAR_GREEN  = lv_color_hex(0x1B7A44);  // 4.9:1 auf BAR_BG
+#if defined(ST7789_DRIVER)
+        // ST7789-Panel rendert Yellow-Hex-Werte mit R/B-Kanal-Verschiebung;
+        // empirisch ermittelter Wert der auf dem Display als Gelb erscheint.
+        // Siehe Thread: Multi-Kandidaten-Test am 2026-04-19/20.
+        UI_COLOR_BAR_YELLOW = lv_color_hex(0x0BFFB8);
+#else
         UI_COLOR_BAR_YELLOW = lv_color_hex(0xB8860B);  // DarkGoldenrod, 3.4:1 auf BAR_BG
+#endif
         UI_COLOR_BAR_ORANGE = lv_color_hex(0xB85A16);  // 4.2:1 auf BAR_BG
         UI_COLOR_BAR_RED    = lv_color_hex(0xB23127);  // 5.4:1 auf BAR_BG
         UI_COLOR_SUCCESS    = lv_color_hex(0x1B7A44);
@@ -69,7 +84,15 @@ void ui_apply_theme(uint8_t theme) {
         UI_COLOR_OPENAI     = lv_color_hex(0x0ACF83);
         UI_COLOR_BAR_BG     = lv_color_hex(0x4A4945);
         UI_COLOR_BAR_GREEN  = lv_color_hex(0x27AE60);
+#if defined(ST7789_DRIVER)
+        // ST7789-Panel + LVGL verschieben Gelb-Toene in den Hellblau-Bereich;
+        // empirisch kalibrierter Hex-Wert der auf dem Display als Gelb erscheint.
+        // Root-Cause im Framework nicht identifiziert — Workaround per Hex-Shift.
+        // Siehe Thread: Multi-Kandidaten-Test am 2026-04-19/20.
+        UI_COLOR_BAR_YELLOW = lv_color_hex(0x23FFE8);
+#else
         UI_COLOR_BAR_YELLOW = lv_color_hex(0xE8B923);
+#endif
         UI_COLOR_BAR_ORANGE = lv_color_hex(0xE67E22);
         UI_COLOR_BAR_RED    = lv_color_hex(0xE74C3C);
         UI_COLOR_SUCCESS    = lv_color_hex(0x27AE60);

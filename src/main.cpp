@@ -144,6 +144,7 @@ static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 
     tft.startWrite();
     tft.setAddrWindow(area->x1, area->y1, w, h);
+    // LVGL-disp-flush swapt Bytes; Panel-RGB-Default ohne BGR-Override.
     tft.pushColors((uint16_t *)px_map, w * h, true);
     tft.endWrite();
 
@@ -231,13 +232,31 @@ void setup()
     Serial.printf("%s v%s (USB-Serial)\n", APP_NAME, APP_VERSION);
     Serial.println("========================================");
 
-    // --- Backlight PWM via LEDC (allows set_brightness) ---
+    // --- TFT init FIRST ---
+    // Wichtig: tft.init() darf NICHT nach unserem LEDC-Attach laufen —
+    // TFT_eSPI wuerde den Pin sonst ueberschreiben, falls TFT_BL definiert
+    // waere. Wir haben TFT_BL bewusst NICHT in platformio.ini gesetzt,
+    // aber tft.init() bleibt trotzdem vor dem Backlight-Attach, um die
+    // SPI-Peripherie (inkl. Panel-Reset-Sequenz) sauber hochzubringen.
+    tft.init();
+
+    // Deterministischer Reset des Panel-INVON/INVOFF-Registers.
+    // Vorherige Color-Tests koennten Inversion persistent im ST7789-Register
+    // haengen lassen (Hintergrund hell statt dunkel trotz Dark-Mode).
+    // invertDisplay(false) zwingt das Panel explizit in den Nicht-Invertiert-Modus.
+    tft.invertDisplay(false);
+
+    // --- Backlight PWM via LEDC (v2.10.2) ---
+    // Reihenfolge: ledcSetup -> ledcAttachPin -> ledcWrite.
+    // KEIN pinMode / digitalWrite danach — das wuerde den Pin wieder aus
+    // PWM-Mode rausreissen. Channel 7 (nicht 0), um nicht mit TFT_eSPI
+    // internen Channels zu kollidieren.
     ledcSetup(BACKLIGHT_LEDC_CHANNEL, BACKLIGHT_LEDC_FREQ_HZ, BACKLIGHT_LEDC_RES_BITS);
     ledcAttachPin(PIN_TFT_BL, BACKLIGHT_LEDC_CHANNEL);
     ledcWrite(BACKLIGHT_LEDC_CHANNEL, 255); // full on until NVS loaded
-
-    // --- TFT init ---
-    tft.init();
+    Serial.printf("[BL] LEDC attached: pin=%d ch=%d freq=%uHz res=%ubit duty=255\n",
+                  PIN_TFT_BL, BACKLIGHT_LEDC_CHANNEL,
+                  BACKLIGHT_LEDC_FREQ_HZ, BACKLIGHT_LEDC_RES_BITS);
 
     // Load orientation + theme + brightness from NVS
     config_load(g_config);

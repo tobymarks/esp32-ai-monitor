@@ -8,7 +8,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.10.1"
+#define APP_VERSION "2.10.2"
 #define APP_NAME    "AI Usage Monitor"
 
 // Display-Controller-ID (aus Build-Flags abgeleitet, Compile-Zeit).
@@ -31,6 +31,10 @@
 #define PIN_TFT_CS    15
 #define PIN_TFT_DC     2
 #define PIN_TFT_RST   -1  // Connected to EN/reset
+// Backlight-Pin: GPIO 21 fuer BEIDE Varianten (ILI9341 + ST7789).
+// Authoritative Pinout-Tabelle (Tobias, ESP32-2432S028 Hybrid):
+// GPIO 21 = Backlight fuer R- und Non-R-Charge. Kein GPIO 27 — das ist
+// der freie CN1-Header-Pin (10k Pullup).
 #define PIN_TFT_BL    21  // Backlight: HIGH = on
 
 // --- Touch (XPT2046 on HSPI) ---
@@ -112,8 +116,10 @@ extern uint16_t SCREEN_HEIGHT;
 #define BRIGHTNESS_MIN_PERCENT  5      // nie komplett aus — sonst Display "verloren"
 #define BRIGHTNESS_MAX_PERCENT  100
 #define BRIGHTNESS_DEFAULT_PERCENT 80
-#define BACKLIGHT_LEDC_CHANNEL  0
-#define BACKLIGHT_LEDC_FREQ_HZ  5000
+// Channel 7 (nicht 0), um Kollisionen mit TFT_eSPI-internen LEDC-Channels
+// zu vermeiden. Frequenz 12 kHz / 8-bit Duty. v2.10.2.
+#define BACKLIGHT_LEDC_CHANNEL  7
+#define BACKLIGHT_LEDC_FREQ_HZ  12000
 #define BACKLIGHT_LEDC_RES_BITS 8      // 0..255 duty
 
 // ============================================================
