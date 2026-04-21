@@ -10,8 +10,10 @@
  * uns aber das `version`-Feld der entsprechenden History-Datei.
  *
  * Datenquelle (beide Provider):
- *  ~/Library/Group Containers/group.com.steipete.codexbar/widget-snapshot.json
+ *  ~/Library/Group Containers/<container>.com.steipete.codexbar/widget-snapshot.json
  *  → entries[] mit `provider`-Feld („claude" / „codex")
+ *  (ab CodexBar 0.22 kann der Container Team-ID-präfixiert sein, z.B.
+ *   Y5PE65HELJ.com.steipete.codexbar)
  *
  * Schema-Check:
  *  ~/Library/Application Support/com.steipete.codexbar/history/{claude,codex}.json
@@ -100,7 +102,8 @@ final class CodexBarSource {
     static let kPollInterval: TimeInterval = 30
 
     // Pfade
-    static let widgetSnapshotPath = NSString("~/Library/Group Containers/group.com.steipete.codexbar/widget-snapshot.json").expandingTildeInPath
+    static let groupContainersRootPath = NSString("~/Library/Group Containers").expandingTildeInPath
+    static let legacyWidgetSnapshotPath = NSString("~/Library/Group Containers/group.com.steipete.codexbar/widget-snapshot.json").expandingTildeInPath
     static let historyDirectoryPath = NSString("~/Library/Application Support/com.steipete.codexbar/history").expandingTildeInPath
 
     /// Aktiver Provider („claude" | „codex"). Darf zur Laufzeit über
@@ -120,6 +123,7 @@ final class CodexBarSource {
     private var pollTimer: Timer?
     private var fileWatcher: DispatchSourceFileSystemObject?
     private var watchedFD: Int32 = -1
+    private var watchedSnapshotPath: String?
 
     // MARK: - Init / Lifecycle
 
@@ -179,12 +183,16 @@ final class CodexBarSource {
         // Snapshot entscheidet.
 
         // 2. widget-snapshot.json laden
-        guard let data = FileManager.default.contents(atPath: Self.widgetSnapshotPath) else {
+        guard let snapshotPath = resolveWidgetSnapshotPath(),
+              let data = FileManager.default.contents(atPath: snapshotPath) else {
             status = .missing
             lastEntry = nil
-            NSLog("[CodexBar] widget-snapshot.json not found at %@", Self.widgetSnapshotPath)
+            NSLog("[CodexBar] widget-snapshot.json not found in Group Containers")
             notify()
             return status
+        }
+        if watchedSnapshotPath != snapshotPath {
+            startFileWatch()
         }
 
         let snapshot: CodexBarSnapshot
@@ -268,13 +276,17 @@ final class CodexBarSource {
     private func startFileWatch() {
         stopFileWatch()
 
-        let path = Self.widgetSnapshotPath
+        guard let path = resolveWidgetSnapshotPath() else {
+            // Datei existiert nicht — wir probieren beim nächsten Poll erneut.
+            return
+        }
         let fd = open(path, O_EVTONLY)
         if fd < 0 {
             // Datei existiert nicht — wir probieren beim nächsten Poll erneut.
             return
         }
         watchedFD = fd
+        watchedSnapshotPath = path
 
         let src = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
@@ -302,6 +314,7 @@ final class CodexBarSource {
                 close(self.watchedFD)
                 self.watchedFD = -1
             }
+            self.watchedSnapshotPath = nil
         }
         src.resume()
         fileWatcher = src
@@ -310,6 +323,38 @@ final class CodexBarSource {
     private func stopFileWatch() {
         fileWatcher?.cancel()
         fileWatcher = nil
+    }
+
+    /// Sucht den aktuellsten vorhandenen widget-snapshot.json-Pfad in allen
+    /// CodexBar-Group-Containern (legacy + Team-ID-präfixierte Varianten).
+    private func resolveWidgetSnapshotPath() -> String? {
+        var candidates = [String]()
+        candidates.append(Self.legacyWidgetSnapshotPath)
+
+        let fm = FileManager.default
+        if let containerNames = try? fm.contentsOfDirectory(atPath: Self.groupContainersRootPath) {
+            for name in containerNames where name.hasSuffix(".com.steipete.codexbar") {
+                let path = (Self.groupContainersRootPath as NSString)
+                    .appendingPathComponent(name)
+                let snapshot = (path as NSString).appendingPathComponent("widget-snapshot.json")
+                candidates.append(snapshot)
+            }
+        }
+
+        let existing = Array(Set(candidates)).filter { fm.fileExists(atPath: $0) }
+        guard !existing.isEmpty else { return nil }
+
+        var newestPath: String?
+        var newestDate = Date.distantPast
+        for path in existing {
+            let attrs = try? fm.attributesOfItem(atPath: path)
+            let mtime = attrs?[.modificationDate] as? Date ?? Date.distantPast
+            if mtime >= newestDate {
+                newestDate = mtime
+                newestPath = path
+            }
+        }
+        return newestPath
     }
 
     // MARK: - Helpers
