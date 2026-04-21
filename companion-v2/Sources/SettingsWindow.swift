@@ -19,6 +19,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Header
     private var providerSegmented: NSSegmentedControl!
+    private var appSettingsToggle: NSButton!
 
     // Linke Spalte — CodexBar
     private var codexBarStatusDot: NSTextField!
@@ -132,11 +133,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let headerDivider = makeHorizontalDivider()
         let footerDivider = makeHorizontalDivider()
         let footer = buildFooter()
+        let appBox = buildAppBox()
         let leftColumn = buildLeftColumn()
         let rightColumn = buildRightColumn()
         let columnDivider = makeVerticalDivider()
 
-        [header, headerDivider, leftColumn, rightColumn, columnDivider, footerDivider, footer].forEach {
+        [header, headerDivider, appBox, leftColumn, rightColumn, columnDivider, footerDivider, footer].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview($0)
         }
@@ -156,6 +158,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             headerDivider.topAnchor.constraint(equalTo: header.bottomAnchor),
             headerDivider.heightAnchor.constraint(equalToConstant: 1),
 
+            appBox.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
+            appBox.trailingAnchor.constraint(lessThanOrEqualTo: rightGuide, constant: -20),
+            appBox.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 10),
+            appBox.widthAnchor.constraint(equalToConstant: 440),
+
             // Footer
             footerDivider.leadingAnchor.constraint(equalTo: leftGuide),
             footerDivider.trailingAnchor.constraint(equalTo: rightGuide),
@@ -169,7 +176,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
             // Linke Spalte
             leftColumn.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
-            leftColumn.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 16),
+            leftColumn.topAnchor.constraint(equalTo: appBox.bottomAnchor, constant: 10),
             leftColumn.bottomAnchor.constraint(lessThanOrEqualTo: footerDivider.topAnchor, constant: -16),
             leftColumn.widthAnchor.constraint(equalToConstant: 440),
 
@@ -246,6 +253,46 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             footerAboutButton.trailingAnchor.constraint(equalTo: footerUpdateButton.leadingAnchor, constant: -16),
             footerAboutButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
+        return container
+    }
+
+    // MARK: - App
+
+    private func buildAppBox() -> NSView {
+        let container = NSView()
+
+        let heading = makeSectionHeading("App")
+        heading.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(heading)
+
+        appSettingsToggle = NSButton(checkboxWithTitle: "Menueleisten-Schnellmenue aktivieren",
+                                     target: self,
+                                     action: #selector(menuBarQuickMenuToggled))
+        appSettingsToggle.font = NSFont.systemFont(ofSize: 13)
+        appSettingsToggle.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(appSettingsToggle)
+
+        let helper = NSTextField(labelWithString: "Zeigt ein NSStatusItem mit Provider-Auswahl und Einstellungen.")
+        helper.font = NSFont.systemFont(ofSize: 11)
+        helper.textColor = .secondaryLabelColor
+        helper.lineBreakMode = .byWordWrapping
+        helper.maximumNumberOfLines = 2
+        helper.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(helper)
+
+        NSLayoutConstraint.activate([
+            heading.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            heading.topAnchor.constraint(equalTo: container.topAnchor),
+
+            appSettingsToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            appSettingsToggle.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
+
+            helper.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            helper.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+            helper.topAnchor.constraint(equalTo: appSettingsToggle.bottomAnchor, constant: 4),
+            helper.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+
         return container
     }
 
@@ -740,6 +787,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             }
         }
 
+        if appSettingsToggle != nil {
+            appSettingsToggle.state = Settings.shared.menuBarQuickMenuEnabled ? .on : .off
+        }
+
         // CodexBar
         let src = monitor.codexBar
         let entry = src.lastEntry
@@ -1035,6 +1086,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let provider = CodexBarProvider.fromSegment(index: idx).rawValue
         monitor?.setSelectedProvider(provider)
         update()
+    }
+
+    @objc private func menuBarQuickMenuToggled() {
+        Settings.shared.menuBarQuickMenuEnabled = (appSettingsToggle.state == .on)
     }
 
     @objc private func reloadCodexBar() {

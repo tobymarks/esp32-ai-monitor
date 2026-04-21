@@ -1,10 +1,11 @@
 /**
- * AI Monitor v1.16.2 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.17.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
- * UI-Modus: LSUIElement=YES, unsichtbar. Kein Menubar-Icon. Settings-Fenster beim Launch
- * und beim Reopen-Event (Spotlight / Finder-Doppelklick).
+ * UI-Modus: LSUIElement=YES, unsichtbar. Menueleisten-Schnellmenue optional
+ * per Settings-Toggle. Settings-Fenster beim Launch und beim Reopen-Event
+ * (Spotlight / Finder-Doppelklick).
  * ESP32-Protokoll: Envelope um `provider`-Feld erweitert
  * (String, „claude" | „codex" | „antigravity").
  *
@@ -29,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.16.2"
+let kAppVersion = "1.17.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -71,6 +72,10 @@ let kLegacyTokenKeychainService = "de.aimonitor.token"
 /// Wie oft wir an den ESP32 senden (Session-Display-Clock lebt davon), wenn
 /// CodexBar-Daten stabil bleiben.
 let kSerialHeartbeatInterval: TimeInterval = 60
+
+extension Notification.Name {
+    static let settingsMenuBarQuickMenuChanged = Notification.Name("SettingsMenuBarQuickMenuChanged")
+}
 
 // ============================================================
 // MARK: - Localization
@@ -491,6 +496,18 @@ class Settings {
         set { defaults.set(newValue, forKey: "skippedAppVersion") }
     }
 
+    /// Optionales Menueleisten-Schnellmenue. Default: aus.
+    var menuBarQuickMenuEnabled: Bool {
+        get { defaults.bool(forKey: "menuBarQuickMenuEnabled") }
+        set {
+            let oldValue = menuBarQuickMenuEnabled
+            defaults.set(newValue, forKey: "menuBarQuickMenuEnabled")
+            if oldValue != newValue {
+                NotificationCenter.default.post(name: .settingsMenuBarQuickMenuChanged, object: self)
+            }
+        }
+    }
+
     /// Ab v1.14.0: Per-Device-Settings. Alle Display-Properties (Sprache,
     /// Orientation, Theme, Brightness) werden im `DeviceProfile` des aktuell
     /// verbundenen Geräts gehalten. Wenn noch kein Profil existiert
@@ -691,6 +708,7 @@ class Settings {
             "lastFirmwareCheck",
             "lastAppUpdateCheck",
             "skippedAppVersion",
+            "menuBarQuickMenuEnabled",
             "language",
             "orientation",
             "themeMode",
@@ -2103,12 +2121,14 @@ class UsageMonitor {
 // MARK: - App Delegate
 // ============================================================
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var monitor: UsageMonitor!
     var settingsController: SettingsWindowController!
     var appearanceObservation: NSKeyValueObservation?
     var firmwareCheckTimer: Timer?
     var appUpdateCheckTimer: Timer?
+    private var menuBarStatusItem: NSStatusItem?
+    private var menuBarQuickMenuObservation: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Best-effort Aufraeumen der alten Keychain-Eintraege (Anthropic OAuth Cache).
@@ -2130,6 +2150,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         checkAppUpdate()
         scheduleAppUpdateCheckTimer()
 
+        menuBarQuickMenuObservation = NotificationCenter.default.addObserver(
+            forName: .settingsMenuBarQuickMenuChanged,
+            object: Settings.shared,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshMenuBarQuickMenu()
+        }
+
         // macOS-Appearance-Observer (für themeMode=system)
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
             if Settings.shared.themeMode == "system" {
@@ -2148,6 +2176,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsController = SettingsWindowController()
         settingsController.monitor = monitor
         settingsController.show()
+        refreshMenuBarQuickMenu()
 
         NSLog("[App] AI Monitor v%@ started (LSUIElement, CodexBar source)", kAppVersion)
     }
@@ -2157,6 +2186,96 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         settingsController?.show()
         return true
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuildMenuBarQuickMenu(menu)
+    }
+
+    private func refreshMenuBarQuickMenu() {
+        if Settings.shared.menuBarQuickMenuEnabled {
+            ensureMenuBarStatusItem()
+        } else {
+            removeMenuBarStatusItem()
+        }
+    }
+
+    private func ensureMenuBarStatusItem() {
+        if menuBarStatusItem != nil {
+            if let menu = menuBarStatusItem?.menu {
+                rebuildMenuBarQuickMenu(menu)
+            }
+            return
+        }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        guard let button = item.button else { return }
+
+        if let image = NSImage(named: "MenuBarIconTemplate") {
+            image.isTemplate = true
+            button.image = image
+            button.imagePosition = .imageOnly
+        } else {
+            button.title = "AI"
+        }
+        button.toolTip = "AI Monitor"
+
+        let menu = NSMenu(title: "AI Monitor")
+        menu.delegate = self
+        item.menu = menu
+        menuBarStatusItem = item
+        rebuildMenuBarQuickMenu(menu)
+    }
+
+    private func removeMenuBarStatusItem() {
+        if let item = menuBarStatusItem {
+            NSStatusBar.system.removeStatusItem(item)
+        }
+        menuBarStatusItem = nil
+    }
+
+    private func rebuildMenuBarQuickMenu(_ menu: NSMenu) {
+        menu.autoenablesItems = false
+        menu.removeAllItems()
+
+        let currentProvider = CodexBarProvider.normalized(Settings.shared.selectedProvider)
+        for provider in CodexBarProvider.allCases {
+            let item = NSMenuItem(title: provider.displayLabel,
+                                  action: #selector(selectMenuBarProvider(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = provider.rawValue as NSString
+            item.state = provider == currentProvider ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: "Einstellungen",
+                                      action: #selector(openSettingsFromMenu),
+                                      keyEquivalent: ",")
+        settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "AI Monitor beenden",
+                                  action: #selector(NSApplication.terminate(_:)),
+                                  keyEquivalent: "q")
+        quitItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(quitItem)
+    }
+
+    @objc private func selectMenuBarProvider(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String else { return }
+        monitor.setSelectedProvider(raw)
+        settingsController?.update()
+        refreshMenuBarQuickMenu()
+    }
+
+    @objc private func openSettingsFromMenu() {
+        settingsController?.show()
     }
 
     // ---- Unsichtbares Shortcut-Menue (nur fuer ⌘Q / ⌘W — kein UI) ----
