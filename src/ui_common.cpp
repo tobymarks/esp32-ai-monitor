@@ -19,8 +19,9 @@ lv_color_t UI_COLOR_ACCENT     = lv_color_hex(0xD97757);
 lv_color_t UI_COLOR_TEXT       = lv_color_hex(0xF4F3EE);
 lv_color_t UI_COLOR_TEXT_SEC   = lv_color_hex(0xA6A49A);
 lv_color_t UI_COLOR_TEXT_DIM   = lv_color_hex(0x5A5955);
-lv_color_t UI_COLOR_ANTHROPIC  = lv_color_hex(0xD97757);
-lv_color_t UI_COLOR_OPENAI     = lv_color_hex(0x0ACF83);
+lv_color_t UI_COLOR_ANTHROPIC  = lv_color_hex(COLOR_ANTHROPIC);
+lv_color_t UI_COLOR_OPENAI     = lv_color_hex(COLOR_OPENAI);
+lv_color_t UI_COLOR_ANTIGRAVITY = lv_color_hex(COLOR_ANTIGRAVITY);
 lv_color_t UI_COLOR_BAR_BG     = lv_color_hex(0x4A4945);
 lv_color_t UI_COLOR_BAR_GREEN  = lv_color_hex(0x27AE60);
 #if defined(ST7789_DRIVER)
@@ -53,8 +54,10 @@ void ui_apply_theme(uint8_t theme) {
         UI_COLOR_TEXT       = lv_color_hex(0x141413);  // 19:1 auf BG (AAA)
         UI_COLOR_TEXT_SEC   = lv_color_hex(0x44433F);  // 9.3:1 auf BG (AAA, stärker für Reset/Title)
         UI_COLOR_TEXT_DIM   = lv_color_hex(0x8A8880);  // 3.5:1 (für dekorative Labels ok)
-        UI_COLOR_ANTHROPIC  = lv_color_hex(0xB04E2E);  // synchron mit ACCENT
-        UI_COLOR_OPENAI     = lv_color_hex(0x04875F);  // 4.6:1 auf BG
+        // Provider-Hausfarben (fix, unabhängig von Utilization)
+        UI_COLOR_ANTHROPIC   = lv_color_hex(COLOR_ANTHROPIC);
+        UI_COLOR_OPENAI      = lv_color_hex(COLOR_OPENAI);
+        UI_COLOR_ANTIGRAVITY = lv_color_hex(COLOR_ANTIGRAVITY);
         UI_COLOR_BAR_BG     = lv_color_hex(0xCFCBB8);  // deutlicher Bar-Track
         UI_COLOR_BAR_GREEN  = lv_color_hex(0x1B7A44);  // 4.9:1 auf BAR_BG
 #if defined(ST7789_DRIVER)
@@ -80,8 +83,9 @@ void ui_apply_theme(uint8_t theme) {
         UI_COLOR_TEXT       = lv_color_hex(0xF4F3EE);
         UI_COLOR_TEXT_SEC   = lv_color_hex(0xA6A49A);
         UI_COLOR_TEXT_DIM   = lv_color_hex(0x5A5955);
-        UI_COLOR_ANTHROPIC  = lv_color_hex(0xD97757);
-        UI_COLOR_OPENAI     = lv_color_hex(0x0ACF83);
+        UI_COLOR_ANTHROPIC   = lv_color_hex(COLOR_ANTHROPIC);
+        UI_COLOR_OPENAI      = lv_color_hex(COLOR_OPENAI);
+        UI_COLOR_ANTIGRAVITY = lv_color_hex(COLOR_ANTIGRAVITY);
         UI_COLOR_BAR_BG     = lv_color_hex(0x4A4945);
         UI_COLOR_BAR_GREEN  = lv_color_hex(0x27AE60);
 #if defined(ST7789_DRIVER)
@@ -386,13 +390,18 @@ void format_reset_date(time_t reset_epoch, char *buf, size_t len) {
 }
 
 // ============================================================
-// Bar color based on utilization level
+// Usage-indicator color based on provider (fixed brand colors)
 // ============================================================
-lv_color_t ui_bar_color(float utilization) {
-    if (utilization >= 0.95f) return UI_COLOR_BAR_RED;
-    if (utilization >= 0.80f) return UI_COLOR_BAR_ORANGE;
-    if (utilization >= 0.50f) return UI_COLOR_BAR_YELLOW;
-    return UI_COLOR_BAR_GREEN;
+lv_color_t ui_bar_color(uint8_t provider) {
+    switch (provider) {
+        case PROVIDER_OPENAI:
+            return UI_COLOR_OPENAI;
+        case PROVIDER_ANTIGRAVITY:
+            return UI_COLOR_ANTIGRAVITY;
+        case PROVIDER_CLAUDE:
+        default:
+            return UI_COLOR_ANTHROPIC;
+    }
 }
 
 // ============================================================

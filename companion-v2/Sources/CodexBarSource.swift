@@ -1,22 +1,22 @@
 /**
  * CodexBarSource.swift — Liest AI-Provider-Usage-Daten aus der lokalen CodexBar-App.
  *
- * Ab v1.10.0 provider-parametrisiert: unterstützt Claude UND OpenAI Codex. Der
+ * Ab v1.10.0 provider-parametrisiert: unterstützt Claude, Codex und Antigravity. Der
  * aktive Provider wird über `provider` im Init/setProvider gesetzt (UserDefaults
- * „selectedProvider"). Das Schema von Codex ist strukturell identisch zu Claude
+ * „selectedProvider"). Das Schema ist strukturell identisch zwischen den Providern
  * im widget-snapshot.json (primary/secondary mit usedPercent/resetsAt/
- * windowMinutes). In der history/-Ablage weicht Codex ab: Daten liegen unter
+ * windowMinutes). In der history/-Ablage können Provider abweichen: Daten liegen teils unter
  * `accounts[<key>]` statt `unscoped[]` — für den Schema-Versions-Check reicht
  * uns aber das `version`-Feld der entsprechenden History-Datei.
  *
  * Datenquelle (beide Provider):
  *  ~/Library/Group Containers/<container>.com.steipete.codexbar/widget-snapshot.json
- *  → entries[] mit `provider`-Feld („claude" / „codex")
+ *  → entries[] mit `provider`-Feld („claude" / „codex" / „antigravity")
  *  (ab CodexBar 0.22 kann der Container Team-ID-präfixiert sein, z.B.
  *   Y5PE65HELJ.com.steipete.codexbar)
  *
  * Schema-Check:
- *  ~/Library/Application Support/com.steipete.codexbar/history/{claude,codex}.json
+ *  ~/Library/Application Support/com.steipete.codexbar/history/{claude,codex,antigravity}.json
  *  → `version`-Feld (aktuell 1).
  *
  * Design:
@@ -29,6 +29,50 @@
  */
 
 import Foundation
+
+enum CodexBarProvider: String, CaseIterable {
+    case claude
+    case codex
+    case antigravity
+
+    static let defaultProvider: CodexBarProvider = .claude
+
+    static func normalized(_ raw: String) -> CodexBarProvider {
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return CodexBarProvider(rawValue: cleaned) ?? defaultProvider
+    }
+
+    static func fromSegment(index: Int) -> CodexBarProvider {
+        guard index >= 0 && index < allCases.count else { return defaultProvider }
+        return allCases[index]
+    }
+
+    var segmentIndex: Int {
+        CodexBarProvider.allCases.firstIndex(of: self) ?? 0
+    }
+
+    var displayLabel: String {
+        switch self {
+        case .claude:
+            return "Claude"
+        case .codex:
+            return "Codex"
+        case .antigravity:
+            return "Antigravity"
+        }
+    }
+
+    var loginLabel: String {
+        switch self {
+        case .claude:
+            return "Claude Max"
+        case .codex:
+            return "Codex"
+        case .antigravity:
+            return "Antigravity"
+        }
+    }
+}
 
 // MARK: - Status-Enum
 
@@ -106,7 +150,7 @@ final class CodexBarSource {
     static let legacyWidgetSnapshotPath = NSString("~/Library/Group Containers/group.com.steipete.codexbar/widget-snapshot.json").expandingTildeInPath
     static let historyDirectoryPath = NSString("~/Library/Application Support/com.steipete.codexbar/history").expandingTildeInPath
 
-    /// Aktiver Provider („claude" | „codex"). Darf zur Laufzeit über
+    /// Aktiver Provider („claude" | „codex" | „antigravity"). Darf zur Laufzeit über
     /// `setProvider(_:)` gewechselt werden — anschliessend `loadOnce()` aufrufen
     /// (macht `setProvider` automatisch).
     private(set) var provider: String
@@ -127,7 +171,7 @@ final class CodexBarSource {
 
     // MARK: - Init / Lifecycle
 
-    init(provider: String = "claude") {
+    init(provider: String = CodexBarProvider.defaultProvider.rawValue) {
         self.provider = Self.normalizeProvider(provider)
     }
 
@@ -142,8 +186,7 @@ final class CodexBarSource {
     }
 
     private static func normalizeProvider(_ raw: String) -> String {
-        let v = raw.lowercased()
-        return (v == "codex" || v == "claude") ? v : "claude"
+        return CodexBarProvider.normalized(raw).rawValue
     }
 
     /// Pfad der History-Datei für den aktiven Provider (Schema-Version).

@@ -8,7 +8,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.10.4"
+#define APP_VERSION "2.11.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // Display-Controller-ID (aus Build-Flags abgeleitet, Compile-Zeit).
@@ -87,6 +87,7 @@ extern uint16_t SCREEN_HEIGHT;
 // ============================================================
 #define PROVIDER_CLAUDE   0
 #define PROVIDER_OPENAI   1
+#define PROVIDER_ANTIGRAVITY 2
 
 // ============================================================
 // Orientation options
@@ -143,8 +144,9 @@ struct AppConfig {
 #define COLOR_TEXT_SEC     0x8A8880
 #define COLOR_TEXT_DIM     0x5A5955
 #define COLOR_HIGHLIGHT    0x1F1E1B
-#define COLOR_ANTHROPIC    0xD97757
-#define COLOR_OPENAI       0x0ACF83
+#define COLOR_ANTHROPIC    0xCC7C5E
+#define COLOR_OPENAI       0x49A3B0
+#define COLOR_ANTIGRAVITY  0x60BA7E
 #define COLOR_BAR_BG       0x3A3937
 #define COLOR_STATUS_OK    0x27AE60
 #define COLOR_STATUS_ERR   0xE74C3C

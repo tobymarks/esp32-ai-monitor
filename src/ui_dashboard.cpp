@@ -187,7 +187,7 @@ static int16_t create_usage_block(
     lv_obj_set_style_bg_color(*out_bar, UI_COLOR_BAR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(*out_bar, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(*out_bar, 6, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(*out_bar, UI_COLOR_BAR_GREEN, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(*out_bar, ui_bar_color(PROVIDER_CLAUDE), LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(*out_bar, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_radius(*out_bar, 6, LV_PART_INDICATOR);
 
@@ -253,7 +253,7 @@ static void create_arc_block(
     lv_obj_set_style_arc_color(*out_arc, UI_COLOR_BAR_BG, LV_PART_MAIN);
     lv_obj_set_style_arc_opa(*out_arc, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_arc_width(*out_arc, 14, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(*out_arc, UI_COLOR_BAR_GREEN, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(*out_arc, ui_bar_color(PROVIDER_CLAUDE), LV_PART_INDICATOR);
     lv_obj_set_style_arc_opa(*out_arc, LV_OPA_COVER, LV_PART_INDICATOR);
 
     // Percent in arc centre
@@ -492,7 +492,7 @@ void ui_dashboard_update(const MonitorState &state) {
         int s_val = (int)(state.usage.five_hour_utilization * 100.0f);
         if (s_val < 0) s_val = 0;
         if (s_val > 100) s_val = 100;
-        lv_color_t session_color = ui_bar_color(state.usage.five_hour_utilization);
+        lv_color_t session_color = ui_bar_color(state.provider);
 
         if (landscape_layout && arc_session) {
             lv_arc_set_value(arc_session, s_val);
@@ -514,7 +514,7 @@ void ui_dashboard_update(const MonitorState &state) {
         int w_val = (int)(state.usage.seven_day_utilization * 100.0f);
         if (w_val < 0) w_val = 0;
         if (w_val > 100) w_val = 100;
-        lv_color_t weekly_color = ui_bar_color(state.usage.seven_day_utilization);
+        lv_color_t weekly_color = ui_bar_color(state.provider);
 
         if (landscape_layout && arc_weekly) {
             lv_arc_set_value(arc_weekly, w_val);

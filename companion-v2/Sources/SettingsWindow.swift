@@ -196,12 +196,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         title.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(title)
 
-        providerSegmented = NSSegmentedControl(labels: ["Claude", "Codex"],
+        providerSegmented = NSSegmentedControl(labels: CodexBarProvider.allCases.map(\.displayLabel),
                                                trackingMode: .selectOne,
                                                target: self,
                                                action: #selector(providerChosen))
         providerSegmented.segmentStyle = .rounded
-        providerSegmented.selectedSegment = (Settings.shared.selectedProvider == "codex") ? 1 : 0
+        providerSegmented.selectedSegment = CodexBarProvider
+            .normalized(Settings.shared.selectedProvider)
+            .segmentIndex
         providerSegmented.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(providerSegmented)
 
@@ -717,7 +719,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         // Provider-Segmented
         if providerSegmented != nil {
-            let wantIdx = (Settings.shared.selectedProvider == "codex") ? 1 : 0
+            let wantIdx = CodexBarProvider
+                .normalized(Settings.shared.selectedProvider)
+                .segmentIndex
             if providerSegmented.selectedSegment != wantIdx {
                 providerSegmented.selectedSegment = wantIdx
             }
@@ -760,7 +764,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             let msg: String
             switch src.status {
             case .missing:
-                let providerLabel = (src.provider == "codex") ? "Codex" : "Claude"
+                let providerLabel = CodexBarProvider.normalized(src.provider).displayLabel
                 msg = "Keine \(providerLabel)-Daten in CodexBar gefunden."
             case .stale(let age):
                 msg = "Daten sind \(age/60) Minuten alt."
@@ -1011,7 +1015,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func providerChosen() {
         let idx = providerSegmented.selectedSegment
-        let provider = (idx == 1) ? "codex" : "claude"
+        let provider = CodexBarProvider.fromSegment(index: idx).rawValue
         monitor?.setSelectedProvider(provider)
         update()
     }
@@ -1202,7 +1206,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         alert.informativeText = """
         macOS-Hintergrund-App für das ESP32-Usage-Display.
 
-        Liest Claude- und Codex-Nutzung aus der lokalen CodexBar-App \
+        Liest Claude-, Codex- und Antigravity-Nutzung aus der lokalen CodexBar-App \
         (widget-snapshot.json im Group Container) und sendet Session- und \
         Weekly-Werte per USB-Serial an das ESP32-Display.
 

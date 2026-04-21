@@ -16,6 +16,7 @@ extern lv_color_t UI_COLOR_TEXT_SEC;
 extern lv_color_t UI_COLOR_TEXT_DIM;
 extern lv_color_t UI_COLOR_ANTHROPIC;
 extern lv_color_t UI_COLOR_OPENAI;
+extern lv_color_t UI_COLOR_ANTIGRAVITY;
 extern lv_color_t UI_COLOR_BAR_BG;
 extern lv_color_t UI_COLOR_BAR_GREEN;
 extern lv_color_t UI_COLOR_BAR_YELLOW;
@@ -56,8 +57,8 @@ void format_reset_date(time_t reset_epoch, char *buf, size_t len);
 // (EN fallback: "4d 13h" / "1h 46m" / "46m" / "< 1m")
 void format_reset_compact(time_t reset_epoch, char *buf, size_t len);
 
-// Return bar color based on utilization level
-lv_color_t ui_bar_color(float utilization);
+// Return usage-indicator color for a provider (fixed brand color)
+lv_color_t ui_bar_color(uint8_t provider);
 
 // ============================================================
 // UI component builders

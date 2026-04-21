@@ -21,6 +21,7 @@
 #include <ArduinoJson.h>
 #include <esp_mac.h>
 #include <sys/time.h>
+#include <string.h>
 
 // ============================================================
 // Constants
@@ -38,6 +39,38 @@ static MonitorState state;
 static bool new_data_flag = false;
 static char display_time[6] = "--:--";
 static unsigned long last_toggle_provider_event_ms = 0;
+
+// ============================================================
+// Provider helpers
+// ============================================================
+static uint8_t provider_from_string(const char *raw) {
+    if (raw == nullptr || raw[0] == '\0') return PROVIDER_CLAUDE;
+
+    char normalized[16];
+    size_t i = 0;
+    while (raw[i] != '\0' && i < sizeof(normalized) - 1) {
+        char c = raw[i];
+        if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+        normalized[i++] = c;
+    }
+    normalized[i] = '\0';
+
+    if (strcmp(normalized, "codex") == 0) return PROVIDER_OPENAI;
+    if (strcmp(normalized, "antigravity") == 0) return PROVIDER_ANTIGRAVITY;
+    return PROVIDER_CLAUDE;
+}
+
+static const char* provider_label_from_id(uint8_t provider) {
+    switch (provider) {
+        case PROVIDER_OPENAI:
+            return "CODEX";
+        case PROVIDER_ANTIGRAVITY:
+            return "ANTIGRAVITY";
+        case PROVIDER_CLAUDE:
+        default:
+            return "CLAUDE";
+    }
+}
 
 // ============================================================
 // Getter: display time string sent by Mac companion app
@@ -319,22 +352,11 @@ static void parse_json(const char *json_str) {
     }
 
     // --- Provider label (v2.9.0+ envelope field) ---
-    // Companion-App sendet "claude" oder "codex" pro Frame. Fallback "claude"
-    // für alte App-Versionen ohne das Feld. Label wird für das Display-Header-
-    // Rendering uppercase gespeichert.
+    // Companion-App sendet "claude", "codex" oder "antigravity" pro Frame.
+    // Fallback bleibt "claude" für alte App-Versionen ohne Feld.
     const char *prov = data0["provider"];
-    if (!prov) prov = "claude";
-    // Uppercase-Copy in state.provider_label (max 15 Zeichen + NUL)
-    size_t n = 0;
-    while (prov[n] != '\0' && n < sizeof(state.provider_label) - 1) {
-        char c = prov[n];
-        if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
-        state.provider_label[n] = c;
-        n++;
-    }
-    state.provider_label[n] = '\0';
-    // Legacy-enum für bestehende Checks im Dashboard weiter pflegen
-    state.provider = (strcmp(prov, "codex") == 0) ? PROVIDER_OPENAI : PROVIDER_CLAUDE;
+    state.provider = provider_from_string(prov);
+    strlcpy(state.provider_label, provider_label_from_id(state.provider), sizeof(state.provider_label));
 
     // Mark data as valid
     state.usage.valid = true;

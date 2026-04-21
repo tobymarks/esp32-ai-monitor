@@ -52,6 +52,7 @@ static void detail_bar_row(
     lv_obj_t *parent,
     const char *label,
     float utilization,
+    lv_color_t usage_color,
     time_t reset_epoch,
     int16_t y,
     bool use_date_format = false
@@ -84,7 +85,7 @@ static void detail_bar_row(
     lv_obj_set_style_bg_color(bar, UI_COLOR_BAR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(bar, 5, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, ui_bar_color(utilization), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar, usage_color, LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar, 5, LV_PART_INDICATOR);
 
@@ -111,12 +112,11 @@ void ui_detail_create(const MonitorState &state) {
     ui_styles_init();
 
     const UsageData &data = state.usage;
-    // v2.9.0+: Label dynamisch aus dem Envelope (state.provider_label). Der
-    // state.provider-Enum steuert weiterhin die Akzentfarbe (Anthropic-Orange
-    // für Claude, OpenAI-Grün für Codex/OpenAI).
+    // v2.9.0+: Label dynamisch aus dem Envelope (state.provider_label).
     const char *provider_name = state.provider_label[0] != '\0' ? state.provider_label
-                                                                : ((state.provider == 1) ? "OPENAI" : "CLAUDE");
-    lv_color_t brand_color = (state.provider == 1) ? UI_COLOR_OPENAI : UI_COLOR_ANTHROPIC;
+                                                                : ((state.provider == PROVIDER_OPENAI) ? "CODEX"
+                                                                 : ((state.provider == PROVIDER_ANTIGRAVITY) ? "ANTIGRAVITY" : "CLAUDE"));
+    lv_color_t brand_color = ui_bar_color(state.provider);
 
     int16_t sw = SCREEN_WIDTH;
     int16_t sh = SCREEN_HEIGHT;
@@ -174,6 +174,7 @@ void ui_detail_create(const MonitorState &state) {
 
     detail_bar_row(scr, L(STR_SESSION_5H),
                    data.five_hour_utilization,
+                   brand_color,
                    data.five_hour_reset_epoch,
                    content_y,
                    false);
@@ -184,6 +185,7 @@ void ui_detail_create(const MonitorState &state) {
 
     detail_bar_row(scr, L(STR_WEEKLY_7D),
                    data.seven_day_utilization,
+                   brand_color,
                    data.seven_day_reset_epoch,
                    content_y,
                    true);
@@ -199,6 +201,7 @@ void ui_detail_create(const MonitorState &state) {
                  data.extra_used_credits, data.extra_monthly_limit);
         detail_bar_row(scr, L(STR_EXTRA_MONTHLY),
                        data.extra_utilization,
+                       brand_color,
                        0,
                        content_y);
         content_y += 60;
