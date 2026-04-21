@@ -446,6 +446,19 @@ final class DeviceRegistry {
 // MARK: - Settings Manager
 // ============================================================
 
+enum UsagePercentDisplayMode: String, CaseIterable {
+    case used
+    case remaining
+
+    static let defaultMode: UsagePercentDisplayMode = .used
+
+    static func normalized(_ raw: String?) -> UsagePercentDisplayMode {
+        guard let raw else { return defaultMode }
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return UsagePercentDisplayMode(rawValue: cleaned) ?? defaultMode
+    }
+}
+
 class Settings {
     static let shared = Settings()
     private let defaults: UserDefaults
@@ -586,6 +599,13 @@ class Settings {
             let norm = CodexBarProvider.normalized(newValue).rawValue
             defaults.set(norm, forKey: "selectedProvider")
         }
+    }
+
+    /// Globale Prozent-Logik für alle Provider auf dem ESP32:
+    /// `.used` = 0 → 100 verbraucht, `.remaining` = 100 → 0 verbleibend.
+    var usagePercentDisplayMode: UsagePercentDisplayMode {
+        get { UsagePercentDisplayMode.normalized(defaults.string(forKey: "usagePercentDisplayMode")) }
+        set { defaults.set(newValue.rawValue, forKey: "usagePercentDisplayMode") }
     }
 
     /// Gewählte Zeitzone für `displayTime` auf dem ESP32 und Reset-Berechnungen.
@@ -1802,13 +1822,6 @@ class UsageMonitor {
         }
     }
 
-    func toggleSelectedProvider() {
-        let toggled = (codexBar.provider == CodexBarProvider.codex.rawValue)
-            ? CodexBarProvider.claude.rawValue
-            : CodexBarProvider.codex.rawValue
-        setSelectedProvider(toggled)
-    }
-
     func start() {
         // CodexBar-Source: liefert neue Daten → Push an ESP32
         codexBar.onChange = { [weak self] in
@@ -1841,9 +1854,6 @@ class UsageMonitor {
             if self.codexBar.status.isOK {
                 self.sendUsageToESP32()
             }
-        }
-        serialPort.onProviderToggleRequest = { [weak self] in
-            self?.toggleSelectedProvider()
         }
         serialPort.startScanning()
 
@@ -1911,6 +1921,13 @@ class UsageMonitor {
         sendLastUsageSnapshotIfAvailable()
     }
 
+    /// Wird aus dem SettingsWindow aufgerufen, wenn die Prozent-Logik (used vs
+    /// remaining) geändert wurde. Ein sofortiger Resend aktualisiert alle
+    /// Provider-Ansichten konsistent ohne auf den Heartbeat zu warten.
+    func sendUsageSnapshotForPercentModeChange() {
+        sendLastUsageSnapshotIfAvailable()
+    }
+
     /// Sendet den aktuellen Brightness-Wert (0..100) an den ESP32. Persistenz
     /// liegt in NVS auf der Firmware; hier nur Cache für UI-Vorbelegung.
     func sendBrightnessToESP32(_ percent: Int) {
@@ -1933,12 +1950,49 @@ class UsageMonitor {
         guard serialPort.isReadyForCommands else { return }
         guard let entry = codexBar.lastEntry else { return }
 
-        let primaryPercent = Int((entry.primary?.usedPercent ?? 0).rounded())
-        let secondaryPercent = Int((entry.secondary?.usedPercent ?? 0).rounded())
+        // Provider aus der CodexBar-Source (normalisiert), nicht direkt aus
+        // Settings — das hält Envelope und tatsächlich gelesene Daten konsistent.
+        let provider = CodexBarProvider.normalized(codexBar.provider)
+        let activeProvider = provider.rawValue
+        let loginMethodLabel = provider.loginLabel
+
+        let percentMode = Settings.shared.usagePercentDisplayMode
+
+        func toDisplayPercentFromUsed(_ used: Int) -> Int {
+            let clampedUsed = max(0, min(100, used))
+            switch percentMode {
+            case .used:
+                return clampedUsed
+            case .remaining:
+                return 100 - clampedUsed
+            }
+        }
+
+        func toDisplayPercentFromRow(windowUsed: Int, rowPercentLeft: Double?) -> Int {
+            if let leftRaw = rowPercentLeft {
+                let left = max(0, min(100, Int(leftRaw.rounded())))
+                switch percentMode {
+                case .used:
+                    return 100 - left
+                case .remaining:
+                    return left
+                }
+            }
+            return toDisplayPercentFromUsed(windowUsed)
+        }
+
+        let primaryUsed = Int((entry.primary?.usedPercent ?? 0).rounded())
+        let secondaryUsed = Int((entry.secondary?.usedPercent ?? 0).rounded())
+        let tertiaryUsed = Int((entry.tertiary?.usedPercent ?? 0).rounded())
+        let primaryPercent = toDisplayPercentFromUsed(primaryUsed)
+        let secondaryPercent = toDisplayPercentFromUsed(secondaryUsed)
+        let tertiaryPercent = toDisplayPercentFromUsed(tertiaryUsed)
         let primaryResetsAt = entry.primary?.resetsAt ?? ""
         let secondaryResetsAt = entry.secondary?.resetsAt ?? ""
+        let tertiaryResetsAt = entry.tertiary?.resetsAt ?? ""
         let primaryWindow = entry.primary?.windowMinutes ?? 300
         let secondaryWindow = entry.secondary?.windowMinutes ?? 10080
+        let tertiaryWindow = entry.tertiary?.windowMinutes ?? 10080
 
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime]
@@ -1951,11 +2005,87 @@ class UsageMonitor {
         timeFmt.timeZone = Settings.shared.effectiveTimeZone()
         let localTime = timeFmt.string(from: Date())
 
-        // Provider aus der CodexBar-Source (normalisiert), nicht direkt aus
-        // Settings — das hält Envelope und tatsächlich gelesene Daten konsistent.
-        let provider = CodexBarProvider.normalized(codexBar.provider)
-        let activeProvider = provider.rawValue
-        let loginMethodLabel = provider.loginLabel
+        func defaultRowTitle(_ index: Int) -> String {
+            switch provider {
+            case .antigravity:
+                switch index {
+                case 0: return "Claude"
+                case 1: return "Gemini Pro"
+                case 2: return "Gemini Flash"
+                default: return "Model"
+                }
+            case .claude, .codex:
+                switch index {
+                case 0: return "Session"
+                case 1: return "Weekly"
+                case 2: return "Tertiary"
+                default: return "Window"
+                }
+            }
+        }
+
+        let windows: [CodexBarWindow?] = [entry.primary, entry.secondary, entry.tertiary]
+        var rowsPayload: [[String: Any]] = []
+        var rowsById: [String: CodexBarUsageRow] = [:]
+        for row in (entry.usageRows ?? []) {
+            guard let id = row.id?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                  !id.isEmpty else { continue }
+            rowsById[id] = row
+        }
+
+        if provider == .antigravity {
+            let antigravityIds = ["primary", "secondary", "tertiary"]
+            for idx in 0..<3 {
+                let id = antigravityIds[idx]
+                let w = (idx < windows.count) ? windows[idx] : nil
+                let used = Int((w?.usedPercent ?? 0).rounded())
+                let row = rowsById[id]
+                let displayPercent = toDisplayPercentFromRow(windowUsed: used, rowPercentLeft: row?.percentLeft)
+
+                rowsPayload.append([
+                    "id": id,
+                    "title": defaultRowTitle(idx),
+                    "usedPercent": displayPercent,
+                    "resetsAt": w?.resetsAt ?? "",
+                    "windowMinutes": w?.windowMinutes ?? 0
+                ])
+            }
+        } else {
+            if let rows = entry.usageRows, !rows.isEmpty {
+                for (idx, row) in rows.prefix(3).enumerated() {
+                    let fallbackWindow: CodexBarWindow? = (idx < windows.count) ? windows[idx] : nil
+                    let fallbackUsed = Int((fallbackWindow?.usedPercent ?? 0).rounded())
+                    let displayPercent = toDisplayPercentFromRow(windowUsed: fallbackUsed, rowPercentLeft: row.percentLeft)
+
+                    let title = (row.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+                        ? row.title!
+                        : defaultRowTitle(idx)
+
+                    rowsPayload.append([
+                        "id": row.id ?? "row\(idx)",
+                        "title": title,
+                        "usedPercent": displayPercent,
+                        "resetsAt": fallbackWindow?.resetsAt ?? "",
+                        "windowMinutes": fallbackWindow?.windowMinutes ?? 0
+                    ])
+                }
+            }
+
+            if rowsPayload.isEmpty {
+                for idx in 0..<3 {
+                    guard idx < windows.count, let w = windows[idx] else { continue }
+                    let used = Int(w.usedPercent.rounded())
+                    let displayPercent = toDisplayPercentFromUsed(used)
+                    rowsPayload.append([
+                        "id": "row\(idx)",
+                        "title": defaultRowTitle(idx),
+                        "usedPercent": displayPercent,
+                        "resetsAt": w.resetsAt ?? "",
+                        "windowMinutes": w.windowMinutes ?? 0
+                    ])
+                }
+            }
+        }
 
         // JSON-Envelope: strukturgleich zum alten Format, ab v1.10.0 mit
         // `provider`-Feld (FW v2.9.0 rendert darauf das Header-Label; ältere FW
@@ -1978,6 +2108,12 @@ class UsageMonitor {
                             "resetsAt": secondaryResetsAt,
                             "windowMinutes": secondaryWindow
                         ],
+                        "tertiary": [
+                            "usedPercent": tertiaryPercent,
+                            "resetsAt": tertiaryResetsAt,
+                            "windowMinutes": tertiaryWindow
+                        ],
+                        "rows": rowsPayload,
                         "loginMethod": loginMethodLabel
                     ]
                 ]
@@ -1989,8 +2125,9 @@ class UsageMonitor {
             if let jsonString = String(data: jsonData, encoding: .utf8) {
                 if serialPort.sendJSON(jsonString) {
                     lastUpdateDate = Date()
-                    NSLog("[Serial] Sent usage data (%d bytes) s=%d%% w=%d%%",
-                          jsonData.count, primaryPercent, secondaryPercent)
+                    NSLog("[Serial] Sent usage data (%d bytes) provider=%@ s=%d%% w=%d%% t=%d%% rows=%d",
+                          jsonData.count, activeProvider,
+                          primaryPercent, secondaryPercent, tertiaryPercent, rowsPayload.count)
                 }
             }
         } catch {

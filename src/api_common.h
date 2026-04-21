@@ -50,6 +50,14 @@ struct UsageData {
     float extra_monthly_limit;       // USD
     float extra_used_credits;        // USD
 
+    // Provider-specific usage rows (e.g. Antigravity model buckets).
+    // `row_count` defines how many entries in [0..2] are valid.
+    uint8_t row_count;
+    float   row_utilization[3];      // 0.0 - 1.0
+    char    row_title[3][20];        // "Claude", "Gemini Pro", ...
+    char    row_resets_at[3][32];    // ISO 8601
+    time_t  row_reset_epoch[3];
+
     bool          valid;             // true if data was fetched successfully
     unsigned long last_fetch;        // millis() of last successful fetch
     char          error[64];         // Error message if !valid
@@ -101,6 +109,14 @@ inline void usage_data_clear(UsageData &d) {
     d.extra_utilization    = 0.0f;
     d.extra_monthly_limit  = 0.0f;
     d.extra_used_credits   = 0.0f;
+
+    d.row_count = 0;
+    for (uint8_t i = 0; i < 3; i++) {
+        d.row_utilization[i] = 0.0f;
+        d.row_title[i][0] = '\0';
+        d.row_resets_at[i][0] = '\0';
+        d.row_reset_epoch[i] = 0;
+    }
 
     d.valid      = false;
     d.last_fetch = 0;

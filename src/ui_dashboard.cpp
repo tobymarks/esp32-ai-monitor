@@ -19,7 +19,6 @@
  * +---------------------------+
  *
  * Touch:
- *   Tap         -> Toggle provider (Claude/Codex) via Mac app
  *   Long press  -> Settings screen
  */
 
@@ -32,6 +31,7 @@
 
 #include <lvgl.h>
 #include <stdio.h>
+#include <string.h>
 
 // ============================================================
 // Widget references (created once, updated in-place)
@@ -59,6 +59,16 @@ static lv_obj_t *arc_weekly         = nullptr;   // null in portrait
 static lv_obj_t *lbl_weekly_title   = nullptr;
 static lv_obj_t *lbl_weekly_reset   = nullptr;
 
+// Antigravity: 3 model rows (portrait bars OR landscape bars)
+static const uint8_t AG_ROW_COUNT = 3;
+static lv_obj_t *ag_title[AG_ROW_COUNT] = {nullptr, nullptr, nullptr};
+static lv_obj_t *ag_pct[AG_ROW_COUNT]   = {nullptr, nullptr, nullptr};
+static lv_obj_t *ag_bar[AG_ROW_COUNT]   = {nullptr, nullptr, nullptr};
+static lv_obj_t *ag_reset[AG_ROW_COUNT] = {nullptr, nullptr, nullptr};
+
+// Dividers that need runtime visibility toggles
+static lv_obj_t *divider_middle = nullptr;
+
 // Header status icon (connection indicator)
 static lv_obj_t *lbl_status_dot     = nullptr;
 
@@ -77,6 +87,15 @@ static bool tap_press_point_valid = false;
 static lv_obj_t *splash_overlay     = nullptr;
 static lv_obj_t *splash_spinner     = nullptr;
 static bool       first_data_received = false;
+
+static const char* ag_default_title(uint8_t idx) {
+    switch (idx) {
+        case 0: return "Claude";
+        case 1: return "Gemini Pro";
+        case 2: return "Gemini Flash";
+        default: return "Model";
+    }
+}
 
 // ============================================================
 // Helper: returns true only when all dashboard widgets are live
@@ -111,38 +130,20 @@ static void on_press_start(lv_event_t *e) {
     if (indev != nullptr) {
         lv_indev_get_point(indev, &tap_press_point);
         tap_press_point_valid = true;
+        Serial.printf("[DIAG] PRESSED  t=%lu  x=%d y=%d\n",
+                      (unsigned long)tap_press_started_ms,
+                      (int)tap_press_point.x, (int)tap_press_point.y);
+    } else {
+        Serial.printf("[DIAG] PRESSED  t=%lu  indev=NULL\n",
+                      (unsigned long)tap_press_started_ms);
     }
-}
-
-static void on_tap_release(lv_event_t *e) {
-    (void)e;
-    if (tap_long_press_handled) {
-        return;
-    }
-
-    if (tap_press_started_ms == 0 || lv_tick_elaps(tap_press_started_ms) > 700) {
-        return;
-    }
-
-    lv_indev_t *indev = lv_indev_active();
-    if (tap_press_point_valid && indev != nullptr) {
-        lv_point_t release_point;
-        lv_indev_get_point(indev, &release_point);
-        int32_t dx = release_point.x - tap_press_point.x;
-        int32_t dy = release_point.y - tap_press_point.y;
-        if (dx < 0) dx = -dx;
-        if (dy < 0) dy = -dy;
-        if (dx > 24 || dy > 24) {
-            return;
-        }
-    }
-
-    serial_send_toggle_provider_request();
-    Serial.println("[UI] Tap -> toggle provider request");
 }
 
 static void on_long_press(lv_event_t *e) {
     (void)e;
+    uint32_t elapsed = lv_tick_elaps(tap_press_started_ms);
+    Serial.printf("[DIAG] LONG_PRESSED elapsed=%lu ms -> opening Settings\n",
+                  (unsigned long)elapsed);
     tap_long_press_handled = true;
     ui_settings_create();
     Serial.println("[UI] Long press -> Settings screen");
@@ -276,6 +277,93 @@ static void create_arc_block(
     lv_label_set_long_mode(*out_reset_lbl, LV_LABEL_LONG_DOT);
 }
 
+static void create_antigravity_row(
+    lv_obj_t *parent,
+    uint8_t idx,
+    int16_t x,
+    int16_t y,
+    int16_t row_w,
+    bool compact
+) {
+    if (idx >= AG_ROW_COUNT) return;
+
+    const int16_t pad = 8;
+    const int16_t title_y = compact ? 4 : 4;
+    const int16_t bar_y = compact ? 20 : 24;
+    const int16_t meta_y = compact ? 33 : 40;
+    const int16_t bar_h = compact ? 8 : 8;
+    const int16_t bar_w = row_w - (pad * 2);
+
+    ag_title[idx] = lv_label_create(parent);
+    lv_label_set_text(ag_title[idx], ag_default_title(idx));
+    lv_obj_set_style_text_color(ag_title[idx], UI_COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ag_title[idx], &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_pos(ag_title[idx], x + pad, y + title_y);
+
+    ag_bar[idx] = lv_bar_create(parent);
+    lv_obj_set_size(ag_bar[idx], bar_w, bar_h);
+    lv_obj_set_pos(ag_bar[idx], x + pad, y + bar_y);
+    lv_bar_set_range(ag_bar[idx], 0, 100);
+    lv_bar_set_value(ag_bar[idx], 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(ag_bar[idx], UI_COLOR_BAR_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ag_bar[idx], LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(ag_bar[idx], bar_h / 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ag_bar[idx], UI_COLOR_ANTIGRAVITY, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(ag_bar[idx], LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(ag_bar[idx], bar_h / 2, LV_PART_INDICATOR);
+
+    ag_pct[idx] = lv_label_create(parent);
+    lv_label_set_text(ag_pct[idx], "--%");
+    lv_obj_set_style_text_color(ag_pct[idx], UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ag_pct[idx], &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_width(ag_pct[idx], bar_w / 2);
+    lv_obj_set_pos(ag_pct[idx], x + pad, y + meta_y);
+    lv_obj_set_style_text_align(ag_pct[idx], LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+
+    ag_reset[idx] = lv_label_create(parent);
+    lv_label_set_text(ag_reset[idx], "--");
+    lv_obj_set_style_text_color(ag_reset[idx], UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ag_reset[idx], &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_width(ag_reset[idx], bar_w / 2);
+    lv_obj_set_pos(ag_reset[idx], x + pad + (bar_w / 2), y + meta_y);
+    lv_obj_set_style_text_align(ag_reset[idx], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_label_set_long_mode(ag_reset[idx], LV_LABEL_LONG_DOT);
+}
+
+static void set_obj_hidden(lv_obj_t *obj, bool hidden) {
+    if (obj == nullptr) return;
+    if (hidden) {
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void set_standard_widgets_visible(bool visible) {
+    const bool hidden = !visible;
+    set_obj_hidden(lbl_session_title, hidden);
+    set_obj_hidden(lbl_session_pct, hidden);
+    set_obj_hidden(lbl_session_reset, hidden);
+    set_obj_hidden(lbl_weekly_title, hidden);
+    set_obj_hidden(lbl_weekly_pct, hidden);
+    set_obj_hidden(lbl_weekly_reset, hidden);
+    set_obj_hidden(bar_session, hidden);
+    set_obj_hidden(bar_weekly, hidden);
+    set_obj_hidden(arc_session, hidden);
+    set_obj_hidden(arc_weekly, hidden);
+    set_obj_hidden(divider_middle, hidden);
+}
+
+static void set_antigravity_widgets_visible(bool visible) {
+    const bool hidden = !visible;
+    for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
+        set_obj_hidden(ag_title[i], hidden);
+        set_obj_hidden(ag_pct[i], hidden);
+        set_obj_hidden(ag_bar[i], hidden);
+        set_obj_hidden(ag_reset[i], hidden);
+    }
+}
+
 // ============================================================
 // Create dashboard screen (call once)
 // ============================================================
@@ -330,6 +418,7 @@ void ui_dashboard_create() {
     // ---- Divider under header ----
     const int16_t header_h = 36;
     ui_create_divider(scr_dashboard, header_h);
+    divider_middle = nullptr;
 
     // Reset orientation-specific widget pointers (a prior create could have
     // left stale globals from the opposite layout after orientation switch)
@@ -359,6 +448,23 @@ void ui_dashboard_create() {
             right_cx, cell_top, cell_w, cell_h, arc_d,
             &lbl_weekly_title, &arc_weekly, &lbl_weekly_pct, &lbl_weekly_reset
         );
+
+        // ---- Landscape Antigravity: three compact rows ----
+        const int16_t row_x   = 10;
+        const int16_t row_w   = sw - 20;
+        const int16_t row_h   = 58;
+        const int16_t row_gap = 6;
+        const int16_t row_y0  = header_h + 6;
+        for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
+            create_antigravity_row(
+                scr_dashboard,
+                i,
+                row_x,
+                row_y0 + (int16_t)i * (row_h + row_gap),
+                row_w,
+                true
+            );
+        }
     } else {
         // ---- Portrait: unchanged bar layout ----
         const int16_t block_h       = 114;
@@ -374,14 +480,34 @@ void ui_dashboard_create() {
             &lbl_session_title, &lbl_session_pct, &bar_session, &lbl_session_reset
         );
 
-        ui_create_divider(scr_dashboard, middle_divider_y);
+        divider_middle = ui_create_divider(scr_dashboard, middle_divider_y);
 
         create_usage_block(
             scr_dashboard, L(STR_WEEKLY),
             weekly_y,
             &lbl_weekly_title, &lbl_weekly_pct, &bar_weekly, &lbl_weekly_reset
         );
+
+        // ---- Portrait Antigravity: three rows ----
+        const int16_t row_x   = 12;
+        const int16_t row_w   = sw - 24;
+        const int16_t row_h   = 76;
+        const int16_t row_gap = 6;
+        const int16_t row_y0  = header_h + 6;
+        for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
+            create_antigravity_row(
+                scr_dashboard,
+                i,
+                row_x,
+                row_y0 + (int16_t)i * (row_h + row_gap),
+                row_w,
+                false
+            );
+        }
     }
+
+    // Default screen mode is Claude/Codex (Session + Weekly layout visible).
+    set_antigravity_widgets_visible(false);
 
     // ---- Full-screen overlay for touch events ----
     long_press_overlay = lv_obj_create(scr_dashboard);
@@ -393,7 +519,6 @@ void ui_dashboard_create() {
     lv_obj_add_flag(long_press_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(long_press_overlay, LV_OBJ_FLAG_CLICK_FOCUSABLE);
     lv_obj_add_event_cb(long_press_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
-    lv_obj_add_event_cb(long_press_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
     lv_obj_add_event_cb(long_press_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
     lv_obj_move_foreground(long_press_overlay);
 
@@ -465,6 +590,10 @@ void ui_dashboard_update(const MonitorState &state) {
     if (lbl_provider != nullptr) {
         const char *label = state.provider_label[0] != '\0' ? state.provider_label : "CLAUDE";
         lv_label_set_text(lbl_provider, label);
+        const lv_font_t *provider_font = (strlen(label) > 8)
+            ? &lv_font_montserrat_16
+            : &lv_font_montserrat_20;
+        lv_obj_set_style_text_font(lbl_provider, provider_font, LV_PART_MAIN);
     }
 
     // ---- Clock (system time set via settimeofday from Mac's UTC) ----
@@ -481,67 +610,119 @@ void ui_dashboard_update(const MonitorState &state) {
         }
     }
 
-    // ---- Session + Weekly blocks ----
+    const bool is_antigravity_rows = (state.provider == PROVIDER_ANTIGRAVITY) && (state.usage.row_count > 0);
+    set_standard_widgets_visible(!is_antigravity_rows);
+    set_antigravity_widgets_visible(is_antigravity_rows);
+
+    // ---- Usage blocks ----
     if (state.usage.valid) {
         char buf[32];
 
-        // --- Session percent ---
-        format_percentage(state.usage.five_hour_utilization, buf, sizeof(buf));
-        lv_label_set_text(lbl_session_pct, buf);
+        if (is_antigravity_rows) {
+            lv_color_t ag_color = ui_bar_color(state.provider);
+            for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
+                const bool row_active = (i < state.usage.row_count);
+                set_obj_hidden(ag_title[i], !row_active);
+                set_obj_hidden(ag_pct[i], !row_active);
+                set_obj_hidden(ag_bar[i], !row_active);
+                set_obj_hidden(ag_reset[i], !row_active);
+                if (!row_active) continue;
 
-        int s_val = (int)(state.usage.five_hour_utilization * 100.0f);
-        if (s_val < 0) s_val = 0;
-        if (s_val > 100) s_val = 100;
-        lv_color_t session_color = ui_bar_color(state.provider);
+                const char *title = state.usage.row_title[i][0] != '\0'
+                    ? state.usage.row_title[i]
+                    : ag_default_title(i);
+                lv_label_set_text(ag_title[i], title);
 
-        if (landscape_layout && arc_session) {
-            lv_arc_set_value(arc_session, s_val);
-            lv_obj_set_style_arc_color(arc_session, session_color, LV_PART_INDICATOR);
-            lv_obj_set_style_text_color(lbl_session_pct, UI_COLOR_TEXT, LV_PART_MAIN);
-        } else if (bar_session) {
-            lv_bar_set_value(bar_session, s_val, LV_ANIM_ON);
-            lv_obj_set_style_bg_color(bar_session, session_color, LV_PART_INDICATOR);
-        }
+                format_percentage(state.usage.row_utilization[i], buf, sizeof(buf));
+                lv_label_set_text(ag_pct[i], buf);
+                lv_obj_set_style_text_color(ag_pct[i], UI_COLOR_TEXT_SEC, LV_PART_MAIN);
 
-        // --- Session reset (compact, no "Reset in" prefix) ---
-        format_reset_compact(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
-        lv_label_set_text(lbl_session_reset, buf);
+                int val = (int)(state.usage.row_utilization[i] * 100.0f);
+                if (val < 0) val = 0;
+                if (val > 100) val = 100;
+                if (ag_bar[i]) {
+                    lv_bar_set_value(ag_bar[i], val, LV_ANIM_ON);
+                    lv_obj_set_style_bg_color(ag_bar[i], ag_color, LV_PART_INDICATOR);
+                }
 
-        // --- Weekly percent ---
-        format_percentage(state.usage.seven_day_utilization, buf, sizeof(buf));
-        lv_label_set_text(lbl_weekly_pct, buf);
+                format_reset_compact(state.usage.row_reset_epoch[i], buf, sizeof(buf));
+                lv_label_set_text(ag_reset[i], buf);
+            }
+        } else {
+            // --- Session percent ---
+            format_percentage(state.usage.five_hour_utilization, buf, sizeof(buf));
+            lv_label_set_text(lbl_session_pct, buf);
 
-        int w_val = (int)(state.usage.seven_day_utilization * 100.0f);
-        if (w_val < 0) w_val = 0;
-        if (w_val > 100) w_val = 100;
-        lv_color_t weekly_color = ui_bar_color(state.provider);
+            int s_val = (int)(state.usage.five_hour_utilization * 100.0f);
+            if (s_val < 0) s_val = 0;
+            if (s_val > 100) s_val = 100;
+            lv_color_t session_color = ui_bar_color(state.provider);
 
-        if (landscape_layout && arc_weekly) {
-            lv_arc_set_value(arc_weekly, w_val);
-            lv_obj_set_style_arc_color(arc_weekly, weekly_color, LV_PART_INDICATOR);
-            lv_obj_set_style_text_color(lbl_weekly_pct, UI_COLOR_TEXT, LV_PART_MAIN);
-        } else if (bar_weekly) {
-            lv_bar_set_value(bar_weekly, w_val, LV_ANIM_ON);
-            lv_obj_set_style_bg_color(bar_weekly, weekly_color, LV_PART_INDICATOR);
-        }
+            if (landscape_layout && arc_session) {
+                lv_arc_set_value(arc_session, s_val);
+                lv_obj_set_style_arc_color(arc_session, session_color, LV_PART_INDICATOR);
+                lv_obj_set_style_text_color(lbl_session_pct, UI_COLOR_TEXT, LV_PART_MAIN);
+            } else if (bar_session) {
+                lv_bar_set_value(bar_session, s_val, LV_ANIM_ON);
+                lv_obj_set_style_bg_color(bar_session, session_color, LV_PART_INDICATOR);
+            }
 
-        // --- Weekly reset (unified compact form in both orientations,
-        //     no "Reset in" prefix) ---
-        {
-            char wbuf[32];
-            format_reset_compact(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
-            lv_label_set_text(lbl_weekly_reset, wbuf);
+            // --- Session reset (compact, no "Reset in" prefix) ---
+            format_reset_compact(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
+            lv_label_set_text(lbl_session_reset, buf);
+
+            // --- Weekly percent ---
+            format_percentage(state.usage.seven_day_utilization, buf, sizeof(buf));
+            lv_label_set_text(lbl_weekly_pct, buf);
+
+            int w_val = (int)(state.usage.seven_day_utilization * 100.0f);
+            if (w_val < 0) w_val = 0;
+            if (w_val > 100) w_val = 100;
+            lv_color_t weekly_color = ui_bar_color(state.provider);
+
+            if (landscape_layout && arc_weekly) {
+                lv_arc_set_value(arc_weekly, w_val);
+                lv_obj_set_style_arc_color(arc_weekly, weekly_color, LV_PART_INDICATOR);
+                lv_obj_set_style_text_color(lbl_weekly_pct, UI_COLOR_TEXT, LV_PART_MAIN);
+            } else if (bar_weekly) {
+                lv_bar_set_value(bar_weekly, w_val, LV_ANIM_ON);
+                lv_obj_set_style_bg_color(bar_weekly, weekly_color, LV_PART_INDICATOR);
+            }
+
+            // --- Weekly reset (unified compact form in both orientations,
+            //     no "Reset in" prefix) ---
+            {
+                char wbuf[32];
+                format_reset_compact(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
+                lv_label_set_text(lbl_weekly_reset, wbuf);
+            }
         }
 
     } else if (strlen(state.usage.error) > 0) {
-        lv_label_set_text(lbl_session_pct,   "ERR");
-        lv_label_set_text(lbl_session_reset, state.usage.error);
-        lv_label_set_text(lbl_weekly_pct,    "ERR");
-        lv_label_set_text(lbl_weekly_reset,  "");
-        if (bar_session) lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
-        if (bar_weekly)  lv_bar_set_value(bar_weekly,  0, LV_ANIM_OFF);
-        if (arc_session) lv_arc_set_value(arc_session, 0);
-        if (arc_weekly)  lv_arc_set_value(arc_weekly,  0);
+        if (is_antigravity_rows) {
+            for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
+                const bool first_row = (i == 0);
+                set_obj_hidden(ag_title[i], !first_row);
+                set_obj_hidden(ag_pct[i], !first_row);
+                set_obj_hidden(ag_bar[i], !first_row);
+                set_obj_hidden(ag_reset[i], !first_row);
+                if (!first_row) continue;
+
+                lv_label_set_text(ag_title[i], ag_default_title(i));
+                lv_label_set_text(ag_pct[i], "ERR");
+                lv_label_set_text(ag_reset[i], state.usage.error);
+                if (ag_bar[i]) lv_bar_set_value(ag_bar[i], 0, LV_ANIM_OFF);
+            }
+        } else {
+            lv_label_set_text(lbl_session_pct,   "ERR");
+            lv_label_set_text(lbl_session_reset, state.usage.error);
+            lv_label_set_text(lbl_weekly_pct,    "ERR");
+            lv_label_set_text(lbl_weekly_reset,  "");
+            if (bar_session) lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
+            if (bar_weekly)  lv_bar_set_value(bar_weekly,  0, LV_ANIM_OFF);
+            if (arc_session) lv_arc_set_value(arc_session, 0);
+            if (arc_weekly)  lv_arc_set_value(arc_weekly,  0);
+        }
     }
 
     // ---- Header: connection status icon ----
@@ -623,6 +804,13 @@ void ui_dashboard_recreate() {
         arc_weekly         = nullptr;
         lbl_weekly_reset   = nullptr;
         lbl_status_dot     = nullptr;
+        divider_middle     = nullptr;
+        for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
+            ag_title[i] = nullptr;
+            ag_pct[i] = nullptr;
+            ag_bar[i] = nullptr;
+            ag_reset[i] = nullptr;
+        }
         long_press_overlay = nullptr;
         splash_overlay     = nullptr;
         splash_spinner     = nullptr;

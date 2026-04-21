@@ -28,6 +28,7 @@
 // ============================================================
 static const size_t SERIAL_BUF_SIZE = 2048;
 static const unsigned long DATA_TIMEOUT_MS = 300000;  // 5 minutes
+static const uint8_t USAGE_ROW_MAX = 3;
 
 // ============================================================
 // State
@@ -69,6 +70,65 @@ static const char* provider_label_from_id(uint8_t provider) {
         case PROVIDER_CLAUDE:
         default:
             return "CLAUDE";
+    }
+}
+
+static const char* default_row_title_for_provider(uint8_t provider, uint8_t index) {
+    if (provider == PROVIDER_ANTIGRAVITY) {
+        switch (index) {
+            case 0: return "Claude";
+            case 1: return "Gemini Pro";
+            case 2: return "Gemini Flash";
+            default: return "Model";
+        }
+    }
+
+    switch (index) {
+        case 0: return "Session";
+        case 1: return "Weekly";
+        case 2: return "Tertiary";
+        default: return "Window";
+    }
+}
+
+static void clear_usage_rows(UsageData &usage) {
+    usage.row_count = 0;
+    for (uint8_t i = 0; i < USAGE_ROW_MAX; i++) {
+        usage.row_utilization[i] = 0.0f;
+        usage.row_title[i][0] = '\0';
+        usage.row_resets_at[i][0] = '\0';
+        usage.row_reset_epoch[i] = 0;
+    }
+}
+
+static void set_usage_row(
+    UsageData &usage,
+    uint8_t index,
+    uint8_t provider,
+    const char *title,
+    float percent,
+    const char *resets_at
+) {
+    if (index >= USAGE_ROW_MAX) return;
+
+    if (percent < 0.0f) percent = 0.0f;
+    if (percent > 100.0f) percent = 100.0f;
+    usage.row_utilization[index] = percent / 100.0f;
+
+    const char *fallback_title = default_row_title_for_provider(provider, index);
+    strlcpy(usage.row_title[index], (title && title[0] != '\0') ? title : fallback_title,
+            sizeof(usage.row_title[index]));
+
+    if (resets_at && resets_at[0] != '\0') {
+        strlcpy(usage.row_resets_at[index], resets_at, sizeof(usage.row_resets_at[index]));
+        usage.row_reset_epoch[index] = iso8601_to_epoch(resets_at);
+    } else {
+        usage.row_resets_at[index][0] = '\0';
+        usage.row_reset_epoch[index] = 0;
+    }
+
+    if ((index + 1) > usage.row_count) {
+        usage.row_count = index + 1;
     }
 }
 
@@ -281,6 +341,13 @@ static void parse_json(const char *json_str) {
         return;
     }
 
+    // --- Provider label (v2.9.0+ envelope field) ---
+    // Companion-App sendet "claude", "codex" oder "antigravity" pro Frame.
+    // Fallback bleibt "claude" für alte App-Versionen ohne Feld.
+    const char *prov = data0["provider"];
+    state.provider = provider_from_string(prov);
+    strlcpy(state.provider_label, provider_label_from_id(state.provider), sizeof(state.provider_label));
+
     JsonObject usage = data0["usage"];
     if (usage.isNull()) {
         Serial.println("[Serial] No usage object in data[0]");
@@ -289,6 +356,8 @@ static void parse_json(const char *json_str) {
         state.usage.valid = false;
         return;
     }
+
+    clear_usage_rows(state.usage);
 
     // --- Primary (Session / 5h) ---
     JsonObject primary = usage["primary"];
@@ -303,19 +372,22 @@ static void parse_json(const char *json_str) {
         }
     }
 
+    JsonObject secondary = usage["secondary"];
+    JsonObject tertiary = usage["tertiary"];
+
     // --- Weekly: find field with windowMinutes >= 10080 ---
     // Check secondary first, then tertiary
     JsonObject weekly_source;
-    int sec_window = usage["secondary"]["windowMinutes"] | 0;
-    int ter_window = usage["tertiary"]["windowMinutes"] | 0;
+    int sec_window = secondary["windowMinutes"] | 0;
+    int ter_window = tertiary["windowMinutes"] | 0;
 
     if (sec_window >= 10080) {
-        weekly_source = usage["secondary"];
+        weekly_source = secondary;
     } else if (ter_window >= 10080) {
-        weekly_source = usage["tertiary"];
+        weekly_source = tertiary;
     } else {
         // Fallback: use secondary
-        weekly_source = usage["secondary"];
+        weekly_source = secondary;
     }
 
     if (!weekly_source.isNull()) {
@@ -326,6 +398,66 @@ static void parse_json(const char *json_str) {
         if (resetsAt) {
             strlcpy(state.usage.seven_day_resets_at, resetsAt, sizeof(state.usage.seven_day_resets_at));
             state.usage.seven_day_reset_epoch = iso8601_to_epoch(resetsAt);
+        }
+    }
+
+    // --- Generic usage rows (v2.11.0+) ---
+    // Preferred source: usage.rows[] from companion app.
+    // Fallback: derive from primary/secondary/tertiary objects.
+    JsonArray rows = usage["rows"];
+    if (!rows.isNull()) {
+        uint8_t idx = 0;
+        for (JsonVariant row_var : rows) {
+            if (idx >= USAGE_ROW_MAX) break;
+            JsonObject row = row_var.as<JsonObject>();
+            if (row.isNull()) continue;
+
+            float usedPct = row["usedPercent"] | 0.0f;
+            const char *title = row["title"];
+            const char *resetsAt = row["resetsAt"];
+            set_usage_row(state.usage, idx, state.provider, title, usedPct, resetsAt);
+            idx++;
+        }
+    }
+
+    if (state.usage.row_count == 0) {
+        const char *pri_reset = primary["resetsAt"] | "";
+        set_usage_row(state.usage, 0, state.provider,
+                      default_row_title_for_provider(state.provider, 0),
+                      primary["usedPercent"] | 0.0f, pri_reset);
+
+        if (!secondary.isNull()) {
+            const char *sec_reset = secondary["resetsAt"] | "";
+            set_usage_row(state.usage, 1, state.provider,
+                          default_row_title_for_provider(state.provider, 1),
+                          secondary["usedPercent"] | 0.0f, sec_reset);
+        }
+
+        if (!tertiary.isNull()) {
+            const char *ter_reset = tertiary["resetsAt"] | "";
+            set_usage_row(state.usage, 2, state.provider,
+                          default_row_title_for_provider(state.provider, 2),
+                          tertiary["usedPercent"] | 0.0f, ter_reset);
+        }
+    }
+
+    // Antigravity should always render exactly 3 model rows.
+    // If the sender delivered fewer rows (e.g. usageRows missing tertiary),
+    // backfill from primary/secondary/tertiary objects.
+    if (state.provider == PROVIDER_ANTIGRAVITY && state.usage.row_count < 3) {
+        JsonObject windows[3] = { primary, secondary, tertiary };
+        for (uint8_t i = state.usage.row_count; i < 3; i++) {
+            JsonObject src = windows[i];
+            if (!src.isNull()) {
+                const char *r = src["resetsAt"] | "";
+                set_usage_row(state.usage, i, state.provider,
+                              default_row_title_for_provider(state.provider, i),
+                              src["usedPercent"] | 0.0f, r);
+            } else {
+                set_usage_row(state.usage, i, state.provider,
+                              default_row_title_for_provider(state.provider, i),
+                              0.0f, "");
+            }
         }
     }
 
@@ -351,13 +483,6 @@ static void parse_json(const char *json_str) {
         Serial.printf("[Serial] Login: %s\n", loginMethod);
     }
 
-    // --- Provider label (v2.9.0+ envelope field) ---
-    // Companion-App sendet "claude", "codex" oder "antigravity" pro Frame.
-    // Fallback bleibt "claude" für alte App-Versionen ohne Feld.
-    const char *prov = data0["provider"];
-    state.provider = provider_from_string(prov);
-    strlcpy(state.provider_label, provider_label_from_id(state.provider), sizeof(state.provider_label));
-
     // Mark data as valid
     state.usage.valid = true;
     state.usage.last_fetch = millis();
@@ -367,9 +492,11 @@ static void parse_json(const char *json_str) {
     strlcpy(state.status, "OK (USB)", sizeof(state.status));
     new_data_flag = true;
 
-    Serial.printf("[Serial] Parsed: Session=%.0f%% Weekly=%.0f%%\n",
+    Serial.printf("[Serial] Parsed: Session=%.0f%% Weekly=%.0f%% rows=%u provider=%s\n",
                   state.usage.five_hour_utilization * 100.0f,
-                  state.usage.seven_day_utilization * 100.0f);
+                  state.usage.seven_day_utilization * 100.0f,
+                  (unsigned)state.usage.row_count,
+                  state.provider_label);
 }
 
 // ============================================================

@@ -112,12 +112,19 @@ struct CodexBarWindow: Codable {
     let windowMinutes: Int?
 }
 
+struct CodexBarUsageRow: Codable {
+    let id: String?
+    let title: String?
+    let percentLeft: Double?
+}
+
 struct CodexBarEntry: Codable {
     let provider: String?
     let updatedAt: String?
     let primary: CodexBarWindow?
     let secondary: CodexBarWindow?
     let tertiary: CodexBarWindow?
+    let usageRows: [CodexBarUsageRow]?
 }
 
 struct CodexBarSnapshot: Codable {

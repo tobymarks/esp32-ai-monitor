@@ -46,6 +46,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var deviceDisplayContainer: NSView!
     private var isEditingDeviceName: Bool = false
     private var themePopup: NSPopUpButton!
+    private var percentModePopup: NSPopUpButton!
     private var orientationPopup: NSPopUpButton!
     private var languagePopup: NSPopUpButton!
     private var timeZonePopup: NSPopUpButton!
@@ -387,6 +388,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         themePopup.action = #selector(themeChosen)
         let themeRow = twoColumnRow("Theme", themePopup)
 
+        // Prozent-Logik (global für alle Provider)
+        percentModePopup = NSPopUpButton()
+        percentModePopup.addItems(withTitles: [
+            "Verbraucht (0 → 100)",
+            "Verbleibend (100 → 0)"
+        ])
+        percentModePopup.target = self
+        percentModePopup.action = #selector(percentModeChosen)
+        percentModePopup.translatesAutoresizingMaskIntoConstraints = false
+        percentModePopup.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        let percentModeRow = twoColumnRow("Prozentmodus", percentModePopup)
+
         // Orientation
         orientationPopup = NSPopUpButton()
         orientationPopup.addItems(withTitles: [
@@ -437,7 +450,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lastUpdateLabel.font = NSFont.systemFont(ofSize: 11)
         lastUpdateLabel.textColor = .secondaryLabelColor
 
-        let rowsStack = NSStackView(views: [deviceRowBuilt, themeRow, orientRow, langRow, tzRow, brightRow])
+        let rowsStack = NSStackView(views: [deviceRowBuilt, themeRow, percentModeRow, orientRow, langRow, tzRow, brightRow])
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
         rowsStack.spacing = 8
@@ -919,6 +932,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // profil-spezifischen Werte — stattdessen „—" — damit offensichtlich
         // ist, dass hier nichts aktiv gepusht wird.
         let ready = (sp.state == .connected)
+        switch Settings.shared.usagePercentDisplayMode {
+        case .remaining: percentModePopup.selectItem(at: 1)
+        case .used: percentModePopup.selectItem(at: 0)
+        }
         if ready {
             switch Settings.shared.orientation {
             case "landscape_left", "landscape": orientationPopup.selectItem(at: 1)
@@ -1050,6 +1067,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let i = themePopup.indexOfSelectedItem
         Settings.shared.themeMode = modes[max(0, min(i, modes.count - 1))]
         monitor?.sendThemeToESP32()
+    }
+
+    @objc private func percentModeChosen() {
+        let modes: [UsagePercentDisplayMode] = [.used, .remaining]
+        let i = percentModePopup.indexOfSelectedItem
+        Settings.shared.usagePercentDisplayMode = modes[max(0, min(i, modes.count - 1))]
+        monitor?.sendUsageSnapshotForPercentModeChange()
     }
 
     @objc private func orientationChosen() {
