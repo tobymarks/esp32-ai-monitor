@@ -21,7 +21,4 @@ bool serial_has_new_data();
 // Returns current display time string ("HH:MM" or "--:--")
 const char* serial_get_display_time();
 
-// Sendet ein Geräte-Event an die Mac-App, um den Provider zu toggeln.
-void serial_send_toggle_provider_request();
-
 #endif // SERIAL_RECEIVER_H

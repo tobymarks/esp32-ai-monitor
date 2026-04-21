@@ -79,9 +79,6 @@ static bool state_stored = false;
 // Long-press overlay
 static lv_obj_t *long_press_overlay = nullptr;
 static uint32_t tap_press_started_ms = 0;
-static bool tap_long_press_handled = false;
-static lv_point_t tap_press_point = {0, 0};
-static bool tap_press_point_valid = false;
 
 // Splash overlay (shown until first data arrives)
 static lv_obj_t *splash_overlay     = nullptr;
@@ -123,30 +120,13 @@ static inline bool widgets_ready() {
 static void on_press_start(lv_event_t *e) {
     (void)e;
     tap_press_started_ms = lv_tick_get();
-    tap_long_press_handled = false;
-    tap_press_point_valid = false;
-
-    lv_indev_t *indev = lv_indev_active();
-    if (indev != nullptr) {
-        lv_indev_get_point(indev, &tap_press_point);
-        tap_press_point_valid = true;
-        Serial.printf("[DIAG] PRESSED  t=%lu  x=%d y=%d\n",
-                      (unsigned long)tap_press_started_ms,
-                      (int)tap_press_point.x, (int)tap_press_point.y);
-    } else {
-        Serial.printf("[DIAG] PRESSED  t=%lu  indev=NULL\n",
-                      (unsigned long)tap_press_started_ms);
-    }
 }
 
 static void on_long_press(lv_event_t *e) {
     (void)e;
     uint32_t elapsed = lv_tick_elaps(tap_press_started_ms);
-    Serial.printf("[DIAG] LONG_PRESSED elapsed=%lu ms -> opening Settings\n",
-                  (unsigned long)elapsed);
-    tap_long_press_handled = true;
+    Serial.printf("[UI] Long press (%lu ms) -> Settings\n", (unsigned long)elapsed);
     ui_settings_create();
-    Serial.println("[UI] Long press -> Settings screen");
 }
 
 // ============================================================
@@ -261,8 +241,12 @@ static void create_arc_block(
     *out_pct_lbl = lv_label_create(parent);
     lv_label_set_text(*out_pct_lbl, "--%");
     lv_obj_set_style_text_color(*out_pct_lbl, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_pct_lbl, &lv_font_montserrat_36, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_pct_lbl, &lv_font_montserrat_32, LV_PART_MAIN);
+    int16_t pct_w = arc_diameter - 34;
+    if (pct_w < 72) pct_w = 72;
+    lv_obj_set_width(*out_pct_lbl, pct_w);
     lv_obj_set_style_text_align(*out_pct_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(*out_pct_lbl, LV_LABEL_LONG_CLIP);
     // Centre the label on the arc centre (arc origin + radius)
     lv_obj_align_to(*out_pct_lbl, *out_arc, LV_ALIGN_CENTER, 0, 0);
 
@@ -526,8 +510,6 @@ void ui_dashboard_create() {
     state_stored = false;
     first_data_received = false;
     tap_press_started_ms = 0;
-    tap_long_press_handled = false;
-    tap_press_point_valid = false;
 
     // ---- Splash overlay (covers full screen until first data) ----
     splash_overlay = lv_obj_create(scr_dashboard);

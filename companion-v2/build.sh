@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.16.1"
+APP_VERSION="1.16.2"
 
 # Developer ID Signing (ab v1.13.0) — optional. Wenn die Identity nicht im
 # Keychain ist (z.B. CI-Runner ohne Cert-Import), fallen wir auf Ad-hoc-Sign
