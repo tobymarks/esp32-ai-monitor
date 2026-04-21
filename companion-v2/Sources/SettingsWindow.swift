@@ -265,7 +265,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         heading.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(heading)
 
-        appSettingsToggle = NSButton(checkboxWithTitle: "Menueleisten-Schnellmenue aktivieren",
+        appSettingsToggle = NSButton(checkboxWithTitle: "Menüleisten-Schnellmenü aktivieren",
                                      target: self,
                                      action: #selector(menuBarQuickMenuToggled))
         appSettingsToggle.font = NSFont.systemFont(ofSize: 13)

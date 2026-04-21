@@ -1,9 +1,9 @@
 /**
- * AI Monitor v1.17.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.17.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
- * UI-Modus: LSUIElement=YES, unsichtbar. Menueleisten-Schnellmenue optional
+ * UI-Modus: LSUIElement=YES, unsichtbar. Menüleisten-Schnellmenü optional
  * per Settings-Toggle. Settings-Fenster beim Launch und beim Reopen-Event
  * (Spotlight / Finder-Doppelklick).
  * ESP32-Protokoll: Envelope um `provider`-Feld erweitert
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.17.0"
+let kAppVersion = "1.17.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -496,7 +496,7 @@ class Settings {
         set { defaults.set(newValue, forKey: "skippedAppVersion") }
     }
 
-    /// Optionales Menueleisten-Schnellmenue. Default: aus.
+    /// Optionales Menüleisten-Schnellmenü. Default: aus.
     var menuBarQuickMenuEnabled: Bool {
         get { defaults.bool(forKey: "menuBarQuickMenuEnabled") }
         set {
