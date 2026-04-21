@@ -241,7 +241,7 @@ static void create_arc_block(
     *out_pct_lbl = lv_label_create(parent);
     lv_label_set_text(*out_pct_lbl, "--%");
     lv_obj_set_style_text_color(*out_pct_lbl, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_pct_lbl, &lv_font_montserrat_32, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_pct_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
     int16_t pct_w = arc_diameter - 34;
     if (pct_w < 72) pct_w = 72;
     lv_obj_set_width(*out_pct_lbl, pct_w);
