@@ -2,36 +2,34 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key>
-    <string>de.aimonitor.app</string>
-    <key>CFBundleName</key>
-    <string>AI Monitor</string>
-    <key>CFBundleDisplayName</key>
-    <string>AI Monitor</string>
-    <key>CFBundleVersion</key>
-    <string>1.16.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.16.0</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleExecutable</key>
-    <string>AIMonitor</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <false/>
-    </dict>
-    <!-- App Auto-Update: GitHub-based update check via AppUpdateManager -->
-    <!-- SUFeedURL prepared for future Sparkle migration -->
-    <key>SUFeedURL</key>
-    <string>https://tobymarks.github.io/esp32-ai-monitor/appcast.xml</string>
-    <key>SUEnableAutomaticChecks</key>
-    <true/>
+	<key>CFBundleDisplayName</key>
+	<string>AI Monitor</string>
+	<key>CFBundleExecutable</key>
+	<string>AIMonitor</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>de.aimonitor.app</string>
+	<key>CFBundleName</key>
+	<string>AI Monitor</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.16.1</string>
+	<key>CFBundleVersion</key>
+	<string>1.16.1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://tobymarks.github.io/esp32-ai-monitor/appcast.xml</string>
 </dict>
 </plist>
