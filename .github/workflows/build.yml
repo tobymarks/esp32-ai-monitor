@@ -37,7 +37,7 @@ jobs:
       - name: Build firmware
         run: pio run
 
-      - name: Merge binary
+      - name: Merge binary (ILI9341)
         run: |
           mkdir -p installer/bin
           FIRMWARE_DIR=".pio/build/esp32dev"
@@ -53,21 +53,39 @@ jobs:
             0xe000  "$BOOT_APP0" \
             0x10000 "$FIRMWARE_DIR/firmware.bin"
 
-      - name: Copy OTA binary
+      - name: Merge binary (ST7789)
+        run: |
+          mkdir -p installer/bin
+          FIRMWARE_DIR=".pio/build/esp32dev-st7789"
+          BOOT_APP0="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+
+          esptool.py --chip esp32 merge_bin \
+            -o installer/bin/ai-monitor-st7789.bin \
+            --flash_mode dio \
+            --flash_freq 40m \
+            --flash_size 4MB \
+            0x1000  "$FIRMWARE_DIR/bootloader.bin" \
+            0x8000  "$FIRMWARE_DIR/partitions.bin" \
+            0xe000  "$BOOT_APP0" \
+            0x10000 "$FIRMWARE_DIR/firmware.bin"
+
+      - name: Copy OTA binaries
         run: |
           cp .pio/build/esp32dev/firmware.bin installer/bin/firmware-ota.bin
+          cp .pio/build/esp32dev-st7789/firmware.bin installer/bin/firmware-ota-st7789.bin
 
       - name: Update manifest version
         run: |
           VERSION=$(grep '#define APP_VERSION' src/config.h | head -1 | sed 's/.*"\(.*\)".*/\1/')
           python3 -c "
           import json
-          with open('installer/manifest.json', 'r') as f:
-              m = json.load(f)
-          m['version'] = '$VERSION'
-          with open('installer/manifest.json', 'w') as f:
-              json.dump(m, f, indent=2)
-              f.write('\n')
+          for path in ('installer/manifest.json', 'installer/manifest-st7789.json'):
+              with open(path, 'r') as f:
+                  m = json.load(f)
+              m['version'] = '$VERSION'
+              with open(path, 'w') as f:
+                  json.dump(m, f, indent=2)
+                  f.write('\n')
           "
 
       - name: Upload Pages artifact
@@ -84,6 +102,8 @@ jobs:
           path: |
             installer/bin/ai-monitor.bin
             installer/bin/firmware-ota.bin
+            installer/bin/ai-monitor-st7789.bin
+            installer/bin/firmware-ota-st7789.bin
 
   deploy:
     needs: build
@@ -116,3 +136,5 @@ jobs:
           files: |
             release-assets/ai-monitor.bin
             release-assets/firmware-ota.bin
+            release-assets/ai-monitor-st7789.bin
+            release-assets/firmware-ota-st7789.bin

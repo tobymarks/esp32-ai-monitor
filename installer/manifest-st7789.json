@@ -1,12 +1,12 @@
 {
-  "name": "AI Monitor (ILI9341 / R-Board)",
+  "name": "AI Monitor (ST7789 / Hybrid-Board)",
   "version": "2.11.0",
   "home_assistant_domain": "",
   "builds": [
     {
       "chipFamily": "ESP32",
       "parts": [
-        { "path": "bin/ai-monitor.bin", "offset": 0 }
+        { "path": "bin/ai-monitor-st7789.bin", "offset": 0 }
       ]
     }
   ]

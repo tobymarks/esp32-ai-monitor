@@ -471,10 +471,16 @@
 
     <div class="card install-section">
       <h2 style="margin-bottom:1rem;">Firmware flashen</h2>
-      <esp-web-install-button manifest="manifest.json">
-        <button slot="activate">Firmware installieren</button>
-      </esp-web-install-button>
+      <div style="display:flex;flex-direction:column;gap:0.75rem;align-items:center;">
+        <esp-web-install-button manifest="manifest.json">
+          <button slot="activate">Firmware installieren (ILI9341 / R-Board)</button>
+        </esp-web-install-button>
+        <esp-web-install-button manifest="manifest-st7789.json">
+          <button slot="activate">Firmware installieren (ST7789 / Hybrid-Board)</button>
+        </esp-web-install-button>
+      </div>
       <p class="browser-note">Erfordert Chrome oder Edge mit Web Serial</p>
+      <p class="browser-note" style="margin-top:0.5rem;">Wenn dein Display nach dem Flashen komplett weiß bleibt, war meist die falsche Panel-Variante gewählt.</p>
     </div>
 
     <div class="card">
@@ -486,8 +492,8 @@
         <dt>Flash schlägt fehl?</dt>
         <dd>Drücke den Reset-Button auf dem Board und versuche es erneut. Stelle sicher, dass keine andere Anwendung (Arduino IDE, PlatformIO, AI Monitor App) den Port belegt.</dd>
 
-        <dt>Display bleibt schwarz nach dem Flashen?</dt>
-        <dd>Trenne das USB-Kabel und schließe es erneut an. Das Board startet automatisch neu.</dd>
+        <dt>Display bleibt schwarz oder komplett weiß nach dem Flashen?</dt>
+        <dd>Trenne das USB-Kabel kurz und starte neu. Falls das Display weiter weiß bleibt, flash bitte die andere Panel-Variante (ILI9341 vs. ST7789).</dd>
 
         <dt>Mac App erkennt das Display nicht?</dt>
         <dd>Prüfe, ob der USB-Treiber (CP2102 oder CH340) installiert ist. Unter <code style="font-family:var(--font-mono);font-size:0.8rem;background:rgba(59,130,246,0.1);padding:0.1rem 0.35rem;border-radius:4px;">ls /dev/tty.usb*</code> sollte ein Gerät erscheinen.</dd>
