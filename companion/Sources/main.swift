@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.0"
+let kAppVersion = "1.20.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -2076,6 +2076,116 @@ class UsageMonitor {
     /// Provider-Ansichten konsistent ohne auf den Heartbeat zu warten.
     func sendUsageSnapshotForPercentModeChange() {
         sendLastUsageSnapshotIfAvailable()
+    }
+
+    /// Schickt ein synthetisches, klar erkennbares Testbild ans Display. Das ist
+    /// fuer Setup/Diagnose gedacht und nutzt dasselbe Envelope-Format wie echte
+    /// CodexBar-Daten.
+    @discardableResult
+    func sendDiagnosticTestFrame() -> Bool {
+        guard serialPort.isReadyForCommands else { return false }
+
+        let provider = CodexBarProvider.normalized(Settings.shared.selectedProvider)
+        let activeProvider = provider.rawValue
+
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        let now = Date()
+        let nowISO = isoFormatter.string(from: now)
+        let primaryReset = isoFormatter.string(from: now.addingTimeInterval(35 * 60))
+        let secondaryReset = isoFormatter.string(from: now.addingTimeInterval(2 * 24 * 3600 + 4 * 3600))
+        let tertiaryReset = isoFormatter.string(from: now.addingTimeInterval(6 * 3600))
+
+        let timeFmt = DateFormatter()
+        timeFmt.dateFormat = "HH:mm"
+        timeFmt.timeZone = Settings.shared.effectiveTimeZone()
+        let localTime = timeFmt.string(from: now)
+
+        func rowTitle(_ index: Int) -> String {
+            if provider == .antigravity {
+                switch index {
+                case 0: return "Claude"
+                case 1: return "Gemini Pro"
+                default: return "Gemini Flash"
+                }
+            }
+            switch index {
+            case 0: return "Test Session"
+            case 1: return "Test Weekly"
+            default: return "Test Extra"
+            }
+        }
+
+        let rowsPayload: [[String: Any]] = [
+            [
+                "id": "primary",
+                "title": rowTitle(0),
+                "usedPercent": 42,
+                "resetsAt": primaryReset,
+                "windowMinutes": 300
+            ],
+            [
+                "id": "secondary",
+                "title": rowTitle(1),
+                "usedPercent": 68,
+                "resetsAt": secondaryReset,
+                "windowMinutes": 10080
+            ],
+            [
+                "id": "tertiary",
+                "title": rowTitle(2),
+                "usedPercent": 17,
+                "resetsAt": tertiaryReset,
+                "windowMinutes": 1440
+            ],
+        ]
+
+        let envelope: [String: Any] = [
+            "time": nowISO,
+            "displayTime": localTime,
+            "data": [
+                [
+                    "source": "diagnostic",
+                    "provider": activeProvider,
+                    "usage": [
+                        "primary": [
+                            "usedPercent": 42,
+                            "resetsAt": primaryReset,
+                            "windowMinutes": 300
+                        ],
+                        "secondary": [
+                            "usedPercent": 68,
+                            "resetsAt": secondaryReset,
+                            "windowMinutes": 10080
+                        ],
+                        "tertiary": [
+                            "usedPercent": 17,
+                            "resetsAt": tertiaryReset,
+                            "windowMinutes": 1440
+                        ],
+                        "rows": rowsPayload,
+                        "loginMethod": "AI Monitor Test"
+                    ]
+                ]
+            ]
+        ]
+
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: envelope)
+            guard let jsonString = String(data: jsonData, encoding: .utf8) else { return false }
+            guard serialPort.sendJSON(jsonString) else { return false }
+            lastUpdateDate = Date()
+            onUpdate?()
+            NSLog("[Serial] Sent diagnostic test frame (%d bytes) provider=%@", jsonData.count, activeProvider)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+                self?.sendLastUsageSnapshotIfAvailable()
+            }
+            return true
+        } catch {
+            NSLog("[Serial] Diagnostic JSON encode error: %@", error.localizedDescription)
+            return false
+        }
     }
 
     /// Sendet den aktuellen Brightness-Wert (0..100) an den ESP32. Persistenz

@@ -27,6 +27,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var providerSegmented: NSSegmentedControl!
     private var appSettingsToggle: NSButton!
     private var updateChannelPopup: NSPopUpButton!
+    private var setupStatusDot: NSTextField!
+    private var setupStatusLabel: NSTextField!
+    private var setupDetailLabel: NSTextField!
+    private var setupTestButton: NSButton!
+    private var setupCopyButton: NSButton!
 
     // Linke Spalte — CodexBar
     private var codexBarStatusDot: NSTextField!
@@ -301,6 +306,41 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         channelHelper.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(channelHelper)
 
+        setupStatusDot = NSTextField(labelWithString: "\u{25CF}")
+        setupStatusDot.font = NSFont.systemFont(ofSize: 13)
+        setupStatusDot.textColor = .secondaryLabelColor
+
+        setupStatusLabel = NSTextField(labelWithString: "Setup wird geprüft …")
+        setupStatusLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+
+        let setupStatusRow = NSStackView(views: [setupStatusDot, setupStatusLabel])
+        setupStatusRow.orientation = .horizontal
+        setupStatusRow.spacing = 6
+        setupStatusRow.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(setupStatusRow)
+
+        setupDetailLabel = NSTextField(labelWithString: "")
+        setupDetailLabel.font = NSFont.systemFont(ofSize: 11)
+        setupDetailLabel.textColor = .secondaryLabelColor
+        setupDetailLabel.lineBreakMode = .byWordWrapping
+        setupDetailLabel.maximumNumberOfLines = 2
+        setupDetailLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(setupDetailLabel)
+
+        setupTestButton = NSButton(title: "Testbild senden", target: self, action: #selector(sendTestFrame))
+        setupTestButton.bezelStyle = .rounded
+        setupTestButton.controlSize = .small
+
+        setupCopyButton = NSButton(title: "Diagnose kopieren", target: self, action: #selector(copyDiagnostics))
+        setupCopyButton.bezelStyle = .rounded
+        setupCopyButton.controlSize = .small
+
+        let setupActionRow = NSStackView(views: [setupTestButton, setupCopyButton])
+        setupActionRow.orientation = .horizontal
+        setupActionRow.spacing = 8
+        setupActionRow.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(setupActionRow)
+
         appSettingsToggle = NSButton(checkboxWithTitle: "Menüleisten-Schnellmenü aktivieren",
                                      target: self,
                                      action: #selector(menuBarQuickMenuToggled))
@@ -327,8 +367,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             channelHelper.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             channelHelper.topAnchor.constraint(equalTo: channelRow.bottomAnchor, constant: 4),
 
+            setupStatusRow.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            setupStatusRow.topAnchor.constraint(equalTo: channelHelper.bottomAnchor, constant: 8),
+
+            setupDetailLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            setupDetailLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            setupDetailLabel.topAnchor.constraint(equalTo: setupStatusRow.bottomAnchor, constant: 4),
+            setupDetailLabel.widthAnchor.constraint(equalToConstant: 420),
+
+            setupActionRow.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            setupActionRow.topAnchor.constraint(equalTo: setupDetailLabel.bottomAnchor, constant: 8),
+
             appSettingsToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            appSettingsToggle.topAnchor.constraint(equalTo: channelHelper.bottomAnchor, constant: 8),
+            appSettingsToggle.topAnchor.constraint(equalTo: setupActionRow.bottomAnchor, constant: 8),
 
             helper.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             helper.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
@@ -974,6 +1025,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             let channel = Settings.shared.updateChannel
             updateChannelPopup.selectItem(at: channel == .beta ? 1 : 0)
         }
+        updateSetupBox()
 
         // CodexBar
         let src = monitor.codexBar
@@ -1244,6 +1296,162 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    private func updateSetupBox() {
+        guard let monitor = monitor, setupStatusLabel != nil else { return }
+
+        let codexOK = monitor.codexBar.status.isOK
+        let serialState = monitor.serialPort.state
+        let ready = codexOK && serialState == .connected
+
+        setupTestButton.isEnabled = (serialState == .connected)
+        setupCopyButton.isEnabled = true
+
+        if ready {
+            setupStatusDot.stringValue = "\u{25CF}"
+            setupStatusDot.textColor = .systemGreen
+            setupStatusLabel.stringValue = "Alles bereit"
+            setupStatusLabel.textColor = .labelColor
+            let provider = CodexBarProvider.normalized(monitor.codexBar.provider).displayLabel
+            let device = DeviceRegistry.shared.currentProfile()?.friendlyName ?? "ESP32"
+            setupDetailLabel.stringValue = "\(provider)-Daten sind aktuell, \(device) ist verbunden."
+            setupDetailLabel.textColor = .secondaryLabelColor
+            return
+        }
+
+        switch serialState {
+        case .connected:
+            setupStatusDot.stringValue = "\u{25CF}"
+            setupStatusDot.textColor = .systemOrange
+            setupStatusLabel.stringValue = "CodexBar prüfen"
+            setupStatusLabel.textColor = .systemOrange
+            setupDetailLabel.stringValue = setupDetailForCodexStatus(monitor.codexBar.status,
+                                                                     provider: monitor.codexBar.provider)
+            setupDetailLabel.textColor = .secondaryLabelColor
+        case .foreignFirmware:
+            setupStatusDot.stringValue = "\u{25CF}"
+            setupStatusDot.textColor = .systemRed
+            setupStatusLabel.stringValue = "Firmware fehlt"
+            setupStatusLabel.textColor = .systemRed
+            var detail = "Der USB-Port ist offen, aber das Gerät antwortet nicht als AI-Monitor."
+            if !codexOK { detail += " CodexBar ist ebenfalls nicht bereit." }
+            setupDetailLabel.stringValue = detail
+            setupDetailLabel.textColor = .secondaryLabelColor
+        case .probing:
+            setupStatusDot.stringValue = "\u{25CF}"
+            setupStatusDot.textColor = .systemYellow
+            setupStatusLabel.stringValue = "ESP32-Handshake läuft"
+            setupStatusLabel.textColor = .labelColor
+            var detail = "Die App prüft gerade, ob auf dem verbundenen Gerät AI-Monitor läuft."
+            if !codexOK { detail += " CodexBar ist noch nicht bereit." }
+            setupDetailLabel.stringValue = detail
+            setupDetailLabel.textColor = .secondaryLabelColor
+        case .disconnected:
+            setupStatusDot.stringValue = "\u{25CB}"
+            setupStatusDot.textColor = codexOK ? .secondaryLabelColor : .systemOrange
+            setupStatusLabel.stringValue = codexOK ? "ESP32 verbinden" : "Setup unvollständig"
+            setupStatusLabel.textColor = codexOK ? .secondaryLabelColor : .systemOrange
+            if codexOK {
+                setupDetailLabel.stringValue = "Kein passender USB-Serial-Port erkannt. Kabel, Board oder Port-Auswahl prüfen."
+            } else {
+                setupDetailLabel.stringValue = "\(setupDetailForCodexStatus(monitor.codexBar.status, provider: monitor.codexBar.provider)) ESP32 ist nicht verbunden."
+            }
+            setupDetailLabel.textColor = .secondaryLabelColor
+        }
+    }
+
+    private func setupDetailForCodexStatus(_ status: CodexBarStatus, provider: String) -> String {
+        let providerLabel = CodexBarProvider.normalized(provider).displayLabel
+        switch status {
+        case .ok:
+            return "\(providerLabel)-Daten sind aktuell."
+        case .missing:
+            return "Keine \(providerLabel)-Daten gefunden. CodexBar öffnen und Provider aktivieren."
+        case .stale(let age):
+            if age == Int.max { return "CodexBar-Snapshot hat keinen gültigen Zeitstempel." }
+            return "CodexBar-Daten sind \(age / 60) Minuten alt."
+        case .wrongVersion(let found, let expected):
+            return "CodexBar-Schema \(found), erwartet \(expected). CodexBar/AI Monitor aktualisieren."
+        case .parseError(let message):
+            return "CodexBar-Snapshot konnte nicht gelesen werden: \(message)"
+        case .notYet:
+            return "CodexBar-Daten werden geladen …"
+        }
+    }
+
+    private func diagnosticReport() -> String {
+        guard let monitor = monitor else { return "AI Monitor Diagnose\nMonitor nicht initialisiert." }
+
+        let df = DateFormatter()
+        df.dateStyle = .medium
+        df.timeStyle = .medium
+
+        func dateText(_ date: Date?) -> String {
+            guard let date else { return "—" }
+            return df.string(from: date)
+        }
+
+        func connectionStateText(_ state: DeviceConnectionState) -> String {
+            switch state {
+            case .disconnected: return "disconnected"
+            case .probing: return "probing"
+            case .connected: return "connected"
+            case .foreignFirmware: return "foreignFirmware"
+            }
+        }
+
+        let src = monitor.codexBar
+        let serial = monitor.serialPort
+        let profile = DeviceRegistry.shared.currentProfile()
+        let fw = FirmwareManager.shared
+        let availablePorts = serial.availablePortPaths()
+        let entry = src.lastEntry
+
+        var lines: [String] = []
+        lines.append("AI Monitor Diagnose")
+        lines.append("Erstellt: \(df.string(from: Date()))")
+        lines.append("")
+        lines.append("App")
+        lines.append("- Version: \(kAppVersion)")
+        lines.append("- Update-Kanal: \(Settings.shared.updateChannel.rawValue)")
+        lines.append("- Provider: \(CodexBarProvider.normalized(Settings.shared.selectedProvider).displayLabel)")
+        lines.append("- Prozentmodus: \(Settings.shared.usagePercentDisplayMode.rawValue)")
+        lines.append("- Zeitzone: \(Settings.shared.selectedTimeZone)")
+        lines.append("")
+        lines.append("CodexBar")
+        lines.append("- Status: \(src.status.shortLabel)")
+        lines.append("- Hinweis: \(setupDetailForCodexStatus(src.status, provider: src.provider))")
+        lines.append("- Letzter Ladeversuch: \(dateText(src.lastLoadedAt))")
+        lines.append("- Snapshot erzeugt: \(dateText(src.lastSnapshotGeneratedAt))")
+        lines.append("- Entry updatedAt: \(entry?.updatedAt ?? "—")")
+        lines.append("- Session: \(entry?.primary?.usedPercent ?? -1) %")
+        lines.append("- Weekly: \(entry?.secondary?.usedPercent ?? -1) %")
+        lines.append("")
+        lines.append("ESP32")
+        lines.append("- Verbindung: \(connectionStateText(serial.state))")
+        lines.append("- Aktiver Port: \(serial.connectedPort ?? "—")")
+        lines.append("- Manuell gewählter Port: \(Settings.shared.manualPortPath ?? "automatisch")")
+        lines.append("- Gefundene Ports: \(availablePorts.isEmpty ? "—" : availablePorts.joined(separator: ", "))")
+        lines.append("- Firmware-Version: \(serial.deviceFirmwareVersion ?? "—")")
+        lines.append("- Letztes Senden: \(dateText(monitor.lastUpdateDate))")
+        lines.append("")
+        lines.append("Geräteprofil")
+        lines.append("- Name: \(profile?.friendlyName ?? "—")")
+        lines.append("- MAC: \(profile?.mac ?? "—")")
+        lines.append("- Display-Variante: \(profile?.displayVariant ?? "—")")
+        lines.append("- Ausrichtung: \(profile?.orientation ?? "—")")
+        lines.append("- Theme: \(profile?.theme ?? "—")")
+        lines.append("- Sprache: \(profile?.language ?? "—")")
+        lines.append("- Helligkeit: \(profile.map { "\($0.brightness) %" } ?? "—")")
+        lines.append("")
+        lines.append("Firmware-Update")
+        lines.append("- Installiert: \(fw.installedVersionDisplay)")
+        lines.append("- Latest: \(fw.latestVersionDisplay)")
+        lines.append("- Update verfügbar: \(fw.hasUpdate ? "ja" : "nein")")
+        lines.append("- Flash läuft: \(fw.isFlashing ? "ja" : "nein")")
+
+        return lines.joined(separator: "\n")
+    }
+
     private func rebuildPortPopup() {
         guard let monitor = monitor else { return }
         portPopup.removeAllItems()
@@ -1287,6 +1495,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc private func reloadCodexBar() {
         monitor?.codexBar.loadOnce()
         update()
+    }
+
+    @objc private func sendTestFrame() {
+        guard let monitor = monitor else { return }
+        if monitor.sendDiagnosticTestFrame() {
+            setupDetailLabel.stringValue = "Testbild gesendet. Echte Daten werden automatisch wiederhergestellt."
+            setupDetailLabel.textColor = .secondaryLabelColor
+        } else {
+            setupDetailLabel.stringValue = "Testbild konnte nicht gesendet werden. ESP32-Verbindung prüfen."
+            setupDetailLabel.textColor = .systemRed
+            NSSound.beep()
+        }
+    }
+
+    @objc private func copyDiagnostics() {
+        let report = diagnosticReport()
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(report, forType: .string)
+        setupDetailLabel.stringValue = "Diagnose wurde in die Zwischenablage kopiert."
+        setupDetailLabel.textColor = .secondaryLabelColor
     }
 
     @objc private func refreshPorts() {
