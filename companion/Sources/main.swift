@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.18.2 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.18.3 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.18.2"
+let kAppVersion = "1.18.3"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -1468,8 +1468,8 @@ class FirmwareManager {
 
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
-        let installed = Settings.shared.installedFirmwareVersion
-        return release.tag_name != installed
+        guard let installed = Settings.shared.installedFirmwareVersion else { return true }
+        return firmwareVersionTag(from: release.tag_name) != firmwareVersionTag(from: installed)
     }
 
     var installedVersionDisplay: String { Settings.shared.installedFirmwareVersion ?? "unbekannt" }
@@ -2560,7 +2560,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let defaultVariant: String = DeviceRegistry.shared.currentProfile()?.displayVariant
             ?? kDisplayVariantDefault
 
-        let version = fw.latestRelease?.tag_name ?? fw.installedVersionDisplay
+        let version = fw.latestVersionDisplay != "?" ? fw.latestVersionDisplay : fw.installedVersionDisplay
         let shortPort = (port as NSString).lastPathComponent
         let info = "ESP32 \(shortPort) — Firmware \(version)"
 
