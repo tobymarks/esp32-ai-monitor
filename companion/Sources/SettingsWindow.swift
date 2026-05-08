@@ -1280,7 +1280,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 else if age < 3600 { txt = "vor \(age/60) m" }
                 else { txt = "vor \(age/3600) h \((age%3600)/60) m" }
                 let receipt = serialFrameReceiptText(monitor.serialPort.lastFrameReceipt)
-                lastUpdateLabel.stringValue = "Letztes Update an ESP32: \(txt)\(receipt)"
+                let detail = monitor.serialLinkDetail.map { " · \($0)" } ?? ""
+                lastUpdateLabel.stringValue = "Letztes Update an ESP32: \(txt)\(receipt)\(detail)"
+            } else if let detail = monitor.serialLinkDetail {
+                lastUpdateLabel.stringValue = "Letztes Update an ESP32: — · \(detail)"
             } else {
                 lastUpdateLabel.stringValue = "Letztes Update an ESP32: —"
             }
@@ -1465,6 +1468,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         } else {
             lines.append("- Letzte Frame-Bestätigung: —")
         }
+        lines.append("- Unbestätigte Frames in Folge: \(monitor.serialConsecutiveUnconfirmedFrames)")
+        lines.append("- Serial-Hinweis: \(monitor.serialLinkDetail ?? "—")")
+        lines.append("- Letzter Auto-Reconnect: \(dateText(monitor.lastSerialAutoRepairDate))")
         lines.append("")
         lines.append("Geräteprofil")
         lines.append("- Name: \(profile?.friendlyName ?? "—")")

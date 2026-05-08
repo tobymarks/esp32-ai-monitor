@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.2 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.3 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.2"
+let kAppVersion = "1.20.3"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -2020,6 +2020,9 @@ class SerialPortManager {
 
 class UsageMonitor {
     private static let serialSchemaVersion = 1
+    private static let serialAckFirmwareVersion = "2.12.1"
+    private static let serialAutoRepairThreshold = 3
+    private static let serialAutoRepairCooldown: TimeInterval = 60
 
     let serialPort: SerialPortManager
     let codexBar: CodexBarSource
@@ -2027,6 +2030,10 @@ class UsageMonitor {
     var onUpdate: (() -> Void)?
     private var heartbeatTimer: Timer?
     private var nextFrameId = 1
+    private var pendingDiagnosticAfterNextConnect = false
+    private(set) var serialConsecutiveUnconfirmedFrames = 0
+    private(set) var lastSerialAutoRepairDate: Date?
+    private(set) var serialLinkDetail: String?
 
     init() {
         self.serialPort = SerialPortManager()
@@ -2082,6 +2089,14 @@ class UsageMonitor {
             if self.codexBar.status.isOK {
                 self.sendUsageToESP32()
             }
+            if self.pendingDiagnosticAfterNextConnect && self.serialPort.state == .connected {
+                self.pendingDiagnosticAfterNextConnect = false
+                self.serialLinkDetail = "Testframe nach Firmware-Update wird gesendet"
+                DispatchQueue.main.async { self.onUpdate?() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    _ = self?.sendDiagnosticTestFrame()
+                }
+            }
         }
         serialPort.startScanning()
 
@@ -2135,6 +2150,112 @@ class UsageMonitor {
                   receipt.frameId,
                   receipt.message ?? receipt.type)
         }
+    }
+
+    func queueDiagnosticTestFrameAfterNextConnect() {
+        pendingDiagnosticAfterNextConnect = true
+        serialLinkDetail = "Testframe nach Firmware-Update wartet auf Verbindung"
+        onUpdate?()
+    }
+
+    private func registerFrameReceipt(_ receipt: SerialFrameReceipt?, source: String) -> Bool {
+        logFrameReceipt(receipt, source: source)
+
+        guard let receipt else {
+            serialLinkDetail = "Senden fehlgeschlagen"
+            DispatchQueue.main.async { self.onUpdate?() }
+            return false
+        }
+
+        switch receipt.type {
+        case "ack":
+            serialConsecutiveUnconfirmedFrames = 0
+            serialLinkDetail = nil
+        case "error":
+            serialConsecutiveUnconfirmedFrames = 0
+            serialLinkDetail = "Firmware meldet Fehler: \(receipt.message ?? "unbekannt")"
+        default:
+            handleUnconfirmedFrame(receipt)
+        }
+
+        DispatchQueue.main.async { self.onUpdate?() }
+        return receipt.type != "error"
+    }
+
+    private func handleUnconfirmedFrame(_ receipt: SerialFrameReceipt) {
+        if firmwareSupportsFrameAck() {
+            serialConsecutiveUnconfirmedFrames += 1
+            if serialConsecutiveUnconfirmedFrames >= Self.serialAutoRepairThreshold {
+                triggerSerialAutoRepair(frameId: receipt.frameId)
+            } else {
+                serialLinkDetail = "warte auf Bestätigung (\(serialConsecutiveUnconfirmedFrames)/\(Self.serialAutoRepairThreshold))"
+            }
+        } else {
+            serialConsecutiveUnconfirmedFrames = 0
+            let version = serialPort.deviceFirmwareVersion.map { "v\($0)" }
+                ?? Settings.shared.installedFirmwareVersion
+                ?? "unbekannt"
+            serialLinkDetail = "Firmware \(version) bestätigt Frames noch nicht, Update empfohlen"
+        }
+    }
+
+    private func triggerSerialAutoRepair(frameId: Int) {
+        let now = Date()
+        if let last = lastSerialAutoRepairDate,
+           now.timeIntervalSince(last) < Self.serialAutoRepairCooldown {
+            serialLinkDetail = "Auto-Reconnect pausiert nach Frame #\(frameId)"
+            return
+        }
+
+        lastSerialAutoRepairDate = now
+        serialConsecutiveUnconfirmedFrames = 0
+        serialLinkDetail = "USB-Verbindung wird neu aufgebaut"
+        NSLog("[Serial] Auto-repair: reconnecting after unconfirmed frame #%d", frameId)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.onUpdate?()
+            self.serialPort.disconnect()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard let self = self else { return }
+                self.serialPort.scanForPort()
+                self.serialLinkDetail = "USB-Verbindung neu aufgebaut"
+                self.onUpdate?()
+            }
+        }
+    }
+
+    private func firmwareSupportsFrameAck() -> Bool {
+        let version = serialPort.deviceFirmwareVersion
+            ?? Settings.shared.installedFirmwareVersion
+            ?? ""
+        return compareSemanticVersion(version, Self.serialAckFirmwareVersion) != .orderedAscending
+    }
+
+    private func compareSemanticVersion(_ a: String, _ b: String) -> ComparisonResult {
+        func parts(_ raw: String) -> [Int] {
+            var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            for prefix in ["fw-beta-v", "fw-beta-", "app-beta-v", "app-v", "v"] {
+                if cleaned.hasPrefix(prefix) {
+                    cleaned = String(cleaned.dropFirst(prefix.count))
+                    break
+                }
+            }
+            return cleaned.split(separator: ".").map { component in
+                Int(component.split(separator: "-").first ?? "") ?? 0
+            }
+        }
+
+        let aParts = parts(a)
+        let bParts = parts(b)
+        let count = max(aParts.count, bParts.count)
+        for index in 0..<count {
+            let av = index < aParts.count ? aParts[index] : 0
+            let bv = index < bParts.count ? bParts[index] : 0
+            if av > bv { return .orderedDescending }
+            if av < bv { return .orderedAscending }
+        }
+        return .orderedSame
     }
 
     // ---- Sende-Funktionen ----
@@ -2289,18 +2410,18 @@ class UsageMonitor {
             let jsonData = try JSONSerialization.data(withJSONObject: envelope)
             guard let jsonString = String(data: jsonData, encoding: .utf8) else { return false }
             let receipt = serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
-            if let receipt, receipt.type != "error" {
+            let accepted = registerFrameReceipt(receipt, source: "diagnostic")
+            if accepted {
                 lastUpdateDate = Date()
                 onUpdate?()
             }
-            logFrameReceipt(receipt, source: "diagnostic")
             NSLog("[Serial] Sent diagnostic test frame #%d (%d bytes) provider=%@",
                   frameId, jsonData.count, activeProvider)
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
                 self?.sendLastUsageSnapshotIfAvailable()
             }
-            return receipt != nil && receipt?.type != "error"
+            return accepted
         } catch {
             NSLog("[Serial] Diagnostic JSON encode error: %@", error.localizedDescription)
             return false
@@ -2514,15 +2635,12 @@ class UsageMonitor {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: envelope)
             if let jsonString = String(data: jsonData, encoding: .utf8) {
-                if let receipt = serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId),
-                   receipt.type != "error" {
+                let receipt = serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
+                if registerFrameReceipt(receipt, source: "usage") {
                     lastUpdateDate = Date()
-                    logFrameReceipt(receipt, source: "usage")
                     NSLog("[Serial] Sent usage frame #%d (%d bytes) provider=%@ s=%d%% w=%d%% t=%d%% rows=%d",
                           frameId, jsonData.count, activeProvider,
                           primaryPercent, secondaryPercent, tertiaryPercent, rowsPayload.count)
-                } else {
-                    logFrameReceipt(serialPort.lastFrameReceipt, source: "usage")
                 }
             }
         } catch {
@@ -2831,6 +2949,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.monitor.serialPort.stopScanning()
             fw.flashFirmware(port: port) { [weak self] success, message in
                 DispatchQueue.main.async {
+                    if success {
+                        self?.monitor.queueDiagnosticTestFrameAfterNextConnect()
+                    }
                     self?.monitor.serialPort.startScanning()
                     self?.alert(title: success ? S().flashSuccess : S().flashFailed,
                                 info: message,
