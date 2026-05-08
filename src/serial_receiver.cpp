@@ -16,6 +16,7 @@
 #include "localization.h"
 #include "ui_common.h"
 #include "ui_dashboard.h"
+#include "wifi_time.h"
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -192,6 +193,52 @@ static bool parse_command(JsonDocument &doc) {
         return true;
     }
 
+    // --- wifi_scan ---
+    if (strcmp(cmd, "wifi_scan") == 0) {
+        wifi_time_print_scan();
+        return true;
+    }
+
+    // --- wifi_status ---
+    if (strcmp(cmd, "wifi_status") == 0) {
+        wifi_time_print_status();
+        return true;
+    }
+
+    // --- wifi_set ---
+    if (strcmp(cmd, "wifi_set") == 0) {
+        const char *ssid = doc["ssid"];
+        const char *password = doc["password"] | "";
+        if (ssid == nullptr || ssid[0] == '\0') {
+            Serial.println("{\"type\":\"wifi_status\",\"configured\":false,\"connected\":false,\"ssid\":\"\",\"ip\":\"\",\"rssi\":0,\"timeSynced\":false,\"error\":\"missing ssid\"}");
+            return true;
+        }
+        wifi_time_save_credentials(ssid, password);
+        wifi_time_connect_now(10000);
+        wifi_time_print_status();
+        return true;
+    }
+
+    // --- wifi_forget ---
+    if (strcmp(cmd, "wifi_forget") == 0) {
+        wifi_time_forget_credentials();
+        wifi_time_print_status();
+        return true;
+    }
+
+    // --- standby ---
+    // Sent by the Mac app during a clean quit. Cable pulls and sleep still use
+    // the normal timeout fallback.
+    if (strcmp(cmd, "standby") == 0) {
+        if (state.usage.valid && state.usage.last_fetch > 0) {
+            state.usage.last_fetch = millis() - DATA_TIMEOUT_MS - 1;
+        }
+        strlcpy(state.status, "Standby", sizeof(state.status));
+        new_data_flag = true;
+        Serial.println("{\"type\":\"ok\",\"cmd\":\"standby\"}");
+        return true;
+    }
+
     // --- set_theme ---
     if (strcmp(cmd, "set_theme") == 0) {
         const char *val = doc["value"];
@@ -266,9 +313,13 @@ static bool parse_command(JsonDocument &doc) {
                       "\"display\":\"%s\","
                       "\"orientation\":\"%s\","
                       "\"theme\":\"%s\",\"language\":\"%s\",\"brightness\":%u,"
+                      "\"wifiConfigured\":%s,\"wifiConnected\":%s,\"timeSynced\":%s,"
                       "\"uptime\":%lu,\"heap\":%u}\n",
                       APP_VERSION, mac_str, DISPLAY_ID, orient, theme, lang,
                       (unsigned)g_config.brightness_pct,
+                      wifi_time_has_credentials() ? "true" : "false",
+                      wifi_time_is_connected() ? "true" : "false",
+                      wifi_time_is_synced() ? "true" : "false",
                       (unsigned long)(millis() / 1000),
                       (unsigned)ESP.getFreeHeap());
         return true;

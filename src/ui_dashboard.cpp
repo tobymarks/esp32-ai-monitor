@@ -32,6 +32,7 @@
 #include <lvgl.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 // ============================================================
 // Widget references (created once, updated in-place)
@@ -85,6 +86,10 @@ static lv_obj_t *splash_overlay     = nullptr;
 static lv_obj_t *splash_spinner     = nullptr;
 static bool       first_data_received = false;
 
+// Standby overlay (shown when host data timed out but the display still has power)
+static lv_obj_t *standby_overlay    = nullptr;
+static lv_obj_t *standby_clock      = nullptr;
+
 static const char* ag_default_title(uint8_t idx) {
     switch (idx) {
         case 0: return "Claude";
@@ -127,6 +132,76 @@ static void on_long_press(lv_event_t *e) {
     uint32_t elapsed = lv_tick_elaps(tap_press_started_ms);
     Serial.printf("[UI] Long press (%lu ms) -> Settings\n", (unsigned long)elapsed);
     ui_settings_create();
+}
+
+// ============================================================
+// Standby clock overlay
+// ============================================================
+static void format_standby_clock(char *buf, size_t len) {
+    time_t now = time(nullptr);
+    if (now > 1700000000) {  // system clock has been set by the Mac frame
+        struct tm local;
+        localtime_r(&now, &local);
+        strftime(buf, len, "%H:%M", &local);
+        return;
+    }
+
+    const char *fallback = serial_get_display_time();
+    if (fallback && fallback[0] != '\0') {
+        strlcpy(buf, fallback, len);
+    } else {
+        strlcpy(buf, "--:--", len);
+    }
+}
+
+static void update_standby_clock() {
+    if (standby_clock == nullptr) return;
+
+    char tbuf[6];
+    format_standby_clock(tbuf, sizeof(tbuf));
+    lv_label_set_text(standby_clock, tbuf);
+}
+
+static void hide_standby_overlay() {
+    if (standby_overlay == nullptr) return;
+
+    lv_obj_delete(standby_overlay);
+    standby_overlay = nullptr;
+    standby_clock = nullptr;
+    Serial.println("[UI] Standby clock hidden — fresh host data received");
+}
+
+static void show_standby_overlay() {
+    if (standby_overlay != nullptr) {
+        update_standby_clock();
+        return;
+    }
+    if (scr_dashboard == nullptr) return;
+
+    standby_overlay = lv_obj_create(scr_dashboard);
+    lv_obj_set_size(standby_overlay, SCREEN_WIDTH, SCREEN_HEIGHT);
+    lv_obj_set_pos(standby_overlay, 0, 0);
+    lv_obj_set_style_bg_color(standby_overlay, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(standby_overlay, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(standby_overlay, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(standby_overlay, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(standby_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(standby_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(standby_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(standby_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
+
+    standby_clock = lv_label_create(standby_overlay);
+    lv_obj_set_width(standby_clock, SCREEN_WIDTH);
+    lv_obj_set_style_text_align(standby_clock, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(standby_clock, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(standby_clock, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(standby_clock, 4, LV_PART_MAIN);
+    lv_label_set_long_mode(standby_clock, LV_LABEL_LONG_CLIP);
+    update_standby_clock();
+    lv_obj_align(standby_clock, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_move_foreground(standby_overlay);
+    Serial.println("[UI] Standby clock shown — host data timed out");
 }
 
 // ============================================================
@@ -556,6 +631,10 @@ void ui_dashboard_update(const MonitorState &state) {
     memcpy(&last_state, &state, sizeof(MonitorState));
     state_stored = true;
 
+    const bool has_recent_data = serial_has_recent_data();
+    const bool clock_is_set = time(nullptr) > 1700000000;
+    const bool should_show_standby = !has_recent_data && (state.usage.valid || clock_is_set);
+
     // Hide splash overlay once we receive the first valid data
     if (!first_data_received && state.usage.valid && splash_overlay != nullptr) {
         first_data_received = true;
@@ -563,6 +642,12 @@ void ui_dashboard_update(const MonitorState &state) {
         splash_overlay = nullptr;
         splash_spinner = nullptr;
         Serial.println("[UI] Splash dismissed — first data received");
+    }
+
+    if (should_show_standby) {
+        show_standby_overlay();
+    } else {
+        hide_standby_overlay();
     }
 
     // ---- Provider name ----
@@ -708,14 +793,13 @@ void ui_dashboard_update(const MonitorState &state) {
     }
 
     // ---- Header: connection status icon ----
-    bool has_data = serial_has_recent_data();
     if (state.is_fetching) {
         lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_FETCHING, LV_PART_MAIN);
         lv_label_set_text(lbl_status_dot, LV_SYMBOL_REFRESH);
-    } else if (has_data && state.usage.valid) {
+    } else if (has_recent_data && state.usage.valid) {
         lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_SUCCESS, LV_PART_MAIN);
         lv_label_set_text(lbl_status_dot, LV_SYMBOL_OK);
-    } else if (!has_data && state.usage.valid) {
+    } else if (!has_recent_data && state.usage.valid) {
         // Data exists but is stale (> 5 min) — orange
         lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_BAR_ORANGE, LV_PART_MAIN);
         lv_label_set_text(lbl_status_dot, LV_SYMBOL_OK);
@@ -796,6 +880,8 @@ void ui_dashboard_recreate() {
         long_press_overlay = nullptr;
         splash_overlay     = nullptr;
         splash_spinner     = nullptr;
+        standby_overlay    = nullptr;
+        standby_clock      = nullptr;
     }
 
     // Reset styles so they pick up new colors

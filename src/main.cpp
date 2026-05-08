@@ -31,6 +31,7 @@
 #include "ui_dashboard.h"
 #include "ui_detail.h"
 #include "ui_settings.h"
+#include "wifi_time.h"
 
 // ============================================================
 // Globals
@@ -322,6 +323,7 @@ void setup()
 
     // --- Serial receiver init ---
     serial_receiver_init();
+    wifi_time_init();
     update_boot_status(L(STR_USB_CONNECTED));
     delay(1000);
 
@@ -344,6 +346,7 @@ void loop()
 
     // Read serial data
     serial_receiver_tick();
+    wifi_time_tick();
 
     // Update dashboard UI on new data OR every 1s (clock/countdown)
     if (dashboard_active) {

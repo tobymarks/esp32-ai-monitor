@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.17.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.19.0-beta.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.17.1"
+let kAppVersion = "1.19.0-beta.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -75,6 +75,7 @@ let kSerialHeartbeatInterval: TimeInterval = 60
 
 extension Notification.Name {
     static let settingsMenuBarQuickMenuChanged = Notification.Name("SettingsMenuBarQuickMenuChanged")
+    static let settingsUpdateChannelChanged = Notification.Name("SettingsUpdateChannelChanged")
 }
 
 // ============================================================
@@ -464,6 +465,26 @@ enum UsagePercentDisplayMode: String, CaseIterable {
     }
 }
 
+enum UpdateChannel: String, CaseIterable {
+    case stable
+    case beta
+
+    static let defaultChannel: UpdateChannel = .stable
+
+    static func normalized(_ raw: String?) -> UpdateChannel {
+        guard let raw else { return defaultChannel }
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return UpdateChannel(rawValue: cleaned) ?? defaultChannel
+    }
+
+    var displayLabel: String {
+        switch self {
+        case .stable: return "Stable"
+        case .beta: return "Beta"
+        }
+    }
+}
+
 class Settings {
     static let shared = Settings()
     private let defaults: UserDefaults
@@ -505,6 +526,18 @@ class Settings {
             if oldValue != newValue {
                 NotificationCenter.default.post(name: .settingsMenuBarQuickMenuChanged, object: self)
             }
+        }
+    }
+
+    var updateChannel: UpdateChannel {
+        get { UpdateChannel.normalized(defaults.string(forKey: "updateChannel")) }
+        set {
+            let oldValue = updateChannel
+            defaults.set(newValue.rawValue, forKey: "updateChannel")
+            guard oldValue != newValue else { return }
+            lastAppUpdateCheck = nil
+            lastFirmwareCheck = nil
+            NotificationCenter.default.post(name: .settingsUpdateChannelChanged, object: self)
         }
     }
 
@@ -716,6 +749,7 @@ class Settings {
             "brightness",
             "selectedProvider",
             "selectedTimeZone",
+            "updateChannel",
         ]
         var copied = 0
         for k in keys {
@@ -776,6 +810,7 @@ struct GitHubRelease: Codable {
     let name: String?
     let html_url: String?
     let body: String?
+    let prerelease: Bool
     let assets: [GitHubAsset]
 }
 
@@ -798,15 +833,15 @@ class AppUpdateManager {
 
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
-        let latest = normalizeVersion(release.tag_name)
-        let current = normalizeVersion(kAppVersion)
-        return compareVersions(latest, current) == .orderedDescending
+        return release.tag_name != currentAppReleaseTag
     }
 
     var latestVersionDisplay: String {
         guard let release = latestRelease else { return "unbekannt" }
-        return release.tag_name.hasPrefix("v") ? release.tag_name : "v\(release.tag_name)"
+        return "v\(normalizeVersion(release.tag_name))"
     }
+
+    private var currentAppReleaseTag: String { "app-v\(kAppVersion)" }
 
     func checkForUpdate(completion: @escaping (Bool) -> Void) {
         guard let url = URL(string: kGitHubReleasesAPI) else { completion(false); return }
@@ -828,17 +863,16 @@ class AppUpdateManager {
             }
             do {
                 let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-                let appRelease = releases.first { $0.tag_name.hasPrefix("app-v") }
+                let appRelease = self.selectAppRelease(from: releases)
                 if let release = appRelease {
                     self.latestRelease = release
                     Settings.shared.lastAppUpdateCheck = Date()
-                    let latest = self.normalizeVersion(release.tag_name)
-                    let current = self.normalizeVersion(kAppVersion)
-                    let isNewer = self.compareVersions(latest, current) == .orderedDescending
-                    NSLog("[AppUpdate] Latest: %@ | Current: v%@ | Update: %@",
-                          release.tag_name, kAppVersion, isNewer ? "YES" : "no")
+                    let hasUpdate = self.hasUpdate
+                    NSLog("[AppUpdate] Channel: %@ | Target: %@ | Current: %@ | Install: %@",
+                          Settings.shared.updateChannel.rawValue, release.tag_name,
+                          self.currentAppReleaseTag, hasUpdate ? "YES" : "no")
                     DispatchQueue.main.async { self.onUpdate?() }
-                    completion(isNewer)
+                    completion(hasUpdate)
                 } else {
                     Settings.shared.lastAppUpdateCheck = Date()
                     DispatchQueue.main.async { self.onUpdate?() }
@@ -849,6 +883,18 @@ class AppUpdateManager {
                 completion(false)
             }
         }.resume()
+    }
+
+    private func selectAppRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
+        releases.first { release in
+            guard release.tag_name.hasPrefix("app-v") else { return false }
+            switch Settings.shared.updateChannel {
+            case .stable:
+                return !release.prerelease
+            case .beta:
+                return true
+            }
+        }
     }
 
     func downloadAndInstall(completion: @escaping (Bool, String) -> Void) {
@@ -1129,9 +1175,7 @@ class FirmwareManager {
             }
             do {
                 let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-                let firmwareRelease = releases.first { r in
-                    r.tag_name.hasPrefix("v") && !r.tag_name.hasPrefix("app-")
-                }
+                let firmwareRelease = self.selectFirmwareRelease(from: releases)
                 guard let release = firmwareRelease else {
                     Settings.shared.lastFirmwareCheck = Date()
                     DispatchQueue.main.async { self.onUpdate?() }
@@ -1147,6 +1191,20 @@ class FirmwareManager {
                 completion(hasUpdate)
             } catch { completion(false) }
         }.resume()
+    }
+
+    private func selectFirmwareRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
+        releases.first { release in
+            guard release.tag_name.hasPrefix("v"), !release.tag_name.hasPrefix("app-") else {
+                return false
+            }
+            switch Settings.shared.updateChannel {
+            case .stable:
+                return !release.prerelease
+            case .beta:
+                return true
+            }
+        }
     }
 
     func downloadFirmware(completion: @escaping (Bool, String?) -> Void) {
@@ -1404,6 +1462,7 @@ class SerialPortManager {
     private(set) var connectedPort: String?
     private var scanTimer: Timer?
     private var lastDisconnectAt: Date?
+    private let ioLock = NSLock()
     // Nach einem Firmware-Reboot (Legacy-Pfad) dauerte das Wiederherstellen der
     // USB-CDC-Schnittstelle ~2-3 s. Frueher: 5 s Blockwindow = spuerbarer Delay.
     // v1.9.0: auf 1 s reduziert, da v2.8.0-Firmware orientation/theme ohne Reboot
@@ -1723,11 +1782,17 @@ class SerialPortManager {
     }
 
     func send(data: Data) -> Bool {
-        guard fileDescriptor >= 0 else { return false }
+        ioLock.lock()
+        let fd = fileDescriptor
+        guard fd >= 0 else {
+            ioLock.unlock()
+            return false
+        }
         let result = data.withUnsafeBytes { rawBuffer -> Int in
             guard let ptr = rawBuffer.baseAddress else { return -1 }
-            return Darwin.write(fileDescriptor, ptr, rawBuffer.count)
+            return Darwin.write(fd, ptr, rawBuffer.count)
         }
+        ioLock.unlock()
         if result < 0 {
             NSLog("[Serial] Write failed: errno %d", errno)
             disconnect(); return false
@@ -1738,6 +1803,60 @@ class SerialPortManager {
     func sendJSON(_ jsonString: String) -> Bool {
         guard let data = (jsonString + "\n").data(using: .utf8) else { return false }
         return send(data: data)
+    }
+
+    func performJSONCommand(_ payload: [String: Any],
+                            acceptedTypes: Set<String>,
+                            timeout: TimeInterval = 5.0,
+                            completion: @escaping ([String: Any]?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self, self.isReadyForCommands else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            let response = self.performJSONCommandSync(payload,
+                                                       acceptedTypes: acceptedTypes,
+                                                       timeout: timeout)
+            DispatchQueue.main.async { completion(response) }
+        }
+    }
+
+    private func performJSONCommandSync(_ payload: [String: Any],
+                                        acceptedTypes: Set<String>,
+                                        timeout: TimeInterval) -> [String: Any]? {
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              var jsonString = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        jsonString.append("\n")
+        guard let wireData = jsonString.data(using: .utf8) else { return nil }
+
+        ioLock.lock()
+        defer { ioLock.unlock() }
+
+        guard fileDescriptor >= 0 else { return nil }
+        drainInput()
+        let writeResult = wireData.withUnsafeBytes { rawBuffer -> Int in
+            guard let ptr = rawBuffer.baseAddress else { return -1 }
+            return Darwin.write(fileDescriptor, ptr, rawBuffer.count)
+        }
+        guard writeResult > 0 else { return nil }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline && fileDescriptor >= 0 {
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 { break }
+            guard let line = readLine(timeout: min(remaining, 1.0)) else { continue }
+            guard line.hasPrefix("{"),
+                  let jsonData = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                  let type = json["type"] as? String,
+                  acceptedTypes.contains(type) else {
+                continue
+            }
+            return json
+        }
+        return nil
     }
 
     func readLine(timeout: TimeInterval = 2.0) -> String? {
@@ -1917,6 +2036,13 @@ class UsageMonitor {
         guard serialPort.isReadyForCommands else { return }
         let cmd = "{\"cmd\":\"set_brightness\",\"value\":\(clamped)}"
         if serialPort.sendJSON(cmd) { NSLog("[Serial] Sent set_brightness: %d", clamped) }
+    }
+
+    func sendStandbyToESP32() {
+        guard serialPort.isReadyForCommands else { return }
+        if serialPort.sendJSON("{\"cmd\":\"standby\"}") {
+            NSLog("[Serial] Sent standby")
+        }
     }
 
     /// Falls CodexBar-Daten vorliegen, wird der letzte Snapshot direkt an den
@@ -2129,6 +2255,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var appUpdateCheckTimer: Timer?
     private var menuBarStatusItem: NSStatusItem?
     private var menuBarQuickMenuObservation: NSObjectProtocol?
+    private var updateChannelObservation: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Best-effort Aufraeumen der alten Keychain-Eintraege (Anthropic OAuth Cache).
@@ -2156,6 +2283,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             queue: .main
         ) { [weak self] _ in
             self?.refreshMenuBarQuickMenu()
+        }
+
+        updateChannelObservation = NotificationCenter.default.addObserver(
+            forName: .settingsUpdateChannelChanged,
+            object: Settings.shared,
+            queue: .main
+        ) { [weak self] _ in
+            AppUpdateManager.shared.latestRelease = nil
+            FirmwareManager.shared.latestRelease = nil
+            FirmwareManager.shared.downloadedBinPath = nil
+            self?.checkAppUpdate()
+            self?.checkFirmwareUpdate()
+            self?.settingsController?.update()
         }
 
         // macOS-Appearance-Observer (für themeMode=system)
@@ -2186,6 +2326,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         settingsController?.show()
         return true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        monitor?.sendStandbyToESP32()
+        monitor?.stop()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

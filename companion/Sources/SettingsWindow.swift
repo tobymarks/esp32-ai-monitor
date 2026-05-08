@@ -12,6 +12,12 @@
 
 import Cocoa
 
+private struct DisplayWiFiNetwork {
+    let ssid: String
+    let rssi: Int
+    let secure: Bool
+}
+
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Referenzen, die von aussen injiziert werden
@@ -20,6 +26,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // Header
     private var providerSegmented: NSSegmentedControl!
     private var appSettingsToggle: NSButton!
+    private var updateChannelPopup: NSPopUpButton!
 
     // Linke Spalte — CodexBar
     private var codexBarStatusDot: NSTextField!
@@ -34,6 +41,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var portStatusLabel: NSTextField!
     private var portPopup: NSPopUpButton!
     private var portRefreshButton: NSButton!
+
+    // Linke Spalte — Display-WiFi
+    private var wifiStatusDot: NSTextField!
+    private var wifiStatusLabel: NSTextField!
+    private var wifiNetworkPopup: NSPopUpButton!
+    private var wifiPasswordField: NSSecureTextField!
+    private var wifiScanButton: NSButton!
+    private var wifiConnectButton: NSButton!
+    private var wifiForgetButton: NSButton!
+    private var wifiNetworks: [DisplayWiFiNetwork] = []
+    private var lastWiFiStatusRefresh: Date?
 
     // Rechte Spalte — Display
     private var deviceRow: NSView!
@@ -83,7 +101,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 660),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -92,8 +110,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.center()
         // Fixe Groesse — kein Resize.
-        window.minSize = NSSize(width: 960, height: 560)
-        window.maxSize = NSSize(width: 960, height: 560)
+        window.minSize = NSSize(width: 960, height: 660)
+        window.maxSize = NSSize(width: 960, height: 660)
         self.init(window: window)
         window.delegate = self
         buildUI()
@@ -261,9 +279,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildAppBox() -> NSView {
         let container = NSView()
 
-        let heading = makeSectionHeading("App")
+        let heading = makeSectionHeading("App & Updates")
         heading.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(heading)
+
+        updateChannelPopup = NSPopUpButton()
+        updateChannelPopup.addItems(withTitles: UpdateChannel.allCases.map(\.displayLabel))
+        updateChannelPopup.target = self
+        updateChannelPopup.action = #selector(updateChannelChosen)
+        updateChannelPopup.translatesAutoresizingMaskIntoConstraints = false
+        updateChannelPopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        let channelRow = twoColumnRow("Update-Kanal", updateChannelPopup)
+        channelRow.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(channelRow)
+
+        let channelHelper = NSTextField(labelWithString: "Stable nutzt veröffentlichte Releases. Beta zeigt zusätzlich Vorabversionen für App und Firmware.")
+        channelHelper.font = NSFont.systemFont(ofSize: 11)
+        channelHelper.textColor = .secondaryLabelColor
+        channelHelper.lineBreakMode = .byWordWrapping
+        channelHelper.maximumNumberOfLines = 2
+        channelHelper.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(channelHelper)
 
         appSettingsToggle = NSButton(checkboxWithTitle: "Menüleisten-Schnellmenü aktivieren",
                                      target: self,
@@ -284,8 +320,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             heading.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             heading.topAnchor.constraint(equalTo: container.topAnchor),
 
+            channelRow.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            channelRow.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
+
+            channelHelper.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            channelHelper.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            channelHelper.topAnchor.constraint(equalTo: channelRow.bottomAnchor, constant: 4),
+
             appSettingsToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            appSettingsToggle.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
+            appSettingsToggle.topAnchor.constraint(equalTo: channelHelper.bottomAnchor, constant: 8),
 
             helper.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             helper.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
@@ -318,8 +361,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildLeftColumn() -> NSView {
         let codexBox = buildCodexBarBox()
         let portBox = buildPortBox()
+        let wifiBox = buildWiFiBox()
 
-        let stack = NSStackView(views: [codexBox, portBox])
+        let stack = NSStackView(views: [codexBox, portBox, wifiBox])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 20
@@ -403,6 +447,62 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         controlRow.spacing = 8
 
         let stack = NSStackView(views: [heading, statusRow, controlRow])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        return stack
+    }
+
+    private func buildWiFiBox() -> NSView {
+        let heading = makeSectionHeading("Display-WiFi")
+
+        wifiStatusDot = NSTextField(labelWithString: "\u{25CB}")
+        wifiStatusDot.font = NSFont.systemFont(ofSize: 13)
+        wifiStatusDot.textColor = .secondaryLabelColor
+
+        wifiStatusLabel = NSTextField(labelWithString: "Status unbekannt")
+        wifiStatusLabel.font = NSFont.systemFont(ofSize: 13)
+        wifiStatusLabel.lineBreakMode = .byTruncatingTail
+        wifiStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        wifiStatusLabel.widthAnchor.constraint(equalToConstant: 360).isActive = true
+
+        let statusRow = NSStackView(views: [wifiStatusDot, wifiStatusLabel])
+        statusRow.orientation = .horizontal
+        statusRow.spacing = 6
+
+        wifiNetworkPopup = NSPopUpButton()
+        wifiNetworkPopup.addItem(withTitle: "Noch nicht gescannt")
+        wifiNetworkPopup.target = self
+        wifiNetworkPopup.action = #selector(wifiNetworkChosen)
+        wifiNetworkPopup.translatesAutoresizingMaskIntoConstraints = false
+        wifiNetworkPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
+
+        wifiScanButton = NSButton(title: "Scannen", target: self, action: #selector(scanWiFi))
+        wifiScanButton.bezelStyle = .rounded
+        wifiScanButton.controlSize = .small
+
+        let scanRow = NSStackView(views: [wifiNetworkPopup, wifiScanButton])
+        scanRow.orientation = .horizontal
+        scanRow.spacing = 8
+
+        wifiPasswordField = NSSecureTextField()
+        wifiPasswordField.placeholderString = "Passwort"
+        wifiPasswordField.translatesAutoresizingMaskIntoConstraints = false
+        wifiPasswordField.widthAnchor.constraint(equalToConstant: 180).isActive = true
+
+        wifiConnectButton = NSButton(title: "Verbinden", target: self, action: #selector(connectWiFi))
+        wifiConnectButton.bezelStyle = .rounded
+        wifiConnectButton.controlSize = .small
+
+        wifiForgetButton = NSButton(title: "Vergessen", target: self, action: #selector(forgetWiFi))
+        wifiForgetButton.bezelStyle = .rounded
+        wifiForgetButton.controlSize = .small
+
+        let connectRow = NSStackView(views: [wifiPasswordField, wifiConnectButton, wifiForgetButton])
+        connectRow.orientation = .horizontal
+        connectRow.spacing = 8
+
+        let stack = NSStackView(views: [heading, statusRow, scanRow, connectRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -696,6 +796,86 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         brightnessValueLabel?.textColor = ready ? .secondaryLabelColor : .tertiaryLabelColor
     }
 
+    private func updateWiFiControlsEnabled() {
+        let ready = (monitor?.serialPort.state == .connected)
+        let controls: [NSControl?] = [wifiNetworkPopup, wifiPasswordField, wifiScanButton, wifiConnectButton, wifiForgetButton]
+        controls.forEach { $0?.isEnabled = ready }
+        if !ready {
+            wifiStatusDot?.stringValue = "\u{25CB}"
+            wifiStatusDot?.textColor = .secondaryLabelColor
+            wifiStatusLabel?.stringValue = "ESP32 verbinden, um WiFi einzurichten"
+            wifiStatusLabel?.textColor = .secondaryLabelColor
+        }
+    }
+
+    private func applyWiFiStatus(_ json: [String: Any]?) {
+        guard wifiStatusLabel != nil else { return }
+        guard let json = json else {
+            wifiStatusDot.stringValue = "\u{25CF}"
+            wifiStatusDot.textColor = .systemOrange
+            wifiStatusLabel.stringValue = "Keine Antwort vom Display"
+            wifiStatusLabel.textColor = .systemOrange
+            return
+        }
+
+        let configured = json["configured"] as? Bool ?? false
+        let connected = json["connected"] as? Bool ?? false
+        let timeSynced = json["timeSynced"] as? Bool ?? false
+        let ssid = (json["ssid"] as? String) ?? ""
+        let ip = (json["ip"] as? String) ?? ""
+        let rssi = json["rssi"] as? Int ?? 0
+
+        if connected {
+            wifiStatusDot.stringValue = "\u{25CF}"
+            wifiStatusDot.textColor = timeSynced ? .systemGreen : .systemYellow
+            wifiStatusLabel.textColor = .labelColor
+            let syncText = timeSynced ? "Zeit synchron" : "warte auf Zeit"
+            wifiStatusLabel.stringValue = "\(ssid) · \(ip) · \(rssi) dBm · \(syncText)"
+        } else if configured {
+            wifiStatusDot.stringValue = "\u{25CF}"
+            wifiStatusDot.textColor = .systemOrange
+            wifiStatusLabel.textColor = .systemOrange
+            wifiStatusLabel.stringValue = ssid.isEmpty ? "Gespeichert, nicht verbunden" : "\(ssid) gespeichert, nicht verbunden"
+        } else {
+            wifiStatusDot.stringValue = "\u{25CB}"
+            wifiStatusDot.textColor = .secondaryLabelColor
+            wifiStatusLabel.textColor = .secondaryLabelColor
+            wifiStatusLabel.stringValue = "Kein WiFi gespeichert"
+        }
+    }
+
+    private func requestWiFiStatus(force: Bool = false) {
+        guard let monitor = monitor, monitor.serialPort.state == .connected else {
+            updateWiFiControlsEnabled()
+            return
+        }
+        if !force, let last = lastWiFiStatusRefresh, Date().timeIntervalSince(last) < 10 {
+            return
+        }
+        lastWiFiStatusRefresh = Date()
+        monitor.serialPort.performJSONCommand(["cmd": "wifi_status"],
+                                              acceptedTypes: ["wifi_status"],
+                                              timeout: 4.0) { [weak self] json in
+            self?.applyWiFiStatus(json)
+        }
+    }
+
+    private func updateWiFiNetworkPopup() {
+        wifiNetworkPopup.removeAllItems()
+        if wifiNetworks.isEmpty {
+            wifiNetworkPopup.addItem(withTitle: "Keine Netzwerke")
+            wifiNetworkPopup.isEnabled = false
+            return
+        }
+
+        wifiNetworkPopup.isEnabled = monitor?.serialPort.state == .connected
+        for network in wifiNetworks {
+            let secureText = network.secure ? " · gesichert" : ""
+            wifiNetworkPopup.addItem(withTitle: "\(network.ssid) · \(network.rssi) dBm\(secureText)")
+        }
+        wifiNetworkPopup.selectItem(at: 0)
+    }
+
     private func buildFirmwareBox() -> NSView {
         let heading = makeSectionHeading("Firmware")
 
@@ -789,6 +969,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         if appSettingsToggle != nil {
             appSettingsToggle.state = Settings.shared.menuBarQuickMenuEnabled ? .on : .off
+        }
+        if updateChannelPopup != nil {
+            let channel = Settings.shared.updateChannel
+            updateChannelPopup.selectItem(at: channel == .beta ? 1 : 0)
         }
 
         // CodexBar
@@ -1016,9 +1200,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         updateDisplayControlsEnabled()
+        updateWiFiControlsEnabled()
+        requestWiFiStatus()
 
         // Footer-Version (falls kAppVersion sich in einem Hot-Reload mal aendert)
-        footerVersionLabel?.stringValue = "AI Monitor v\(kAppVersion)"
+        let channelSuffix = Settings.shared.updateChannel == .beta ? " · Beta-Kanal" : ""
+        footerVersionLabel?.stringValue = "AI Monitor v\(kAppVersion)\(channelSuffix)"
 
         refreshLiveLabels()
     }
@@ -1092,6 +1279,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         Settings.shared.menuBarQuickMenuEnabled = (appSettingsToggle.state == .on)
     }
 
+    @objc private func updateChannelChosen() {
+        Settings.shared.updateChannel = updateChannelPopup.indexOfSelectedItem == 1 ? .beta : .stable
+        update()
+    }
+
     @objc private func reloadCodexBar() {
         monitor?.codexBar.loadOnce()
         update()
@@ -1099,6 +1291,89 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func refreshPorts() {
         rebuildPortPopup()
+    }
+
+    @objc private func scanWiFi() {
+        guard let monitor = monitor, monitor.serialPort.state == .connected else { return }
+        wifiScanButton.isEnabled = false
+        wifiNetworkPopup.removeAllItems()
+        wifiNetworkPopup.addItem(withTitle: "Scan läuft …")
+        wifiStatusLabel.stringValue = "Display scannt WiFi-Netzwerke …"
+        wifiStatusLabel.textColor = .secondaryLabelColor
+
+        monitor.serialPort.performJSONCommand(["cmd": "wifi_scan"],
+                                              acceptedTypes: ["wifi_scan"],
+                                              timeout: 18.0) { [weak self] json in
+            guard let self = self else { return }
+            self.wifiScanButton.isEnabled = (self.monitor?.serialPort.state == .connected)
+            guard let items = json?["networks"] as? [[String: Any]] else {
+                self.wifiNetworks = []
+                self.updateWiFiNetworkPopup()
+                self.wifiStatusLabel.stringValue = "Scan fehlgeschlagen"
+                self.wifiStatusLabel.textColor = .systemOrange
+                return
+            }
+
+            var seen = Set<String>()
+            self.wifiNetworks = items.compactMap { item in
+                guard let ssid = item["ssid"] as? String, !ssid.isEmpty, !seen.contains(ssid) else {
+                    return nil
+                }
+                seen.insert(ssid)
+                return DisplayWiFiNetwork(
+                    ssid: ssid,
+                    rssi: item["rssi"] as? Int ?? 0,
+                    secure: item["secure"] as? Bool ?? true
+                )
+            }
+            self.updateWiFiNetworkPopup()
+            self.requestWiFiStatus(force: true)
+        }
+    }
+
+    @objc private func wifiNetworkChosen() {
+        wifiPasswordField.stringValue = ""
+        window?.makeFirstResponder(wifiPasswordField)
+    }
+
+    @objc private func connectWiFi() {
+        guard let monitor = monitor, monitor.serialPort.state == .connected else { return }
+        let idx = wifiNetworkPopup.indexOfSelectedItem
+        guard idx >= 0 && idx < wifiNetworks.count else {
+            wifiStatusLabel.stringValue = "Bitte zuerst ein Netzwerk scannen und auswählen."
+            wifiStatusLabel.textColor = .systemOrange
+            return
+        }
+
+        let network = wifiNetworks[idx]
+        wifiConnectButton.isEnabled = false
+        wifiStatusLabel.stringValue = "Verbinde mit \(network.ssid) …"
+        wifiStatusLabel.textColor = .secondaryLabelColor
+
+        monitor.serialPort.performJSONCommand([
+            "cmd": "wifi_set",
+            "ssid": network.ssid,
+            "password": wifiPasswordField.stringValue,
+        ], acceptedTypes: ["wifi_status"], timeout: 15.0) { [weak self] json in
+            guard let self = self else { return }
+            self.wifiConnectButton.isEnabled = (self.monitor?.serialPort.state == .connected)
+            self.wifiPasswordField.stringValue = ""
+            self.lastWiFiStatusRefresh = Date()
+            self.applyWiFiStatus(json)
+        }
+    }
+
+    @objc private func forgetWiFi() {
+        guard let monitor = monitor, monitor.serialPort.state == .connected else { return }
+        wifiForgetButton.isEnabled = false
+        monitor.serialPort.performJSONCommand(["cmd": "wifi_forget"],
+                                              acceptedTypes: ["wifi_status"],
+                                              timeout: 5.0) { [weak self] json in
+            guard let self = self else { return }
+            self.wifiForgetButton.isEnabled = (self.monitor?.serialPort.state == .connected)
+            self.lastWiFiStatusRefresh = Date()
+            self.applyWiFiStatus(json)
+        }
     }
 
     @objc private func portChosen() {
