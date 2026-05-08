@@ -68,6 +68,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var deviceEditHintLabel: NSTextField!
     private var deviceEditContainer: NSView!
     private var deviceDisplayContainer: NSView!
+    private var deviceProfilesPopup: NSPopUpButton!
+    private var deviceForgetButton: NSButton!
     private var isEditingDeviceName: Bool = false
     private var themePopup: NSPopUpButton!
     private var percentModePopup: NSPopUpButton!
@@ -579,6 +581,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         // Geräte-Zeile (ab v1.14.0)
         let deviceRowBuilt = buildDeviceRow()
+        let deviceProfilesRow = buildDeviceProfilesRow()
 
         // Theme
         themePopup = NSPopUpButton()
@@ -649,7 +652,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lastUpdateLabel.font = NSFont.systemFont(ofSize: 11)
         lastUpdateLabel.textColor = .secondaryLabelColor
 
-        let rowsStack = NSStackView(views: [deviceRowBuilt, themeRow, percentModeRow, orientRow, langRow, tzRow, brightRow])
+        let rowsStack = NSStackView(views: [
+            deviceRowBuilt,
+            deviceProfilesRow,
+            themeRow,
+            percentModeRow,
+            orientRow,
+            langRow,
+            tzRow,
+            brightRow
+        ])
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
         rowsStack.spacing = 8
@@ -727,6 +739,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         deviceRow = twoColumnRow("Gerät", containersStack)
         return deviceRow
+    }
+
+    private func buildDeviceProfilesRow() -> NSView {
+        deviceProfilesPopup = NSPopUpButton()
+        deviceProfilesPopup.translatesAutoresizingMaskIntoConstraints = false
+        deviceProfilesPopup.widthAnchor.constraint(equalToConstant: 230).isActive = true
+
+        deviceForgetButton = NSButton(title: "Vergessen", target: self, action: #selector(forgetCurrentDeviceProfile))
+        deviceForgetButton.bezelStyle = .rounded
+        deviceForgetButton.toolTip = "Aktuelles Geräteprofil entfernen"
+
+        let controls = NSStackView(views: [deviceProfilesPopup, deviceForgetButton])
+        controls.orientation = .horizontal
+        controls.spacing = 8
+        controls.alignment = .centerY
+
+        return twoColumnRow("Profile", controls)
     }
 
     @objc private func beginDeviceNameEdit() {
@@ -834,6 +863,85 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             deviceNameLabel.toolTip = nil
             deviceRow.toolTip = nil
         }
+        updateDeviceProfilesRow()
+    }
+
+    private func updateDeviceProfilesRow() {
+        guard deviceProfilesPopup != nil else { return }
+        let registry = DeviceRegistry.shared
+        let profiles = registry.all().values.sorted {
+            let lhsDate = $0.lastSeenAt ?? .distantPast
+            let rhsDate = $1.lastSeenAt ?? .distantPast
+            if lhsDate != rhsDate { return lhsDate > rhsDate }
+            return $0.friendlyName.localizedCaseInsensitiveCompare($1.friendlyName) == .orderedAscending
+        }
+        let currentMAC = registry.currentMAC
+
+        deviceProfilesPopup.removeAllItems()
+        if profiles.isEmpty {
+            deviceProfilesPopup.addItem(withTitle: "Keine Profile")
+            deviceProfilesPopup.isEnabled = false
+        } else {
+            for profile in profiles {
+                let title = deviceProfileMenuTitle(profile, isCurrent: profile.mac == currentMAC)
+                deviceProfilesPopup.addItem(withTitle: title)
+                deviceProfilesPopup.lastItem?.representedObject = profile.mac
+                deviceProfilesPopup.lastItem?.toolTip = deviceProfileTooltip(profile)
+            }
+            if let currentMAC,
+               let index = profiles.firstIndex(where: { $0.mac == currentMAC }) {
+                deviceProfilesPopup.selectItem(at: index)
+            } else {
+                deviceProfilesPopup.selectItem(at: 0)
+            }
+            deviceProfilesPopup.isEnabled = true
+        }
+
+        deviceForgetButton.isEnabled = (monitor?.serialPort.state == .connected && registry.currentProfile() != nil)
+    }
+
+    private func deviceProfileMenuTitle(_ profile: DeviceProfile, isCurrent: Bool) -> String {
+        let current = isCurrent ? "Aktuell · " : ""
+        let variant = displayVariantShortText(profile.displayVariant)
+        let firmware = profile.firmwareVersion.map { " · v\($0)" } ?? ""
+        return "\(current)\(profile.friendlyName) · \(variant)\(firmware)"
+    }
+
+    private func deviceProfileTooltip(_ profile: DeviceProfile) -> String {
+        let mac = profile.mac == kLegacyDeviceMAC ? "MAC unbekannt" : "MAC: \(profile.mac)"
+        let lastSeen: String
+        if let date = profile.lastSeenAt {
+            let df = DateFormatter()
+            df.dateStyle = .medium
+            df.timeStyle = .short
+            lastSeen = "zuletzt: \(df.string(from: date))"
+        } else {
+            lastSeen = "zuletzt: —"
+        }
+        return "\(mac) · \(displayVariantShortText(profile.displayVariant)) · \(lastSeen)"
+    }
+
+    private func displayVariantShortText(_ variant: String?) -> String {
+        switch variant {
+        case kDisplayVariantILI9341: return "ILI9341"
+        case kDisplayVariantST7789: return "ST7789"
+        default: return "Variante unbekannt"
+        }
+    }
+
+    @objc private func forgetCurrentDeviceProfile() {
+        guard let profile = DeviceRegistry.shared.currentProfile() else { return }
+        let alert = NSAlert()
+        alert.messageText = "Gerät vergessen?"
+        alert.informativeText = "\(profile.friendlyName) wird aus der Profilliste entfernt. Anzeige-Einstellungen für dieses Gerät gehen verloren."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Vergessen")
+        alert.addButton(withTitle: "Abbrechen")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        DeviceRegistry.shared.remove(mac: profile.mac)
+        monitor?.serialPort.requestReconnect()
+        update()
     }
 
     /// Ab v1.14.2: Display-Controls (Theme/Ausrichtung/Sprache/Zeitzone/
@@ -1517,6 +1625,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lines.append("- Theme: \(profile?.theme ?? "—")")
         lines.append("- Sprache: \(profile?.language ?? "—")")
         lines.append("- Helligkeit: \(profile.map { "\($0.brightness) %" } ?? "—")")
+        lines.append("")
+        lines.append("Bekannte Geräte")
+        let profiles = DeviceRegistry.shared.all().values.sorted {
+            ($0.lastSeenAt ?? .distantPast) > ($1.lastSeenAt ?? .distantPast)
+        }
+        if profiles.isEmpty {
+            lines.append("- —")
+        } else {
+            for known in profiles {
+                let current = known.mac == DeviceRegistry.shared.currentMAC ? " (aktuell)" : ""
+                let lastSeen = dateText(known.lastSeenAt)
+                let firmware = known.firmwareVersion.map { "v\($0)" } ?? "—"
+                lines.append("- \(known.friendlyName)\(current): \(known.mac), \(known.displayVariant ?? "—"), FW \(firmware), zuletzt \(lastSeen)")
+            }
+        }
         lines.append("")
         lines.append("Firmware-Update")
         lines.append("- Installiert: \(fw.installedVersionDisplay)")

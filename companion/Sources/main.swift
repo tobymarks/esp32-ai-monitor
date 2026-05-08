@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.4 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.5 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.4"
+let kAppVersion = "1.20.5"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -325,13 +325,20 @@ struct DeviceProfile: Codable {
     /// manuell gewaehlte Variante des Users. Codable-optional, damit alte
     /// serialisierte Profile ohne Migration weiterhin decodieren.
     var displayVariant: String?
+    /// Letzter erfolgreicher `get_info`-Kontakt. Optional, damit Profile aus
+    /// älteren App-Versionen ohne Migration weiter decodieren.
+    var lastSeenAt: Date?
+    /// Zuletzt vom Gerät gemeldete Firmware-Version ohne fuehrendes "v".
+    var firmwareVersion: String?
 
     static func defaultFor(mac: String, friendlyName: String,
                            theme: String = "system",
                            orientation: String = "portrait",
                            language: String = "de",
                            brightness: Int = 80,
-                           displayVariant: String? = nil) -> DeviceProfile {
+                           displayVariant: String? = nil,
+                           lastSeenAt: Date? = nil,
+                           firmwareVersion: String? = nil) -> DeviceProfile {
         return DeviceProfile(
             mac: mac,
             friendlyName: friendlyName,
@@ -339,7 +346,9 @@ struct DeviceProfile: Codable {
             orientation: orientation,
             language: language,
             brightness: brightness,
-            displayVariant: displayVariant
+            displayVariant: displayVariant,
+            lastSeenAt: lastSeenAt,
+            firmwareVersion: firmwareVersion
         )
     }
 }
@@ -390,6 +399,7 @@ final class DeviceRegistry {
         var current = all()
         current.removeValue(forKey: mac)
         persist(current)
+        if currentMAC == mac { currentMAC = nil }
     }
 
     /// Das aktuell aktive Profil — `currentMAC` + Lookup. `nil` wenn nichts
@@ -715,7 +725,9 @@ class Settings {
             orientation: orientation,
             language: language,
             brightness: brightness,
-            displayVariant: nil
+            displayVariant: nil,
+            lastSeenAt: nil,
+            firmwareVersion: nil
         )
         DeviceRegistry.shared.save(legacyProfile)
 
@@ -1705,7 +1717,8 @@ class SerialPortManager {
                         .trimmingCharacters(in: .whitespaces)
                     self.resolveDeviceProfile(forMAC: effectiveMAC,
                                              reportedBrightness: json["brightness"] as? Int,
-                                             reportedDisplay: reportedDisplay)
+                                             reportedDisplay: reportedDisplay,
+                                             reportedFirmwareVersion: version)
                     handled = true
                     break
                 }
@@ -1769,7 +1782,8 @@ class SerialPortManager {
                     .trimmingCharacters(in: .whitespaces)
                 self.resolveDeviceProfile(forMAC: effectiveMAC,
                                          reportedBrightness: json["brightness"] as? Int,
-                                         reportedDisplay: reportedDisplay)
+                                         reportedDisplay: reportedDisplay,
+                                         reportedFirmwareVersion: version)
                 DispatchQueue.main.async { self.onConnect?() }
                 return
             }
@@ -1793,7 +1807,8 @@ class SerialPortManager {
     /// der Slider beim Öffnen des Settings-Fensters den echten ESP32-Stand zeigt.
     fileprivate func resolveDeviceProfile(forMAC mac: String,
                                           reportedBrightness: Int?,
-                                          reportedDisplay: String?) {
+                                          reportedDisplay: String?,
+                                          reportedFirmwareVersion: String?) {
         let registry = DeviceRegistry.shared
         // Nur bekannte Varianten akzeptieren; "unknown" / Fremdwerte ignorieren,
         // damit ein altes Profil mit gutem Wert nicht ueberschrieben wird.
@@ -1815,6 +1830,9 @@ class SerialPortManager {
                 existing.displayVariant = d
                 changed = true
             }
+            existing.lastSeenAt = Date()
+            existing.firmwareVersion = reportedFirmwareVersion
+            changed = true
             if changed { registry.save(existing) }
             registry.currentMAC = mac
             NSLog("[Device] Matched existing profile: %@ (mac=%@, display=%@)",
@@ -1834,6 +1852,8 @@ class SerialPortManager {
             moved.mac = mac
             if let br = reportedBrightness { moved.brightness = br }
             if let d = validDisplay { moved.displayVariant = d }
+            moved.lastSeenAt = Date()
+            moved.firmwareVersion = reportedFirmwareVersion
             registry.save(moved)
             registry.remove(mac: kLegacyDeviceMAC)
             registry.currentMAC = mac
@@ -1855,7 +1875,9 @@ class SerialPortManager {
             orientation: template?.orientation ?? "portrait",
             language: template?.language ?? "de",
             brightness: reportedBrightness ?? template?.brightness ?? 80,
-            displayVariant: validDisplay
+            displayVariant: validDisplay,
+            lastSeenAt: Date(),
+            firmwareVersion: reportedFirmwareVersion
         )
         if let br = reportedBrightness { fresh.brightness = br }
         registry.save(fresh)
