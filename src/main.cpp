@@ -144,7 +144,8 @@ static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 
     tft.startWrite();
     tft.setAddrWindow(area->x1, area->y1, w, h);
-    // LVGL-disp-flush swapt Bytes; Panel-RGB-Default ohne BGR-Override.
+    // LVGL stores RGB565 in host byte order; TFT_eSPI sends SPI pixels MSB first.
+    // Panel RGB/BGR order is configured per PlatformIO env via TFT_RGB_ORDER.
     tft.pushColors((uint16_t *)px_map, w * h, true);
     tft.endWrite();
 

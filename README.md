@@ -116,7 +116,7 @@ The supported Mac app source lives in `companion/` and is built with Swift, AppK
 
 ## Release Flow
 
-- Firmware releases use tags like `v2.11.3`.
+- Firmware releases use tags like `v2.11.4`.
 - Mac app releases use tags like `app-v1.17.1`.
 - Pushes to `main` that touch firmware or installer files build and deploy the GitHub Pages installer.
 - Firmware tags build release assets for both ILI9341 and ST7789 variants.
