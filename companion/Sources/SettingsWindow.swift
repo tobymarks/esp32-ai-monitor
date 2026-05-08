@@ -92,6 +92,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Rechte Spalte — Firmware
     private var fwVersionLabel: NSTextField!
+    private var fwVariantLabel: NSTextField!
     private var fwUpdateLabel: NSTextField!
     private var fwFlashButton: NSButton!
     private var fwProgressBar: NSProgressIndicator!
@@ -933,6 +934,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         fwVersionLabel = NSTextField(labelWithString: "Installiert: —")
         fwVersionLabel.font = NSFont.systemFont(ofSize: 13)
 
+        fwVariantLabel = NSTextField(labelWithString: "Variante: —")
+        fwVariantLabel.font = NSFont.systemFont(ofSize: 12)
+        fwVariantLabel.textColor = .secondaryLabelColor
+
         fwUpdateLabel = NSTextField(labelWithString: "")
         fwUpdateLabel.font = NSFont.systemFont(ofSize: 12)
         fwUpdateLabel.textColor = .secondaryLabelColor
@@ -957,6 +962,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let stack = NSStackView(views: [
             heading,
             fwVersionLabel,
+            fwVariantLabel,
             fwUpdateLabel,
             fwFlashButton,
             fwProgressBar,
@@ -1126,30 +1132,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // den Bootloader und ist damit unabhaengig von der aktuellen FW.
         let fw = FirmwareManager.shared
         let isForeign = (sp.state == .foreignFirmware)
+        let profile = DeviceRegistry.shared.currentProfile()
+        let missingAssets = fw.missingExpectedAssetNames
+        let releaseAssetsOK = missingAssets.isEmpty
+
+        fwVariantLabel.stringValue = firmwareVariantText(profile?.displayVariant, state: sp.state)
         if isForeign {
             fwVersionLabel.stringValue = "Installiert: unbekannt"
-            fwUpdateLabel.stringValue = "Dieses Geraet hat keine AI-Monitor-Firmware. Jetzt flashen, um loszulegen."
-            fwUpdateLabel.textColor = .systemRed
             if fw.isFlashing {
-                fwFlashButton.isEnabled = false
-                fwFlashButton.title = "flashing …"
-            } else if fw.isDownloading {
-                fwFlashButton.isEnabled = false
-                fwFlashButton.title = "downloading …"
-            } else {
-                fwFlashButton.isEnabled = true
-                fwFlashButton.title = "Firmware flashen"
-                fwFlashButton.keyEquivalent = "\r"
-            }
-        } else {
-            fwFlashButton.keyEquivalent = ""
-            fwVersionLabel.stringValue = "Installiert: \(fw.installedVersionDisplay)"
-            if fw.hasUpdate {
-                fwUpdateLabel.stringValue = "Update verfügbar: \(fw.latestVersionDisplay)"
-                fwUpdateLabel.textColor = .systemBlue
-                fwFlashButton.isEnabled = (sp.state == .connected)
-                fwFlashButton.title = "Firmware flashen …"
-            } else if fw.isFlashing {
                 fwUpdateLabel.stringValue = "Flash läuft …"
                 fwUpdateLabel.textColor = .secondaryLabelColor
                 fwFlashButton.isEnabled = false
@@ -1159,11 +1149,46 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 fwUpdateLabel.textColor = .secondaryLabelColor
                 fwFlashButton.isEnabled = false
                 fwFlashButton.title = "downloading …"
+            } else if !releaseAssetsOK {
+                fwUpdateLabel.stringValue = "Firmware-Release unvollständig: \(missingAssets.joined(separator: ", "))"
+                fwUpdateLabel.textColor = .systemOrange
+                fwFlashButton.isEnabled = false
+                fwFlashButton.title = "Firmware flashen …"
+            } else {
+                fwUpdateLabel.stringValue = "Dieses Geraet hat keine AI-Monitor-Firmware. Jetzt flashen, um loszulegen."
+                fwUpdateLabel.textColor = .systemRed
+                fwFlashButton.isEnabled = true
+                fwFlashButton.title = "Firmware flashen"
+                fwFlashButton.keyEquivalent = "\r"
+            }
+        } else {
+            fwFlashButton.keyEquivalent = ""
+            fwVersionLabel.stringValue = "Installiert: \(fw.installedVersionDisplay)"
+            if fw.isFlashing {
+                fwUpdateLabel.stringValue = "Flash läuft …"
+                fwUpdateLabel.textColor = .secondaryLabelColor
+                fwFlashButton.isEnabled = false
+                fwFlashButton.title = "flashing …"
+            } else if fw.isDownloading {
+                fwUpdateLabel.stringValue = "Download läuft …"
+                fwUpdateLabel.textColor = .secondaryLabelColor
+                fwFlashButton.isEnabled = false
+                fwFlashButton.title = "downloading …"
+            } else if !releaseAssetsOK {
+                fwUpdateLabel.stringValue = "Firmware-Release unvollständig: \(missingAssets.joined(separator: ", "))"
+                fwUpdateLabel.textColor = .systemOrange
+                fwFlashButton.isEnabled = false
+                fwFlashButton.title = "Firmware flashen …"
+            } else if fw.hasUpdate {
+                fwUpdateLabel.stringValue = "Update verfügbar: \(fw.latestVersionDisplay)"
+                fwUpdateLabel.textColor = .systemBlue
+                fwFlashButton.isEnabled = (sp.state == .connected)
+                fwFlashButton.title = "Firmware flashen …"
             } else {
                 fwUpdateLabel.stringValue = "Aktuell."
                 fwUpdateLabel.textColor = .secondaryLabelColor
-                fwFlashButton.isEnabled = false
-                fwFlashButton.title = "Firmware flashen …"
+                fwFlashButton.isEnabled = (sp.state == .connected && fw.latestRelease != nil)
+                fwFlashButton.title = "Andere Display-Variante flashen …"
             }
         }
 
@@ -1315,6 +1340,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             return " · Fehler #\(receipt.frameId)"
         default:
             return " · unbestätigt #\(receipt.frameId)"
+        }
+    }
+
+    private func firmwareVariantText(_ variant: String?, state: DeviceConnectionState) -> String {
+        guard state == .connected else { return "Variante: unbekannt" }
+        switch variant {
+        case kDisplayVariantILI9341:
+            return "Variante: ILI9341 / R-Board"
+        case kDisplayVariantST7789:
+            return "Variante: ST7789 / Hybrid-Board"
+        default:
+            return "Variante: unbekannt"
         }
     }
 
@@ -1485,6 +1522,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lines.append("- Installiert: \(fw.installedVersionDisplay)")
         lines.append("- Latest: \(fw.latestVersionDisplay)")
         lines.append("- Update verfügbar: \(fw.hasUpdate ? "ja" : "nein")")
+        lines.append("- Release-Assets vollständig: \(fw.hasExpectedReleaseAssets ? "ja" : "nein")")
+        lines.append("- Fehlende Release-Assets: \(fw.missingExpectedAssetNames.isEmpty ? "—" : fw.missingExpectedAssetNames.joined(separator: ", "))")
         lines.append("- Flash läuft: \(fw.isFlashing ? "ja" : "nein")")
 
         return lines.joined(separator: "\n")

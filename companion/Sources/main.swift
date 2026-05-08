@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.3 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.4 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.3"
+let kAppVersion = "1.20.4"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -517,6 +517,11 @@ class Settings {
         set { defaults.set(newValue, forKey: "skippedAppVersion") }
     }
 
+    var pendingFirmwareCheckAfterAppUpdate: Bool {
+        get { defaults.bool(forKey: "pendingFirmwareCheckAfterAppUpdate") }
+        set { defaults.set(newValue, forKey: "pendingFirmwareCheckAfterAppUpdate") }
+    }
+
     /// Optionales Menüleisten-Schnellmenü. Default: aus.
     var menuBarQuickMenuEnabled: Bool {
         get { defaults.bool(forKey: "menuBarQuickMenuEnabled") }
@@ -741,6 +746,7 @@ class Settings {
             "lastFirmwareCheck",
             "lastAppUpdateCheck",
             "skippedAppVersion",
+            "pendingFirmwareCheckAfterAppUpdate",
             "menuBarQuickMenuEnabled",
             "language",
             "orientation",
@@ -1113,6 +1119,17 @@ class FirmwareManager {
         return (appSupport as NSString).appendingPathComponent("AI Monitor/firmware")
     }
 
+    var missingExpectedAssetNames: [String] {
+        guard let release = latestRelease else { return [] }
+        let available = Set(release.assets.map { $0.name })
+        return kFirmwareAssetByDisplay.values.sorted().filter { !available.contains($0) }
+    }
+
+    var hasExpectedReleaseAssets: Bool {
+        guard latestRelease != nil else { return false }
+        return missingExpectedAssetNames.isEmpty
+    }
+
     func localBinPath(for version: String) -> String {
         return localBinPath(for: version, variant: kDisplayVariantDefault)
     }
@@ -1198,6 +1215,11 @@ class FirmwareManager {
                 }
                 self.latestRelease = release
                 Settings.shared.lastFirmwareCheck = Date()
+                let missingAssets = self.missingExpectedAssetNames
+                if !missingAssets.isEmpty {
+                    NSLog("[Firmware] Release %@ missing expected assets: %@",
+                          release.tag_name, missingAssets.joined(separator: ", "))
+                }
                 let installed = Settings.shared.installedFirmwareVersion ?? "unbekannt"
                 let hasUpdate = (self.firmwareVersionTag(from: release.tag_name) != self.firmwareVersionTag(from: installed))
                 let binPath = self.localBinPath(for: release.tag_name)
@@ -2676,6 +2698,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Firmware + App-Update Manager
         FirmwareManager.shared.onUpdate = { [weak self] in self?.settingsController?.update() }
+        if Settings.shared.pendingFirmwareCheckAfterAppUpdate {
+            Settings.shared.pendingFirmwareCheckAfterAppUpdate = false
+            Settings.shared.lastFirmwareCheck = nil
+            FirmwareManager.shared.latestRelease = nil
+            FirmwareManager.shared.downloadedBinPath = nil
+            NSLog("[Update] App was just updated; forcing firmware update check")
+        }
         checkFirmwareUpdate()
         scheduleFirmwareCheckTimer()
 
@@ -2949,13 +2978,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.monitor.serialPort.stopScanning()
             fw.flashFirmware(port: port) { [weak self] success, message in
                 DispatchQueue.main.async {
+                    self?.monitor.serialPort.startScanning()
                     if success {
                         self?.monitor.queueDiagnosticTestFrameAfterNextConnect()
+                    } else {
+                        self?.alert(title: S().flashFailed,
+                                    info: message,
+                                    style: .critical)
                     }
-                    self?.monitor.serialPort.startScanning()
-                    self?.alert(title: success ? S().flashSuccess : S().flashFailed,
-                                info: message,
-                                style: success ? .informational : .critical)
                 }
             }
         }
@@ -3038,6 +3068,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 alert.addButton(withTitle: S().install)
                 alert.addButton(withTitle: S().later)
                 if alert.runModal() == .alertFirstButtonReturn {
+                    Settings.shared.pendingFirmwareCheckAfterAppUpdate = true
                     appMgr.performAutoUpdate(extractedAppPath: extractedPathOrError) { _, errorMessage in
                         DispatchQueue.main.async {
                             self?.alert(title: S().updateFailed, info: errorMessage, style: .critical)
