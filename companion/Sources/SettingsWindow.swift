@@ -1279,7 +1279,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 if age < 60 { txt = "vor \(age) s" }
                 else if age < 3600 { txt = "vor \(age/60) m" }
                 else { txt = "vor \(age/3600) h \((age%3600)/60) m" }
-                lastUpdateLabel.stringValue = "Letztes Update an ESP32: \(txt)"
+                let receipt = serialFrameReceiptText(monitor.serialPort.lastFrameReceipt)
+                lastUpdateLabel.stringValue = "Letztes Update an ESP32: \(txt)\(receipt)"
             } else {
                 lastUpdateLabel.stringValue = "Letztes Update an ESP32: —"
             }
@@ -1293,6 +1294,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 fwProgressBar.isIndeterminate = false
                 fwProgressBar.doubleValue = Double(fw.flashWritePercent)
             }
+        }
+    }
+
+    private func serialFrameReceiptText(_ receipt: SerialFrameReceipt?) -> String {
+        guard let receipt else { return " · noch nicht bestätigt" }
+        let age = Int(Date().timeIntervalSince(receipt.date))
+        let ageText: String
+        if age < 60 { ageText = "vor \(age) s" }
+        else if age < 3600 { ageText = "vor \(age / 60) m" }
+        else { ageText = "vor \(age / 3600) h" }
+
+        switch receipt.type {
+        case "ack":
+            return " · bestätigt #\(receipt.frameId) \(ageText)"
+        case "error":
+            return " · Fehler #\(receipt.frameId)"
+        default:
+            return " · unbestätigt #\(receipt.frameId)"
         }
     }
 
@@ -1433,6 +1452,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lines.append("- Gefundene Ports: \(availablePorts.isEmpty ? "—" : availablePorts.joined(separator: ", "))")
         lines.append("- Firmware-Version: \(serial.deviceFirmwareVersion ?? "—")")
         lines.append("- Letztes Senden: \(dateText(monitor.lastUpdateDate))")
+        if let receipt = serial.lastConfirmedFrameReceipt {
+            lines.append("- Letzte bestätigte Frame-ID: #\(receipt.frameId) um \(dateText(receipt.date))")
+        } else {
+            lines.append("- Letzte bestätigte Frame-ID: —")
+        }
+        if let receipt = serial.lastFrameReceipt {
+            lines.append("- Letzte Frame-Bestätigung: \(receipt.type) #\(receipt.frameId) um \(dateText(receipt.date))")
+            lines.append("- Letzte Frame-Nachricht: \(receipt.message ?? "—")")
+            lines.append("- Letzte Frame-Größe: \(receipt.bytes.map { "\($0) bytes" } ?? "—")")
+            lines.append("- Letzte Frame-Schema-Version: \(receipt.schemaVersion.map(String.init) ?? "—")")
+        } else {
+            lines.append("- Letzte Frame-Bestätigung: —")
+        }
         lines.append("")
         lines.append("Geräteprofil")
         lines.append("- Name: \(profile?.friendlyName ?? "—")")

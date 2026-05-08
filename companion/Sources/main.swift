@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.2 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.1"
+let kAppVersion = "1.20.2"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -1507,6 +1507,15 @@ enum DeviceConnectionState {
     case foreignFirmware
 }
 
+struct SerialFrameReceipt {
+    let frameId: Int
+    let type: String
+    let date: Date
+    let message: String?
+    let bytes: Int?
+    let schemaVersion: Int?
+}
+
 class SerialPortManager {
     private var fileDescriptor: Int32 = -1
     private(set) var connectedPort: String?
@@ -1525,6 +1534,8 @@ class SerialPortManager {
     private let kGetInfoTimeout: TimeInterval = 5
     var onConnect: (() -> Void)?
     var deviceFirmwareVersion: String?
+    private(set) var lastFrameReceipt: SerialFrameReceipt?
+    private(set) var lastConfirmedFrameReceipt: SerialFrameReceipt?
 
     /// Ab v1.14.2: Lebenszyklus-Status der aktuellen Verbindung. Die UI (und
     /// alle `set_*`-Sends) muessen hier draufhoeren, nicht nur auf `isConnected`.
@@ -1855,6 +1866,70 @@ class SerialPortManager {
         return send(data: data)
     }
 
+    @discardableResult
+    func sendJSONAndWaitForFrameAck(_ jsonString: String,
+                                    frameId: Int,
+                                    timeout: TimeInterval = 0.8) -> SerialFrameReceipt? {
+        guard let data = (jsonString + "\n").data(using: .utf8) else { return nil }
+
+        ioLock.lock()
+        defer { ioLock.unlock() }
+
+        guard fileDescriptor >= 0 else { return nil }
+        drainInput()
+        let writeResult = data.withUnsafeBytes { rawBuffer -> Int in
+            guard let ptr = rawBuffer.baseAddress else { return -1 }
+            return Darwin.write(fileDescriptor, ptr, rawBuffer.count)
+        }
+        if writeResult < 0 {
+            NSLog("[Serial] Write failed: errno %d", errno)
+            DispatchQueue.main.async { self.disconnect() }
+            return nil
+        }
+        guard writeResult > 0 else { return nil }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline && fileDescriptor >= 0 {
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 { break }
+            guard let line = readLine(timeout: min(remaining, 0.25)) else { continue }
+            guard line.hasPrefix("{"),
+                  let jsonData = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                  let type = json["type"] as? String,
+                  (type == "ack" || type == "error"),
+                  let ackFrameId = json["frameId"] as? Int,
+                  ackFrameId == frameId else {
+                continue
+            }
+
+            let receipt = SerialFrameReceipt(
+                frameId: frameId,
+                type: type,
+                date: Date(),
+                message: json["message"] as? String,
+                bytes: json["bytes"] as? Int,
+                schemaVersion: json["schemaVersion"] as? Int
+            )
+            lastFrameReceipt = receipt
+            if type == "ack" {
+                lastConfirmedFrameReceipt = receipt
+            }
+            return receipt
+        }
+
+        let receipt = SerialFrameReceipt(
+            frameId: frameId,
+            type: "timeout",
+            date: Date(),
+            message: "No ACK received",
+            bytes: data.count,
+            schemaVersion: nil
+        )
+        lastFrameReceipt = receipt
+        return receipt
+    }
+
     func performJSONCommand(_ payload: [String: Any],
                             acceptedTypes: Set<String>,
                             timeout: TimeInterval = 5.0,
@@ -1944,11 +2019,14 @@ class SerialPortManager {
 // ============================================================
 
 class UsageMonitor {
+    private static let serialSchemaVersion = 1
+
     let serialPort: SerialPortManager
     let codexBar: CodexBarSource
     var lastUpdateDate: Date?
     var onUpdate: (() -> Void)?
     private var heartbeatTimer: Timer?
+    private var nextFrameId = 1
 
     init() {
         self.serialPort = SerialPortManager()
@@ -2026,6 +2104,39 @@ class UsageMonitor {
         serialPort.stopScanning()
     }
 
+    private func allocateFrameId() -> Int {
+        let id = nextFrameId
+        nextFrameId += 1
+        if nextFrameId > 999_999 { nextFrameId = 1 }
+        return id
+    }
+
+    private func logFrameReceipt(_ receipt: SerialFrameReceipt?, source: String) {
+        guard let receipt else {
+            NSLog("[Serial] %@ frame sent without receipt", source)
+            return
+        }
+        switch receipt.type {
+        case "ack":
+            NSLog("[Serial] %@ frame #%d ACK (%@ bytes=%d schema=%d)",
+                  source,
+                  receipt.frameId,
+                  receipt.message ?? "accepted",
+                  receipt.bytes ?? 0,
+                  receipt.schemaVersion ?? 0)
+        case "error":
+            NSLog("[Serial] %@ frame #%d ERROR: %@",
+                  source,
+                  receipt.frameId,
+                  receipt.message ?? "unknown")
+        default:
+            NSLog("[Serial] %@ frame #%d unconfirmed: %@",
+                  source,
+                  receipt.frameId,
+                  receipt.message ?? receipt.type)
+        }
+    }
+
     // ---- Sende-Funktionen ----
 
     func sendThemeToESP32() {
@@ -2092,6 +2203,7 @@ class UsageMonitor {
         isoFormatter.formatOptions = [.withInternetDateTime]
         let now = Date()
         let nowISO = isoFormatter.string(from: now)
+        let frameId = allocateFrameId()
         let primaryReset = isoFormatter.string(from: now.addingTimeInterval(35 * 60))
         let secondaryReset = isoFormatter.string(from: now.addingTimeInterval(2 * 24 * 3600 + 4 * 3600))
         let tertiaryReset = isoFormatter.string(from: now.addingTimeInterval(6 * 3600))
@@ -2141,6 +2253,9 @@ class UsageMonitor {
         ]
 
         let envelope: [String: Any] = [
+            "schemaVersion": Self.serialSchemaVersion,
+            "frameId": frameId,
+            "sentAt": nowISO,
             "time": nowISO,
             "displayTime": localTime,
             "data": [
@@ -2173,15 +2288,19 @@ class UsageMonitor {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: envelope)
             guard let jsonString = String(data: jsonData, encoding: .utf8) else { return false }
-            guard serialPort.sendJSON(jsonString) else { return false }
-            lastUpdateDate = Date()
-            onUpdate?()
-            NSLog("[Serial] Sent diagnostic test frame (%d bytes) provider=%@", jsonData.count, activeProvider)
+            let receipt = serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
+            if let receipt, receipt.type != "error" {
+                lastUpdateDate = Date()
+                onUpdate?()
+            }
+            logFrameReceipt(receipt, source: "diagnostic")
+            NSLog("[Serial] Sent diagnostic test frame #%d (%d bytes) provider=%@",
+                  frameId, jsonData.count, activeProvider)
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
                 self?.sendLastUsageSnapshotIfAvailable()
             }
-            return true
+            return receipt != nil && receipt?.type != "error"
         } catch {
             NSLog("[Serial] Diagnostic JSON encode error: %@", error.localizedDescription)
             return false
@@ -2263,7 +2382,9 @@ class UsageMonitor {
 
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime]
-        let nowISO = isoFormatter.string(from: Date())
+        let now = Date()
+        let nowISO = isoFormatter.string(from: now)
+        let frameId = allocateFrameId()
 
         let timeFmt = DateFormatter()
         timeFmt.dateFormat = "HH:mm"
@@ -2358,6 +2479,9 @@ class UsageMonitor {
         // `provider`-Feld (FW v2.9.0 rendert darauf das Header-Label; ältere FW
         // ignoriert unbekannte Felder und zeigt „CLAUDE" statisch).
         let envelope: [String: Any] = [
+            "schemaVersion": Self.serialSchemaVersion,
+            "frameId": frameId,
+            "sentAt": nowISO,
             "time": nowISO,
             "displayTime": localTime,
             "data": [
@@ -2390,11 +2514,15 @@ class UsageMonitor {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: envelope)
             if let jsonString = String(data: jsonData, encoding: .utf8) {
-                if serialPort.sendJSON(jsonString) {
+                if let receipt = serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId),
+                   receipt.type != "error" {
                     lastUpdateDate = Date()
-                    NSLog("[Serial] Sent usage data (%d bytes) provider=%@ s=%d%% w=%d%% t=%d%% rows=%d",
-                          jsonData.count, activeProvider,
+                    logFrameReceipt(receipt, source: "usage")
+                    NSLog("[Serial] Sent usage frame #%d (%d bytes) provider=%@ s=%d%% w=%d%% t=%d%% rows=%d",
+                          frameId, jsonData.count, activeProvider,
                           primaryPercent, secondaryPercent, tertiaryPercent, rowsPayload.count)
+                } else {
+                    logFrameReceipt(serialPort.lastFrameReceipt, source: "usage")
                 }
             }
         } catch {

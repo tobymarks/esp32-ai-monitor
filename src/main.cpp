@@ -227,7 +227,7 @@ static void enter_main_ui(void) {
 void setup()
 {
     // --- Serial init (BEFORE begin for RX buffer) ---
-    Serial.setRxBufferSize(2048);
+    Serial.setRxBufferSize(4096);
     Serial.begin(115200);
     delay(500);
     Serial.println("========================================");

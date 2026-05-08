@@ -27,7 +27,7 @@
 // ============================================================
 // Constants
 // ============================================================
-static const size_t SERIAL_BUF_SIZE = 2048;
+static const size_t SERIAL_BUF_SIZE = 4096;
 static const unsigned long DATA_TIMEOUT_MS = 300000;  // 5 minutes
 static const uint8_t USAGE_ROW_MAX = 3;
 
@@ -130,6 +130,28 @@ static void set_usage_row(
     if ((index + 1) > usage.row_count) {
         usage.row_count = index + 1;
     }
+}
+
+static void print_frame_ack(int frame_id, int schema_version, size_t bytes, uint8_t provider, uint8_t rows) {
+    if (frame_id < 0) return;
+    Serial.printf("{\"type\":\"ack\",\"frameId\":%d,\"schemaVersion\":%d,"
+                  "\"message\":\"accepted\",\"bytes\":%u,\"provider\":\"%s\","
+                  "\"rows\":%u,\"heap\":%u}\n",
+                  frame_id,
+                  schema_version,
+                  (unsigned)bytes,
+                  provider_label_from_id(provider),
+                  (unsigned)rows,
+                  (unsigned)ESP.getFreeHeap());
+}
+
+static void print_frame_error(int frame_id, int schema_version, const char *message) {
+    if (frame_id < 0) return;
+    Serial.printf("{\"type\":\"error\",\"frameId\":%d,\"schemaVersion\":%d,"
+                  "\"message\":\"%s\"}\n",
+                  frame_id,
+                  schema_version,
+                  message ? message : "unknown");
 }
 
 // ============================================================
@@ -344,6 +366,7 @@ static bool parse_command(JsonDocument &doc) {
 static void parse_json(const char *json_str) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, json_str);
+    const size_t frame_bytes = strlen(json_str);
 
     if (err) {
         Serial.printf("[Serial] JSON parse error: %s\n", err.c_str());
@@ -352,6 +375,9 @@ static void parse_json(const char *json_str) {
         state.usage.valid = false;
         return;
     }
+
+    int frame_id = doc["frameId"] | -1;
+    int schema_version = doc["schemaVersion"] | 0;
 
     // Check for command — if handled, skip usage-data parsing
     if (parse_command(doc)) return;
@@ -376,6 +402,7 @@ static void parse_json(const char *json_str) {
     JsonObject data0 = doc["data"][0];
     if (data0.isNull()) {
         Serial.println("[Serial] No data[0] in JSON");
+        print_frame_error(frame_id, schema_version, "Missing data[0]");
         strlcpy(state.status, "JSON Error", sizeof(state.status));
         strlcpy(state.usage.error, "Missing data[0]", sizeof(state.usage.error));
         state.usage.valid = false;
@@ -392,6 +419,7 @@ static void parse_json(const char *json_str) {
     JsonObject usage = data0["usage"];
     if (usage.isNull()) {
         Serial.println("[Serial] No usage object in data[0]");
+        print_frame_error(frame_id, schema_version, "Missing usage");
         strlcpy(state.status, "JSON Error", sizeof(state.status));
         strlcpy(state.usage.error, "Missing usage", sizeof(state.usage.error));
         state.usage.valid = false;
@@ -538,6 +566,7 @@ static void parse_json(const char *json_str) {
                   state.usage.seven_day_utilization * 100.0f,
                   (unsigned)state.usage.row_count,
                   state.provider_label);
+    print_frame_ack(frame_id, schema_version, frame_bytes, state.provider, state.usage.row_count);
 }
 
 // ============================================================
