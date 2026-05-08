@@ -28,6 +28,7 @@
 #include "config.h"
 #include "localization.h"
 #include "serial_receiver.h"
+#include "wifi_time.h"
 
 #include <lvgl.h>
 #include <stdio.h>
@@ -71,6 +72,7 @@ static lv_obj_t *ag_reset[AG_ROW_COUNT] = {nullptr, nullptr, nullptr};
 static lv_obj_t *divider_middle = nullptr;
 
 // Header status icon (connection indicator)
+static lv_obj_t *lbl_wifi_status   = nullptr;
 static lv_obj_t *lbl_status_dot     = nullptr;
 
 // Last known state (for detail screen)
@@ -110,6 +112,7 @@ static inline bool widgets_ready() {
              && lbl_session_reset!= nullptr
              && lbl_weekly_pct   != nullptr
              && lbl_weekly_reset != nullptr
+             && lbl_wifi_status  != nullptr
              && lbl_status_dot   != nullptr;
     if (!base) return false;
     if (landscape_layout) {
@@ -453,7 +456,13 @@ void ui_dashboard_create() {
     lv_obj_set_style_pad_all(header, 0, LV_PART_MAIN);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Connection status icon (top-left, same style as clock)
+    // WiFi + connection status icons (top-left, same style as clock)
+    lbl_wifi_status = lv_label_create(header);
+    lv_label_set_text(lbl_wifi_status, LV_SYMBOL_DUMMY);
+    lv_obj_set_style_text_color(lbl_wifi_status, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_wifi_status, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_pos(lbl_wifi_status, 8, 11);
+
     lbl_status_dot = lv_label_create(header);
     lv_label_set_text(lbl_status_dot, LV_SYMBOL_DUMMY);
     lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
@@ -792,7 +801,16 @@ void ui_dashboard_update(const MonitorState &state) {
         }
     }
 
-    // ---- Header: connection status icon ----
+    // ---- Header: WiFi + connection status icons ----
+    if (wifi_time_is_connected()) {
+        lv_obj_set_style_text_color(lbl_wifi_status, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+        lv_label_set_text(lbl_wifi_status, LV_SYMBOL_WIFI);
+        lv_obj_set_pos(lbl_status_dot, 30, 11);
+    } else {
+        lv_label_set_text(lbl_wifi_status, LV_SYMBOL_DUMMY);
+        lv_obj_set_pos(lbl_status_dot, 8, 11);
+    }
+
     if (state.is_fetching) {
         lv_obj_set_style_text_color(lbl_status_dot, UI_COLOR_FETCHING, LV_PART_MAIN);
         lv_label_set_text(lbl_status_dot, LV_SYMBOL_REFRESH);
@@ -869,6 +887,7 @@ void ui_dashboard_recreate() {
         bar_weekly         = nullptr;
         arc_weekly         = nullptr;
         lbl_weekly_reset   = nullptr;
+        lbl_wifi_status    = nullptr;
         lbl_status_dot     = nullptr;
         divider_middle     = nullptr;
         for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
