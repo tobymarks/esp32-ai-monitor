@@ -227,10 +227,10 @@
     }
 
     .hero {
-      padding: 1.5rem 0 1rem;
+      padding: 1.5rem 0 2.5rem;
       display: grid;
       grid-template-columns: minmax(0, 0.92fr) minmax(360px, 1.08fr);
-      gap: 4rem;
+      gap: 3rem;
       align-items: center;
     }
 
@@ -301,13 +301,13 @@
 
     .hero-visual {
       position: relative;
-      min-height: 410px;
+      min-height: 0;
     }
 
-    .product-photo,
-    .app-photo,
-    .menu-photo {
-      position: absolute;
+    .product-photo {
+      margin: 0;
+      width: min(560px, 100%);
+      border-radius: 32px;
       border: 1px solid rgba(30, 41, 59, 0.13);
       background: rgba(245, 245, 244, 0.78);
       box-shadow: var(--shadow);
@@ -315,9 +315,6 @@
     }
 
     .product-photo img,
-    .app-photo img,
-    .menu-photo img,
-    .inline-shot img,
     .hardware-photo img {
       display: block;
       width: 100%;
@@ -325,45 +322,8 @@
       object-fit: cover;
     }
 
-    .product-photo {
-      right: 0;
-      top: 2%;
-      width: min(560px, 100%);
-      border-radius: 32px;
-      transform: rotate(-1.2deg);
-    }
-
     .product-photo img {
       aspect-ratio: 4 / 3;
-    }
-
-    .app-photo {
-      left: 0;
-      bottom: 0;
-      width: min(355px, 52%);
-      border-radius: 19px;
-      transform: rotate(1.8deg);
-      backdrop-filter: blur(12px);
-    }
-
-    .app-photo img {
-      aspect-ratio: 990 / 616;
-      object-fit: contain;
-      background: #f5f5f5;
-    }
-
-    .menu-photo {
-      right: 3%;
-      bottom: 7%;
-      width: 166px;
-      border-radius: 16px;
-      transform: rotate(-5deg);
-    }
-
-    .menu-photo img {
-      aspect-ratio: 228 / 153;
-      object-fit: contain;
-      background: #c7f3ff;
     }
 
     main {
@@ -371,7 +331,7 @@
     }
 
     .section {
-      padding: 2.5rem 0 4rem;
+      padding: 2.5rem 0 3.25rem;
     }
 
     .section-header {
@@ -401,16 +361,12 @@
       background: rgba(245, 245, 244, 0.7);
       border-radius: var(--radius-lg);
       overflow: hidden;
-      box-shadow: var(--shadow);
     }
 
     .flow-step {
-      padding: 1.35rem;
-      min-height: 230px;
+      padding: 1.15rem;
+      min-height: 0;
       border-right: 1px solid var(--line);
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
       background: rgba(250, 250, 249, 0.64);
     }
 
@@ -425,8 +381,8 @@
     }
 
     .flow-step h3 {
-      margin: 1.8rem 0 0.6rem;
-      font-size: 1.24rem;
+      margin: 0.8rem 0 0.45rem;
+      font-size: 1.08rem;
       line-height: 1.08;
     }
 
@@ -436,17 +392,6 @@
       line-height: 1.55;
     }
 
-    .flow-icon {
-      width: 58px;
-      height: 58px;
-      border-radius: 16px;
-      display: grid;
-      place-items: center;
-      background: linear-gradient(135deg, rgba(99, 102, 241, 0.14), rgba(243, 229, 245, 0.88));
-      color: var(--primary);
-      box-shadow: inset 0 1px rgba(255,255,255,0.12);
-    }
-
     .split {
       display: grid;
       grid-template-columns: minmax(0, 0.95fr) minmax(320px, 1.05fr);
@@ -454,46 +399,9 @@
       align-items: start;
     }
 
-    .download-panel {
-      padding: 2rem;
-      border-radius: var(--radius-lg);
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 88% 10%, rgba(99, 102, 241, 0.16), transparent 16rem),
-        radial-gradient(circle at 12% 92%, rgba(73, 163, 176, 0.12), transparent 14rem),
-        linear-gradient(145deg, rgba(245, 245, 244, 0.96), rgba(243, 229, 245, 0.78));
-      border: 1px solid var(--border);
-      box-shadow: var(--shadow);
-      position: sticky;
-      top: 1.25rem;
-    }
-
-    .download-panel h2 {
-      margin: 0;
-      font-size: clamp(2rem, 4vw, 3.5rem);
-      line-height: 0.96;
-    }
-
-    .download-panel p {
-      color: var(--secondary-foreground);
-      line-height: 1.58;
-      font-size: 1.04rem;
-    }
-
-    .download-panel .button.primary {
-      background: linear-gradient(135deg, var(--primary), var(--primary-deep));
-      color: var(--primary-foreground);
-      box-shadow: 0 18px 42px rgba(99, 102, 241, 0.22);
-    }
-
-    .download-panel .button.secondary {
-      color: var(--ink);
-      background: rgba(255, 255, 255, 0.54);
-      border-color: rgba(30, 41, 59, 0.14);
-    }
-
     .download-list {
       display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 1rem;
     }
 
@@ -501,7 +409,7 @@
       border: 1px solid var(--line);
       border-radius: var(--radius-md);
       padding: 1.25rem;
-      background: rgba(245, 245, 244, 0.72);
+      background: rgba(245, 245, 244, 0.58);
     }
 
     .plain-card h3 {
@@ -522,25 +430,6 @@
     .plain-card ul {
       margin: 0;
       padding-left: 1.1rem;
-    }
-
-    .inline-shot {
-      margin-top: 1rem;
-      border: 1px solid var(--line);
-      border-radius: var(--radius-md);
-      overflow: hidden;
-      background: rgba(245, 245, 244, 0.8);
-    }
-
-    .inline-shot img {
-      aspect-ratio: 990 / 616;
-      object-fit: contain;
-      background: #f5f5f5;
-    }
-
-    .inline-shot.menu img {
-      aspect-ratio: 228 / 153;
-      background: #c7f3ff;
     }
 
     .hardware-grid {
@@ -643,7 +532,7 @@
     }
 
     .case-link {
-      min-height: 160px;
+      min-height: 132px;
       border: 1px solid var(--line);
       border-radius: var(--radius-md);
       padding: 1.2rem;
@@ -670,45 +559,6 @@
     .case-link strong {
       font-size: 1.25rem;
       line-height: 1.06;
-    }
-
-    .final-cta {
-      margin: 4rem 0 0;
-      border-radius: 34px 34px 0 0;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 18% 0%, rgba(99, 102, 241, 0.14), transparent 22rem),
-        radial-gradient(circle at 82% 18%, rgba(73, 163, 176, 0.16), transparent 24rem),
-        linear-gradient(135deg, rgba(245, 245, 244, 0.98), rgba(243, 229, 245, 0.82));
-      border-top: 1px solid var(--border);
-      padding: 3rem 0;
-    }
-
-    .final-cta .shell {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 2rem;
-    }
-
-    .final-cta h2 {
-      margin: 0;
-      font-size: clamp(2.1rem, 5vw, 4.4rem);
-      line-height: 0.96;
-    }
-
-    .final-cta p {
-      margin: 0.85rem 0 0;
-      max-width: 34rem;
-      color: var(--secondary-foreground);
-      line-height: 1.55;
-    }
-
-    .final-cta .button.primary {
-      background: linear-gradient(135deg, var(--primary), var(--primary-deep));
-      color: var(--primary-foreground);
-      box-shadow: 0 18px 42px rgba(99, 102, 241, 0.22);
-      white-space: nowrap;
     }
 
     footer {
@@ -746,11 +596,7 @@
       }
 
       .hero-visual {
-        min-height: 500px;
-      }
-
-      .download-panel {
-        position: static;
+        min-height: 0;
       }
 
       .flow {
@@ -785,6 +631,7 @@
 
       .meta-strip,
       .flow,
+      .download-list,
       .case-links {
         grid-template-columns: 1fr;
       }
@@ -799,35 +646,8 @@
         border-bottom: 0;
       }
 
-      .hero-visual {
-        min-height: 250px;
-        margin-inline: -0.25rem;
-      }
-
-      .product-photo {
-        left: 50%;
-        right: auto;
-        width: min(94vw, 430px);
-        transform: translateX(-50%) rotate(-1deg);
-      }
-
-      .app-photo {
-        left: 1.5rem;
-        width: min(270px, 64vw);
-      }
-
-      .menu-photo {
-        width: 132px;
-        right: 1rem;
-      }
-
       .section {
         padding: 3.5rem 0;
-      }
-
-      .final-cta .shell {
-        align-items: flex-start;
-        flex-direction: column;
       }
     }
 
@@ -836,8 +656,7 @@
         width: min(100% - 1.2rem, 1180px);
       }
 
-      .hero-actions,
-      .download-panel .hero-actions {
+      .hero-actions {
         align-items: stretch;
         flex-direction: column;
       }
@@ -851,18 +670,12 @@
       }
 
       .hero-visual {
-        min-height: 285px;
+        min-height: 0;
         overflow: hidden;
       }
 
       .product-photo {
-        top: 0;
         width: min(96vw, 380px);
-      }
-
-      .app-photo,
-      .menu-photo {
-        display: none;
       }
 
     }
@@ -877,7 +690,6 @@
       <span>AI Monitor</span>
     </a>
     <nav aria-label="Hauptnavigation">
-      <a href="#setup">Setup</a>
       <a href="#download">Download</a>
       <a href="#hardware">Hardware</a>
       <a href="#hilfe">Hilfe</a>
@@ -890,11 +702,11 @@
       <div>
         <p class="eyebrow">CodexBar -> Mac App -> USB Display</p>
         <h1>AI Monitor</h1>
-        <p class="hero-copy">Ein kleines ESP32-Desk-Display für Claude, Codex und Antigravity. CodexBar sammelt die Limits, die Mac App ist die Zentrale, das Display bleibt schlicht per USB verbunden.</p>
+        <p class="hero-copy">Ein kleines USB-Display für Claude, Codex und Antigravity. CodexBar liefert die Daten, die Mac App verbindet, flasht und steuert das ESP32-Display.</p>
         <div class="hero-actions">
           <a class="button primary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.17.1/AIMonitor.dmg">AI Monitor App laden</a>
           <a class="button secondary" href="https://github.com/steipete/CodexBar/releases/latest" target="_blank" rel="noopener">CodexBar laden</a>
-          <a class="text-link" href="#setup">Setup ansehen</a>
+          <a class="text-link" href="#hardware">Hardware ansehen</a>
         </div>
         <div class="meta-strip" aria-label="Kurzinfos">
           <div class="meta">
@@ -912,76 +724,61 @@
         </div>
       </div>
 
-      <div class="hero-visual" aria-label="AI Monitor Display und Mac App">
+      <div class="hero-visual" aria-label="AI Monitor Display">
         <figure class="product-photo">
           <img src="assets/display-codex-front.jpg" alt="AI Monitor Display im gedruckten Gehäuse mit Codex-Limits">
-        </figure>
-        <figure class="app-photo">
-          <img src="assets/app-settings.png" alt="AI Monitor Mac App mit CodexBar-Quelle, USB-Verbindung und Display-Einstellungen">
-        </figure>
-        <figure class="menu-photo">
-          <img src="assets/menubar-provider.png" alt="Menüleisten-Menü mit Provider-Auswahl für Claude, Codex und Antigravity">
         </figure>
       </div>
     </section>
 
     <section class="shell section" id="setup">
       <div class="section-header">
-        <p class="eyebrow">Einmal einrichten, danach läuft es nebenbei</p>
-        <h2>Die App ist jetzt der Mittelpunkt.</h2>
-        <p>Die Webseite muss nicht mehr direkt flashen. Die Mac App erkennt das Display, lädt die passende Firmware aus GitHub Releases und schreibt die Daten von CodexBar per USB auf das Board.</p>
+        <p class="eyebrow">Setup</p>
+        <h2>Vier Schritte, dann läuft es nebenbei.</h2>
       </div>
       <div class="flow" aria-label="Setup Schritte">
         <article class="flow-step">
           <div>
             <span class="num">01</span>
             <h3>CodexBar installieren</h3>
-            <p>CodexBar meldet dich bei Claude, Codex oder Antigravity an und schreibt die lokale Usage-Datei.</p>
+            <p>Die lokale Datenquelle für Claude, Codex und Antigravity.</p>
           </div>
-          <div class="flow-icon" aria-hidden="true">CB</div>
         </article>
         <article class="flow-step">
           <div>
             <span class="num">02</span>
             <h3>AI Monitor App laden</h3>
-            <p>Die App liest CodexBar, erkennt das Display und merkt sich Einstellungen pro Gerät.</p>
+            <p>Die Mac App erkennt USB-Displays und merkt sich die Einstellungen.</p>
           </div>
-          <div class="flow-icon" aria-hidden="true">Mac</div>
         </article>
         <article class="flow-step">
           <div>
             <span class="num">03</span>
             <h3>Display verbinden</h3>
-            <p>ESP32 per USB-Datenkabel anschließen. Kein WLAN, keine Provider-Credentials auf dem Board.</p>
+            <p>ESP32 per USB-Datenkabel anschließen.</p>
           </div>
-          <div class="flow-icon" aria-hidden="true">USB</div>
         </article>
         <article class="flow-step">
           <div>
             <span class="num">04</span>
             <h3>Firmware in der App flashen</h3>
-            <p>ILI9341 oder ST7789 auswählen, flashen, Provider wählen, fertig.</p>
+            <p>Panel auswählen, Firmware schreiben, Provider wählen.</p>
           </div>
-          <div class="flow-icon" aria-hidden="true">FW</div>
         </article>
       </div>
     </section>
 
-    <section class="shell section split" id="download">
-      <aside class="download-panel">
+    <section class="shell section" id="download">
+      <div class="section-header">
         <p class="eyebrow">Downloads</p>
         <h2>Alles startet auf dem Mac.</h2>
-        <p>Lade zuerst CodexBar und danach AI Monitor. Firmware-Updates, Board-Variante, Helligkeit, Sprache und Provider steuerst du anschließend in der AI Monitor App.</p>
-        <div class="hero-actions">
-          <a class="button primary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.17.1/AIMonitor.dmg">AIMonitor.dmg</a>
-          <a class="button secondary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/app-v1.17.1" target="_blank" rel="noopener">App Release</a>
-        </div>
-      </aside>
+        <p>CodexBar liest die Usage-Daten. AI Monitor sendet sie ans Display und übernimmt Firmware-Updates direkt in der App.</p>
+      </div>
 
       <div class="download-list">
         <article class="plain-card">
-          <h3>1. CodexBar</h3>
-          <p>Pflicht-Datenquelle für Claude, Codex und Antigravity. AI Monitor spricht nicht direkt mit den Providern, sondern liest den lokalen CodexBar-Snapshot.</p>
+          <h3>CodexBar</h3>
+          <p>Datenquelle für Claude, Codex und Antigravity.</p>
           <div class="tag-list">
             <a class="tag" href="https://codexbar.app/" target="_blank" rel="noopener">codexbar.app</a>
             <a class="tag" href="https://github.com/steipete/CodexBar" target="_blank" rel="noopener">Repository</a>
@@ -989,27 +786,12 @@
           </div>
         </article>
         <article class="plain-card">
-          <h3>2. AI Monitor App</h3>
-          <p>Menüleisten-App für macOS. Sie erkennt USB-Displays, schickt Live-Daten, flasht Firmware und verwaltet Einstellungen pro Gerät.</p>
-          <figure class="inline-shot">
-            <img src="assets/app-settings.png" alt="AI Monitor Einstellungsfenster mit Codex als ausgewähltem Provider">
-          </figure>
+          <h3>AI Monitor App</h3>
+          <p>Menüleisten-App für USB-Verbindung, Anzeige-Einstellungen und Firmware-Flash.</p>
           <div class="tag-list">
-            <span class="tag">macOS 13+</span>
-            <span class="tag">Apple Silicon</span>
+            <a class="tag" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.17.1/AIMonitor.dmg">AIMonitor.dmg</a>
+            <a class="tag" href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/app-v1.17.1" target="_blank" rel="noopener">App Release</a>
             <span class="tag">App v1.17.1</span>
-          </div>
-        </article>
-        <article class="plain-card">
-          <h3>3. Firmware</h3>
-          <p>Die Firmware liegt weiter in GitHub Releases. Der normale Weg ist aber die App, weil sie das richtige Release lädt und die Board-Variante pro Gerät merkt.</p>
-          <figure class="inline-shot menu">
-            <img src="assets/menubar-provider.png" alt="AI Monitor Menüleisten-Schnellmenü mit Codex-Auswahl">
-          </figure>
-          <div class="tag-list">
-            <a class="tag" href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/v2.11.4" target="_blank" rel="noopener">Firmware v2.11.4</a>
-            <span class="tag">ILI9341</span>
-            <span class="tag">ST7789</span>
           </div>
         </article>
       </div>
@@ -1019,7 +801,7 @@
       <div class="section-header">
         <p class="eyebrow">Hardware</p>
         <h2>Ein günstiges CYD reicht.</h2>
-        <p>Unterstützt werden beide gängigen ESP32-2432S028-Varianten. Wenn die Anzeige nach einem Flash weiß bleibt oder verdreht wirkt, war meist die andere Panel-Variante richtig.</p>
+        <p>Unterstützt werden ESP32-2432S028 und ESP32-2432S028R. Die passende Firmware wählst du in der Mac App.</p>
       </div>
 
       <div class="hardware-grid">
@@ -1029,7 +811,7 @@
           </figure>
           <div class="board-copy">
             <h3>ESP32-2432S028 / ESP32-2432S028R</h3>
-            <p>2.8-Zoll-TFT, Touch, ESP32-WROOM-32 und USB-Serial. Die App unterscheidet ILI9341- und ST7789-Displays beim Firmware-Flash.</p>
+            <p>2.8-Zoll-TFT, Touch, ESP32-WROOM-32 und USB-Serial.</p>
             <div class="tag-list">
               <span class="tag">R-Board: ILI9341</span>
               <span class="tag">Non-R: ST7789</span>
@@ -1042,34 +824,26 @@
           <article class="plain-card">
             <h3>Was du brauchst</h3>
             <ul>
-              <li>ESP32-2432S028 oder ESP32-2432S028R</li>
+              <li><a href="https://de.aliexpress.com/item/1005007731775734.html" target="_blank" rel="noopener">ESP32-2432S028 Display bei AliExpress</a></li>
               <li>USB-Datenkabel, kein reines Ladekabel</li>
               <li>Mac mit macOS 13 oder neuer</li>
               <li>CodexBar mit mindestens einem eingerichteten Provider</li>
             </ul>
           </article>
           <article class="plain-card">
-            <h3>Gute Gehäuse</h3>
-            <p>Die CYD-Boards passen in mehrere 3D-Druck-Gehäuse. Zwei brauchbare Ausgangspunkte liegen bei MakerWorld.</p>
+            <h3>Empfohlene Gehäuse</h3>
+            <div class="case-links">
+              <a class="case-link" href="https://makerworld.com/de/models/2583102-weather-station-pro-anemometer-esp32-2432s028-cyd#profileId-2849155" target="_blank" rel="noopener">
+                <span>Landscape</span>
+                <strong>Weather Station Pro für ESP32-2432S028 CYD</strong>
+              </a>
+              <a class="case-link" href="https://makerworld.com/de/models/1382304-aura-smart-weather-forecast-display?from=search#profileId-1430951" target="_blank" rel="noopener">
+                <span>Portrait</span>
+                <strong>Aura Smart Weather Forecast Display</strong>
+              </a>
+            </div>
           </article>
         </div>
-      </div>
-    </section>
-
-    <section class="shell section">
-      <div class="section-header">
-        <p class="eyebrow">Gehäuse</p>
-        <h2>Schreibtisch statt Breadboard.</h2>
-      </div>
-      <div class="case-links">
-        <a class="case-link" href="https://makerworld.com/de/models/1382304-aura-smart-weather-forecast-display?from=search#profileId-1430975" target="_blank" rel="noopener">
-          <span>Vertikal</span>
-          <strong>Aura Display-Gehäuse</strong>
-        </a>
-        <a class="case-link" href="https://makerworld.com/de/models/609280-desk-stand-for-xtouch-with-esp32-cyd-jc2432w328?from=search#profileId-532299" target="_blank" rel="noopener">
-          <span>Horizontal</span>
-          <strong>Desk Stand für ESP32 CYD</strong>
-        </a>
       </div>
     </section>
 
@@ -1099,15 +873,6 @@
       </div>
     </section>
 
-    <section class="final-cta">
-      <div class="shell">
-        <div>
-          <h2>Bereit für ein ruhiges Limit-Display?</h2>
-          <p>Installiere CodexBar, lade AI Monitor und stecke das ESP32-Display an. Danach bleibt die Nutzung sichtbar, ohne dass ein Browserfenster offen sein muss.</p>
-        </div>
-        <a class="button primary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.17.1/AIMonitor.dmg">Mac App laden</a>
-      </div>
-    </section>
   </main>
 
   <footer>

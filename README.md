@@ -67,7 +67,7 @@ Supported board family:
 
 Common hardware:
 
-- **Display:** 2.8" 320x240 TFT
+- **Display:** [ESP32-2432S028 2.8" 320x240 TFT](https://de.aliexpress.com/item/1005007731775734.html)
 - **Touch:** XPT2046
 - **MCU:** ESP32-WROOM-32
 - **Backlight:** GPIO 21
@@ -78,8 +78,8 @@ If the display stays white or shows noise after flashing, flash the other panel 
 
 3D-printable cases for the CYD on MakerWorld:
 
-- [Vertical: Aura Display Case](https://makerworld.com/de/models/1382304-aura-smart-weather-forecast-display?from=search#profileId-1430975)
-- [Desk Stand with ESP32 CYD](https://makerworld.com/de/models/609280-desk-stand-for-xtouch-with-esp32-cyd-jc2432w328?from=search#profileId-532299)
+- [Landscape: Weather Station Pro for ESP32-2432S028 CYD](https://makerworld.com/de/models/2583102-weather-station-pro-anemometer-esp32-2432s028-cyd#profileId-2849155)
+- [Portrait: Aura Smart Weather Forecast Display](https://makerworld.com/de/models/1382304-aura-smart-weather-forecast-display?from=search#profileId-1430951)
 
 ## Build from Source
 
