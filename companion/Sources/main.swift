@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.17.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.18.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.18.0"
+let kAppVersion = "1.18.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -841,7 +841,11 @@ class AppUpdateManager {
         return "v\(normalizeVersion(release.tag_name))"
     }
 
-    private var currentAppReleaseTag: String { "app-v\(kAppVersion)" }
+    private var currentAppReleaseTag: String {
+        kAppVersion.localizedCaseInsensitiveContains("beta")
+            ? "app-beta-v\(kAppVersion)"
+            : "app-v\(kAppVersion)"
+    }
 
     func checkForUpdate(completion: @escaping (Bool) -> Void) {
         guard let url = URL(string: kGitHubReleasesAPI) else { completion(false); return }
@@ -887,12 +891,11 @@ class AppUpdateManager {
 
     private func selectAppRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
         releases.first { release in
-            guard release.tag_name.hasPrefix("app-v") else { return false }
             switch Settings.shared.updateChannel {
             case .stable:
-                return !release.prerelease
+                return release.tag_name.hasPrefix("app-v") && !release.prerelease
             case .beta:
-                return true
+                return release.tag_name.hasPrefix("app-beta-v") || release.tag_name.hasPrefix("app-v")
             }
         }
     }
@@ -1020,7 +1023,8 @@ class AppUpdateManager {
 
     private func normalizeVersion(_ version: String) -> String {
         var v = version
-        if v.hasPrefix("app-v") { v = String(v.dropFirst(5)) }
+        if v.hasPrefix("app-beta-v") { v = String(v.dropFirst(10)) }
+        else if v.hasPrefix("app-v") { v = String(v.dropFirst(5)) }
         else if v.hasPrefix("app-") { v = String(v.dropFirst(4)) }
         else if v.hasPrefix("v") { v = String(v.dropFirst(1)) }
         return v
@@ -1184,7 +1188,7 @@ class FirmwareManager {
                 self.latestRelease = release
                 Settings.shared.lastFirmwareCheck = Date()
                 let installed = Settings.shared.installedFirmwareVersion ?? "unbekannt"
-                let hasUpdate = (release.tag_name != installed)
+                let hasUpdate = (self.firmwareVersionTag(from: release.tag_name) != self.firmwareVersionTag(from: installed))
                 let binPath = self.localBinPath(for: release.tag_name)
                 if FileManager.default.fileExists(atPath: binPath) { self.downloadedBinPath = binPath }
                 DispatchQueue.main.async { self.onUpdate?() }
@@ -1195,16 +1199,21 @@ class FirmwareManager {
 
     private func selectFirmwareRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
         releases.first { release in
-            guard release.tag_name.hasPrefix("v"), !release.tag_name.hasPrefix("app-") else {
-                return false
-            }
             switch Settings.shared.updateChannel {
             case .stable:
-                return !release.prerelease
+                return release.tag_name.hasPrefix("v") && !release.tag_name.hasPrefix("app-") && !release.prerelease
             case .beta:
-                return true
+                return release.tag_name.hasPrefix("fw-beta-v")
+                    || (release.tag_name.hasPrefix("v") && !release.tag_name.hasPrefix("app-"))
             }
         }
+    }
+
+    private func firmwareVersionTag(from releaseTag: String) -> String {
+        if releaseTag.hasPrefix("fw-beta-") {
+            return String(releaseTag.dropFirst("fw-beta-".count))
+        }
+        return releaseTag
     }
 
     func downloadFirmware(completion: @escaping (Bool, String?) -> Void) {
@@ -1387,7 +1396,9 @@ class FirmwareManager {
                 errorPipe.fileHandleForReading.readabilityHandler = nil
                 let exitCode = process.terminationStatus
                 if exitCode == 0 {
-                    if let release = self.latestRelease { Settings.shared.installedFirmwareVersion = release.tag_name }
+                    if let release = self.latestRelease {
+                        Settings.shared.installedFirmwareVersion = self.firmwareVersionTag(from: release.tag_name)
+                    }
                     self.setPhase(.done)
                     DispatchQueue.main.async {
                         self.isFlashing = false
@@ -1426,7 +1437,10 @@ class FirmwareManager {
     }
 
     var installedVersionDisplay: String { Settings.shared.installedFirmwareVersion ?? "unbekannt" }
-    var latestVersionDisplay: String { latestRelease?.tag_name ?? "?" }
+    var latestVersionDisplay: String {
+        guard let release = latestRelease else { return "?" }
+        return firmwareVersionTag(from: release.tag_name)
+    }
 
     func canFlash(serialConnected: Bool) -> Bool {
         return !isFlashing && !isDownloading && serialConnected && downloadedBinPath != nil
