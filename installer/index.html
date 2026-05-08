@@ -3,551 +3,1242 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Monitor — Installer</title>
+  <title>AI Monitor — Claude, Codex und Antigravity auf dem Desk-Display</title>
+  <meta name="description" content="AI Monitor zeigt Claude-, Codex- und Antigravity-Limits auf einem kleinen ESP32-Display. CodexBar liefert die Daten, die Mac App verbindet und flasht das Display.">
+  <meta property="og:title" content="AI Monitor">
+  <meta property="og:description" content="Ein kleines USB-Desk-Display für AI-Limits, gesteuert über CodexBar und die AI Monitor Mac App.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://tobymarks.github.io/esp32-ai-monitor/">
+  <meta name="theme-color" content="#11100e">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@450;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --card: #ffffff;
-      --ring: #3b82f6;
-      --input: #e5e7eb;
-      --muted: #f9fafb;
-      --accent: #e0f2fe;
-      --border: #e5e7eb;
-      --radius: 0.375rem;
-      --popover: #ffffff;
-      --primary: #3b82f6;
-      --font-mono: 'JetBrains Mono', monospace;
-      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      --secondary: #f3f4f6;
-      --background: #ffffff;
-      --foreground: #333333;
-      --destructive: #ef4444;
-      --card-foreground: #333333;
-      --muted-foreground: #6b7280;
-      --accent-foreground: #1e3a8a;
-      --primary-foreground: #ffffff;
-      --secondary-foreground: #4b5563;
-      --success: #22c55e;
-      --success-muted: #dcfce7;
-      --warning: #f59e0b;
-      --warning-muted: #fef3c7;
+      --bg: #f4efe6;
+      --paper: #fffaf0;
+      --paper-strong: #fff3dc;
+      --ink: #191714;
+      --muted: #6f665a;
+      --line: rgba(25, 23, 20, 0.14);
+      --line-strong: rgba(25, 23, 20, 0.28);
+      --orange: #c7623e;
+      --teal: #3e9aa7;
+      --green: #4f9b6d;
+      --graphite: #2c2924;
+      --graphite-2: #1f1d19;
+      --cream: #f8ead3;
+      --shadow: 0 24px 70px rgba(47, 34, 18, 0.16);
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 26px;
+      --font-sans: "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
-    .dark {
-      --card: #262626;
-      --ring: #3b82f6;
-      --input: #404040;
-      --muted: #262626;
-      --accent: #1e3a8a;
-      --border: #404040;
-      --popover: #262626;
-      --primary: #3b82f6;
-      --secondary: #262626;
-      --background: #171717;
-      --foreground: #e5e5e5;
-      --destructive: #ef4444;
-      --card-foreground: #e5e5e5;
-      --muted-foreground: #a3a3a3;
-      --accent-foreground: #bfdbfe;
-      --primary-foreground: #ffffff;
-      --secondary-foreground: #e5e5e5;
-      --success: #4ade80;
-      --success-muted: #14532d;
-      --warning: #fbbf24;
-      --warning-muted: #78350f;
+    * {
+      box-sizing: border-box;
     }
 
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html {
+      scroll-behavior: smooth;
+    }
 
     body {
+      margin: 0;
       font-family: var(--font-sans);
-      background: var(--background);
-      color: var(--foreground);
+      background:
+        radial-gradient(circle at 12% 8%, rgba(199, 98, 62, 0.18), transparent 32rem),
+        radial-gradient(circle at 84% 20%, rgba(62, 154, 167, 0.16), transparent 30rem),
+        linear-gradient(180deg, var(--bg), #ebe1d0 68%, #ded0ba);
+      color: var(--ink);
       min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      transition: background 0.2s, color 0.2s;
     }
 
-    .container {
-      max-width: 640px;
-      width: 100%;
-      padding: 2.5rem 1.5rem 1.5rem;
-    }
-
-    /* ---- Header ---- */
-    .header {
-      text-align: center;
-      margin-bottom: 2rem;
-    }
-
-    .header-row {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.75rem;
-      margin-bottom: 0.5rem;
-    }
-
-    .logo {
-      width: 40px;
-      height: 40px;
-      background: var(--primary);
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-
-    .logo svg {
-      width: 22px;
-      height: 22px;
-      fill: var(--primary-foreground);
-    }
-
-    h1 {
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: var(--foreground);
-      letter-spacing: -0.025em;
-    }
-
-    .subtitle {
-      color: var(--muted-foreground);
-      font-size: 0.9rem;
-      line-height: 1.5;
-    }
-
-    /* ---- Theme toggle ---- */
-    .theme-toggle {
+    body::before {
+      content: "";
       position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.26;
+      mix-blend-mode: multiply;
+      background-image:
+        linear-gradient(rgba(25, 23, 20, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(25, 23, 20, 0.035) 1px, transparent 1px);
+      background-size: 36px 36px;
+      mask-image: linear-gradient(to bottom, #000 0%, transparent 78%);
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .skip-link {
+      position: absolute;
+      left: 1rem;
       top: 1rem;
-      right: 1rem;
-      width: 36px;
-      height: 36px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--card);
-      color: var(--muted-foreground);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s, border-color 0.15s;
+      transform: translateY(-160%);
+      background: var(--ink);
+      color: var(--paper);
+      padding: 0.65rem 0.85rem;
+      border-radius: var(--radius-sm);
       z-index: 10;
     }
 
-    .theme-toggle:hover {
-      background: var(--muted);
-      border-color: var(--muted-foreground);
+    .skip-link:focus {
+      transform: translateY(0);
     }
 
-    .theme-toggle svg { width: 18px; height: 18px; }
-    .dark .icon-moon { display: none; }
-    :not(.dark) .icon-sun { display: none; }
-
-    /* ---- Cards ---- */
-    .card {
-      background: var(--card);
-      border-radius: 12px;
-      padding: 1.5rem;
-      margin-bottom: 1rem;
-      border: 1px solid var(--border);
-      transition: background 0.2s, border-color 0.2s;
+    .shell {
+      width: min(1180px, calc(100% - 2rem));
+      margin: 0 auto;
+      position: relative;
     }
 
-    .card h2 {
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: var(--foreground);
-      margin-bottom: 0.75rem;
-      letter-spacing: -0.01em;
+    .topbar {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
     }
 
-    .card p, .card li {
-      font-size: 0.875rem;
-      line-height: 1.65;
-      color: var(--secondary-foreground);
-    }
-
-    .dark .card p, .dark .card li {
-      color: var(--muted-foreground);
-    }
-
-    /* ---- Hardware badge ---- */
-    .hardware-badge {
+    .brand {
       display: inline-flex;
       align-items: center;
-      gap: 0.4rem;
-      background: var(--accent);
-      color: var(--accent-foreground);
-      padding: 0.3rem 0.7rem;
-      border-radius: 6px;
-      font-size: 0.8rem;
-      font-weight: 500;
+      gap: 0.75rem;
+      text-decoration: none;
+      font-weight: 800;
+      font-size: 1.05rem;
+    }
+
+    .mark {
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--line-strong);
+      border-radius: 11px;
+      background: var(--graphite);
+      color: var(--cream);
+      display: grid;
+      place-items: center;
       font-family: var(--font-mono);
-      margin-top: 0.75rem;
+      font-size: 0.86rem;
+      box-shadow: inset 0 1px rgba(255, 255, 255, 0.12);
     }
 
-    .hardware-badge svg {
-      width: 14px;
-      height: 14px;
-      flex-shrink: 0;
-    }
-
-    /* ---- Feature list ---- */
-    .features {
-      list-style: none;
-      padding: 0;
-      margin-top: 1rem;
-      display: grid;
-      gap: 0.35rem;
-    }
-
-    .features li {
-      padding-left: 1.5rem;
-      position: relative;
-    }
-
-    .features li::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      top: 0.45em;
-      width: 14px;
-      height: 14px;
-      background: var(--success);
-      mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.25 4.75L6 12 2.75 8.75' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
-      -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.25 4.75L6 12 2.75 8.75' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
-    }
-
-    /* ---- Steps ---- */
-    .steps {
-      list-style: none;
-      padding: 0;
-      counter-reset: step;
-      display: grid;
-      gap: 0.5rem;
-    }
-
-    .steps li {
-      padding-left: 2.4rem;
-      position: relative;
-      counter-increment: step;
-      min-height: 1.8rem;
+    nav {
       display: flex;
       align-items: center;
+      gap: 1.15rem;
+      color: var(--muted);
+      font-size: 0.95rem;
     }
 
-    .steps li::before {
-      content: counter(step);
-      position: absolute;
-      left: 0;
-      width: 1.65rem;
-      height: 1.65rem;
-      background: var(--primary);
-      color: var(--primary-foreground);
-      border-radius: 50%;
-      display: flex;
+    nav a {
+      text-decoration: none;
+      transition: color 180ms ease;
+    }
+
+    nav a:hover,
+    nav a:focus-visible {
+      color: var(--ink);
+    }
+
+    .button,
+    .text-link {
+      min-height: 44px;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.75rem;
-      font-weight: 600;
-    }
-
-    .steps li strong {
-      color: var(--foreground);
-      font-weight: 600;
-    }
-
-    /* ---- Install section ---- */
-    .install-section {
-      text-align: center;
-      padding: 2rem 1.5rem;
-    }
-
-    esp-web-install-button {
-      display: inline-block;
-    }
-
-    esp-web-install-button button {
-      background: var(--primary);
-      color: var(--primary-foreground);
-      border: none;
-      padding: 0.75rem 2rem;
-      font-size: 1rem;
-      font-weight: 600;
-      font-family: var(--font-sans);
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.15s, box-shadow 0.15s;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    }
-
-    esp-web-install-button button:hover {
-      background: #2563eb;
-      box-shadow: 0 4px 12px rgba(59,130,246,0.3);
-    }
-
-    esp-web-install-button button:active {
-      transform: scale(0.98);
-    }
-
-    .browser-note {
-      font-size: 0.8rem;
-      color: var(--muted-foreground);
-      margin-top: 0.75rem;
-    }
-
-    /* ---- Unsupported banner ---- */
-    .unsupported {
-      display: none;
-      background: #fef2f2;
-      border: 1px solid #fecaca;
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
-      text-align: center;
-      color: #991b1b;
-      font-size: 0.875rem;
-      margin-bottom: 1rem;
-      line-height: 1.5;
-    }
-
-    .dark .unsupported {
-      background: #450a0a;
-      border-color: #7f1d1d;
-      color: #fca5a5;
-    }
-
-    .unsupported strong {
-      font-weight: 600;
-    }
-
-    /* ---- Troubleshooting ---- */
-    .troubleshooting {
-      display: grid;
-      gap: 0.75rem;
-    }
-
-    .troubleshooting dt {
-      font-weight: 600;
-      color: var(--foreground);
-      font-size: 0.875rem;
-    }
-
-    .troubleshooting dd {
-      font-size: 0.825rem;
-      color: var(--muted-foreground);
-      margin-left: 0;
-      padding-left: 0;
-      line-height: 1.6;
-    }
-
-    .troubleshooting dd + dt {
-      margin-top: 0.25rem;
-    }
-
-    .troubleshooting a {
-      color: var(--primary);
+      gap: 0.55rem;
+      border-radius: var(--radius-sm);
+      font-weight: 700;
       text-decoration: none;
-      font-weight: 500;
+      transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease, color 180ms ease, border-color 180ms ease;
     }
 
-    .troubleshooting a:hover {
-      text-decoration: underline;
+    .button {
+      padding: 0.78rem 1rem;
+      border: 1px solid transparent;
     }
 
-    /* ---- Setup info box ---- */
-    .info-box {
-      background: var(--accent);
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
-      margin-top: 1rem;
-      font-size: 0.825rem;
-      line-height: 1.6;
-      color: var(--accent-foreground);
+    .button:hover,
+    .text-link:hover {
+      transform: translateY(-2px);
     }
 
-    .info-box strong {
+    .button:active,
+    .text-link:active {
+      transform: translateY(0);
+    }
+
+    .button:focus-visible,
+    .text-link:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid rgba(62, 154, 167, 0.42);
+      outline-offset: 3px;
+    }
+
+    .button.primary {
+      background: var(--ink);
+      color: var(--paper);
+      box-shadow: 0 16px 36px rgba(25, 23, 20, 0.22);
+    }
+
+    .button.primary:hover {
+      background: #2a251f;
+      box-shadow: 0 20px 42px rgba(25, 23, 20, 0.26);
+    }
+
+    .button.secondary {
+      background: rgba(255, 250, 240, 0.62);
+      color: var(--ink);
+      border-color: var(--line);
+    }
+
+    .button.secondary:hover {
+      background: rgba(255, 250, 240, 0.9);
+      border-color: var(--line-strong);
+    }
+
+    .text-link {
+      color: var(--ink);
+      min-height: auto;
+      border-bottom: 1px solid currentColor;
+      border-radius: 0;
+      padding-bottom: 0.12rem;
+    }
+
+    .hero {
+      padding: 1.5rem 0 1rem;
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(360px, 1.08fr);
+      gap: 4rem;
+      align-items: center;
+    }
+
+    .eyebrow {
+      margin: 0 0 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      text-wrap: pretty;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 10.5ch;
+      font-size: clamp(3.7rem, 8vw, 6.65rem);
+      line-height: 0.82;
+      letter-spacing: 0;
+    }
+
+    .hero-copy {
+      max-width: 38rem;
+      margin: 1.35rem 0 0;
+      color: var(--muted);
+      font-size: clamp(1.12rem, 1.9vw, 1.38rem);
+      line-height: 1.45;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.9rem;
+      margin-top: 2rem;
+    }
+
+    .meta-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.85rem;
+      margin-top: 2.3rem;
+      max-width: 38rem;
+    }
+
+    .meta {
+      border-top: 1px solid var(--line-strong);
+      padding-top: 0.7rem;
+    }
+
+    .meta strong {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 0.86rem;
       font-weight: 600;
     }
 
-    .info-box code {
-      font-family: var(--font-mono);
-      font-size: 0.8rem;
-      background: rgba(59,130,246,0.1);
-      padding: 0.1rem 0.35rem;
-      border-radius: 4px;
+    .meta span {
+      color: var(--muted);
+      font-size: 0.9rem;
     }
 
-    /* ---- Footer ---- */
+    .hero-visual {
+      position: relative;
+      min-height: 410px;
+    }
+
+    .desk {
+      position: absolute;
+      inset: 4% 2% auto auto;
+      width: min(520px, 100%);
+      min-height: 340px;
+      border-radius: 32px;
+      background:
+        linear-gradient(145deg, rgba(255, 250, 240, 0.82), rgba(247, 226, 196, 0.58)),
+        linear-gradient(90deg, transparent 49%, rgba(25, 23, 20, 0.06) 50%, transparent 51%);
+      border: 1px solid rgba(25, 23, 20, 0.12);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .desk::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 76% 34%, rgba(62, 154, 167, 0.16), transparent 14rem),
+        radial-gradient(circle at 24% 72%, rgba(199, 98, 62, 0.16), transparent 12rem);
+    }
+
+    .display-device {
+      position: absolute;
+      left: 50%;
+      top: 53%;
+      width: 306px;
+      transform: translate(-50%, -50%) rotate(-4deg);
+      border-radius: 22px;
+      background: #171512;
+      padding: 14px;
+      box-shadow: 0 28px 46px rgba(25, 23, 20, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+
+    .display-screen {
+      height: 214px;
+      border-radius: 13px;
+      padding: 16px;
+      color: #f4f3ee;
+      background:
+        linear-gradient(180deg, #2b2a27, #1d1c19);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+
+    .screen-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: #a6a49a;
+    }
+
+    .provider {
+      margin: 12px 0 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 1.75rem;
+      font-weight: 800;
+    }
+
+    .provider-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--teal);
+      box-shadow: 0 0 18px rgba(62, 154, 167, 0.76);
+    }
+
+    .usage-row {
+      margin-top: 13px;
+    }
+
+    .usage-row header {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: #d6d2c4;
+      margin-bottom: 6px;
+    }
+
+    .bar {
+      height: 11px;
+      border-radius: 999px;
+      background: #45433c;
+      overflow: hidden;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--teal);
+    }
+
+    .bar.orange span {
+      background: var(--orange);
+    }
+
+    .mac-card {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      width: 292px;
+      border-radius: 18px;
+      padding: 14px;
+      background: rgba(255, 250, 240, 0.9);
+      border: 1px solid rgba(25, 23, 20, 0.14);
+      box-shadow: 0 22px 56px rgba(47, 34, 18, 0.2);
+      backdrop-filter: blur(12px);
+    }
+
+    .window-dots {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    .window-dots span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #d8cbb7;
+    }
+
+    .app-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      border-top: 1px solid var(--line);
+      padding: 10px 0;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+
+    .app-line:first-of-type {
+      border-top: 0;
+    }
+
+    .app-line strong {
+      color: var(--ink);
+    }
+
+    .status-pill {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      padding: 0.25rem 0.38rem;
+      border-radius: 5px;
+      background: rgba(79, 155, 109, 0.16);
+      color: #317148;
+      white-space: nowrap;
+    }
+
+    main {
+      overflow: hidden;
+    }
+
+    .section {
+      padding: 2.5rem 0 4rem;
+    }
+
+    .section-header {
+      max-width: 760px;
+      margin-bottom: 2rem;
+    }
+
+    .section-header h2 {
+      margin: 0;
+      font-size: clamp(2.2rem, 5vw, 4.7rem);
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+
+    .section-header p {
+      margin: 1rem 0 0;
+      max-width: 42rem;
+      color: var(--muted);
+      font-size: 1.08rem;
+      line-height: 1.58;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border: 1px solid var(--line);
+      background: rgba(255, 250, 240, 0.48);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .flow-step {
+      padding: 1.35rem;
+      min-height: 230px;
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background: rgba(255, 250, 240, 0.44);
+    }
+
+    .flow-step:last-child {
+      border-right: 0;
+    }
+
+    .flow-step .num {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .flow-step h3 {
+      margin: 1.8rem 0 0.6rem;
+      font-size: 1.24rem;
+      line-height: 1.08;
+    }
+
+    .flow-step p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .flow-icon {
+      width: 58px;
+      height: 58px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      background: var(--graphite);
+      color: var(--cream);
+      box-shadow: inset 0 1px rgba(255,255,255,0.12);
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(320px, 1.05fr);
+      gap: 2rem;
+      align-items: start;
+    }
+
+    .download-panel {
+      padding: 2rem;
+      border-radius: var(--radius-lg);
+      color: var(--cream);
+      background:
+        radial-gradient(circle at 86% 18%, rgba(62, 154, 167, 0.38), transparent 14rem),
+        linear-gradient(145deg, var(--graphite), var(--graphite-2));
+      box-shadow: var(--shadow);
+      position: sticky;
+      top: 1.25rem;
+    }
+
+    .download-panel h2 {
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3.5rem);
+      line-height: 0.96;
+    }
+
+    .download-panel p {
+      color: rgba(248, 234, 211, 0.72);
+      line-height: 1.58;
+      font-size: 1.04rem;
+    }
+
+    .download-panel .button.primary {
+      background: var(--cream);
+      color: var(--graphite);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.26);
+    }
+
+    .download-panel .button.secondary {
+      color: var(--cream);
+      background: rgba(248, 234, 211, 0.08);
+      border-color: rgba(248, 234, 211, 0.18);
+    }
+
+    .download-list {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .plain-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      background: rgba(255, 250, 240, 0.56);
+    }
+
+    .plain-card h3 {
+      margin: 0 0 0.55rem;
+      font-size: 1.16rem;
+    }
+
+    .plain-card p,
+    .plain-card li {
+      color: var(--muted);
+      line-height: 1.58;
+    }
+
+    .plain-card p {
+      margin: 0;
+    }
+
+    .plain-card ul {
+      margin: 0;
+      padding-left: 1.1rem;
+    }
+
+    .hardware-grid {
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      gap: 1rem;
+      align-items: stretch;
+    }
+
+    .board-card {
+      min-height: 370px;
+      border-radius: var(--radius-lg);
+      background:
+        linear-gradient(145deg, rgba(255, 250, 240, 0.64), rgba(255, 243, 220, 0.7)),
+        repeating-linear-gradient(90deg, transparent 0 16px, rgba(25, 23, 20, 0.025) 16px 17px);
+      border: 1px solid var(--line);
+      padding: 1.6rem;
+      display: grid;
+      grid-template-columns: 1fr 0.84fr;
+      gap: 1.5rem;
+      box-shadow: var(--shadow);
+    }
+
+    .board-visual {
+      align-self: center;
+      justify-self: center;
+      width: min(280px, 100%);
+      aspect-ratio: 1 / 1.15;
+      border-radius: 22px;
+      background:
+        linear-gradient(180deg, #2f8f65, #1d6849);
+      border: 10px solid #145039;
+      position: relative;
+      box-shadow: 0 20px 48px rgba(27, 70, 50, 0.34), inset 0 0 0 2px rgba(255,255,255,0.12);
+    }
+
+    .board-visual::before {
+      content: "";
+      position: absolute;
+      inset: 15% 10% 20%;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #24231f, #141310);
+      border: 8px solid #11100e;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+    }
+
+    .board-visual::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -10px;
+      transform: translateX(-50%);
+      width: 74px;
+      height: 18px;
+      border-radius: 5px 5px 12px 12px;
+      background: #d4c9b8;
+      box-shadow: 0 -1px 0 rgba(25,23,20,0.22);
+    }
+
+    .board-copy {
+      align-self: center;
+    }
+
+    .board-copy h3 {
+      margin: 0 0 0.8rem;
+      font-size: 1.65rem;
+      line-height: 1;
+    }
+
+    .tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .tag {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 0.34rem 0.46rem;
+      color: var(--muted);
+      background: rgba(255, 250, 240, 0.46);
+    }
+
+    .support-stack {
+      display: grid;
+      gap: 1rem;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: rgba(255, 250, 240, 0.52);
+      padding: 1rem 1.1rem;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+
+    details p {
+      margin: 0.75rem 0 0;
+      color: var(--muted);
+      line-height: 1.58;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.86em;
+      background: rgba(25, 23, 20, 0.08);
+      border-radius: 5px;
+      padding: 0.08rem 0.3rem;
+    }
+
+    .case-links {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+    }
+
+    .case-link {
+      min-height: 160px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 1.2rem;
+      text-decoration: none;
+      background: rgba(255, 250, 240, 0.54);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+    }
+
+    .case-link:hover {
+      transform: translateY(-3px);
+      border-color: var(--line-strong);
+      background: rgba(255, 250, 240, 0.78);
+    }
+
+    .case-link span {
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+    }
+
+    .case-link strong {
+      font-size: 1.25rem;
+      line-height: 1.06;
+    }
+
+    .final-cta {
+      margin: 4rem 0 0;
+      border-radius: 34px 34px 0 0;
+      color: var(--cream);
+      background:
+        radial-gradient(circle at 18% 0%, rgba(199, 98, 62, 0.32), transparent 22rem),
+        radial-gradient(circle at 82% 18%, rgba(62, 154, 167, 0.24), transparent 24rem),
+        var(--graphite-2);
+      padding: 3rem 0;
+    }
+
+    .final-cta .shell {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 2rem;
+    }
+
+    .final-cta h2 {
+      margin: 0;
+      font-size: clamp(2.1rem, 5vw, 4.4rem);
+      line-height: 0.96;
+    }
+
+    .final-cta p {
+      margin: 0.85rem 0 0;
+      max-width: 34rem;
+      color: rgba(248, 234, 211, 0.72);
+      line-height: 1.55;
+    }
+
+    .final-cta .button.primary {
+      background: var(--cream);
+      color: var(--graphite);
+      box-shadow: none;
+      white-space: nowrap;
+    }
+
     footer {
-      text-align: center;
-      padding: 1.5rem;
-      font-size: 0.8rem;
-      color: var(--muted-foreground);
-      margin-top: auto;
+      background: var(--graphite-2);
+      color: rgba(248, 234, 211, 0.68);
+      padding: 1.4rem 0 2rem;
+      font-size: 0.9rem;
+    }
+
+    .footer-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      border-top: 1px solid rgba(248, 234, 211, 0.12);
+      padding-top: 1rem;
     }
 
     footer a {
-      color: var(--primary);
+      color: var(--cream);
       text-decoration: none;
-      font-weight: 500;
     }
 
-    footer a:hover {
-      text-decoration: underline;
+    @media (max-width: 980px) {
+      .hero,
+      .split,
+      .hardware-grid,
+      .board-card {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        gap: 1rem;
+        padding-top: 2rem;
+      }
+
+      .hero-visual {
+        min-height: 500px;
+      }
+
+      .desk {
+        inset: 4% auto auto 50%;
+        transform: translateX(-50%);
+      }
+
+      .download-panel {
+        position: static;
+      }
+
+      .flow {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .flow-step:nth-child(2) {
+        border-right: 0;
+      }
+
+      .flow-step:nth-child(-n+2) {
+        border-bottom: 1px solid var(--line);
+      }
     }
 
-    /* ---- Responsive ---- */
-    @media (max-width: 500px) {
-      .container { padding: 1.5rem 1rem 1rem; }
-      h1 { font-size: 1.3rem; }
-      .card { padding: 1.25rem; }
+    @media (max-width: 720px) {
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 1rem 0;
+      }
+
+      nav {
+        width: 100%;
+        overflow-x: auto;
+        padding-bottom: 0.25rem;
+      }
+
+      h1 {
+        font-size: clamp(3.6rem, 18vw, 5.8rem);
+      }
+
+      .meta-strip,
+      .flow,
+      .case-links {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-step,
+      .flow-step:nth-child(2) {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .flow-step:last-child {
+        border-bottom: 0;
+      }
+
+      .hero-visual {
+        min-height: 250px;
+        margin-inline: -0.25rem;
+      }
+
+      .display-device {
+        width: 230px;
+        padding: 10px;
+      }
+
+      .display-screen {
+        height: 158px;
+        padding: 12px;
+      }
+
+      .provider {
+        margin: 8px 0 4px;
+        font-size: 1.25rem;
+      }
+
+      .usage-row {
+        margin-top: 8px;
+      }
+
+      .mac-card {
+        width: min(246px, 82vw);
+        left: 0.25rem;
+        padding: 10px;
+      }
+
+      .app-line {
+        padding: 7px 0;
+        font-size: 0.84rem;
+      }
+
+      .desk {
+        width: min(94vw, 410px);
+        min-height: 225px;
+      }
+
+      .section {
+        padding: 3.5rem 0;
+      }
+
+      .final-cta .shell {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+
+    @media (max-width: 440px) {
+      .shell {
+        width: min(100% - 1.2rem, 1180px);
+      }
+
+      .hero-actions,
+      .download-panel .hero-actions {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .button {
+        width: 100%;
+      }
+
+      .meta-strip {
+        display: none;
+      }
+
+      .hero-visual {
+        min-height: 120px;
+        overflow: hidden;
+      }
+
+      .desk {
+        min-height: 145px;
+      }
+
+      .display-device {
+        top: 38%;
+        width: 210px;
+      }
+
+      .mac-card {
+        display: none;
+      }
     }
   </style>
 </head>
 <body>
-  <button class="theme-toggle" id="themeToggle" aria-label="Theme wechseln">
-    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-  </button>
+  <a class="skip-link" href="#main">Zum Inhalt springen</a>
 
-  <div class="container">
-    <div class="header">
-      <div class="header-row">
-        <div class="logo">
-          <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-        </div>
+  <header class="shell topbar">
+    <a class="brand" href="#top" aria-label="AI Monitor Start">
+      <span class="mark">AI</span>
+      <span>AI Monitor</span>
+    </a>
+    <nav aria-label="Hauptnavigation">
+      <a href="#setup">Setup</a>
+      <a href="#download">Download</a>
+      <a href="#hardware">Hardware</a>
+      <a href="#hilfe">Hilfe</a>
+      <a href="https://github.com/tobymarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="shell hero" id="top">
+      <div>
+        <p class="eyebrow">CodexBar -> Mac App -> USB Display</p>
         <h1>AI Monitor</h1>
+        <p class="hero-copy">Ein kleines ESP32-Desk-Display für Claude, Codex und Antigravity. CodexBar sammelt die Limits, die Mac App ist die Zentrale, das Display bleibt schlicht per USB verbunden.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.17.1/AIMonitor.dmg">AI Monitor App laden</a>
+          <a class="button secondary" href="https://github.com/steipete/CodexBar/releases/latest" target="_blank" rel="noopener">CodexBar laden</a>
+          <a class="text-link" href="#setup">Setup ansehen</a>
+        </div>
+        <div class="meta-strip" aria-label="Kurzinfos">
+          <div class="meta">
+            <strong>macOS 13+</strong>
+            <span>Apple Silicon</span>
+          </div>
+          <div class="meta">
+            <strong>USB Serial</strong>
+            <span>kein ESP32-WiFi</span>
+          </div>
+          <div class="meta">
+            <strong>FW v2.11.4</strong>
+            <span>App v1.17.1</span>
+          </div>
+        </div>
       </div>
-      <p class="subtitle">Claude, Codex und Antigravity auf dem Schreibtisch im Blick</p>
-    </div>
 
-    <div class="unsupported" id="unsupported">
-      Dein Browser unterstützt Web Serial nicht. Bitte verwende <strong>Google Chrome</strong> oder <strong>Microsoft Edge</strong> auf einem Desktop-Computer.
-    </div>
-
-    <div class="card">
-      <h2>Was ist das?</h2>
-      <p>Ein kompaktes Desk-Display, das deine AI-Nutzungslimits aus <a href="https://codexbar.app/" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">CodexBar</a> anzeigt. Claude, Codex und Antigravity laufen lokal über die Mac App zum ESP32 &mdash; per USB verbunden, ohne WiFi auf dem Display.</p>
-      <ul class="features">
-        <li>Claude-, Codex- und Antigravity-Ansichten</li>
-        <li>Session-, Wochen- und Modelllimits mit Fortschritt</li>
-        <li>Live Reset-Countdown</li>
-        <li>Used- oder Remaining-Prozentmodus</li>
-        <li>Optionales Kosten-/Extra-Usage-Tracking</li>
-        <li>Automatische USB-Erkennung</li>
-        <li>Portrait, Landscape, Theme, Sprache und Helligkeit pro Gerät</li>
-      </ul>
-    </div>
-
-    <div class="card">
-      <h2>Was du brauchst</h2>
-      <ol class="steps">
-        <li><a href="https://de.aliexpress.com/item/1005007731775734.html" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">ESP32-2432S028 / ESP32-2432S028R Board</a> (~8&thinsp;$, &bdquo;Cheap Yellow Display&ldquo;)</li>
-        <li>USB-Datenkabel (kein reines Ladekabel)</li>
-        <li>Mac mit macOS 13+ auf Apple Silicon</li>
-        <li><a href="https://codexbar.app/" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">CodexBar</a> installiert und mindestens ein Provider dort eingerichtet</li>
-        <li>AI Monitor Mac App aus den GitHub Releases</li>
-      </ol>
-    </div>
-
-    <div class="card">
-      <h2>Setup in 4 Schritten</h2>
-      <ol class="steps">
-        <li><strong>CodexBar</strong> installieren: <a href="https://github.com/steipete/CodexBar" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">Repo</a> · <a href="https://github.com/steipete/CodexBar/releases/latest" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">Download</a></li>
-        <li>Passende Firmware unten flashen (ILI9341 oder ST7789)</li>
-        <li><strong>AI Monitor Mac App</strong> herunterladen (via <a href="https://github.com/tobymarks/esp32-ai-monitor/releases" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">GitHub Releases</a>)</li>
-        <li>ESP32 per USB an den Mac anschließen und Provider wählen</li>
-      </ol>
-      <div class="info-box">
-        <strong>So funktioniert es:</strong> CodexBar schreibt lokal eine Usage-Snapshot-Datei. Die AI Monitor Mac App liest diesen Snapshot, wendet deine Display-Einstellungen an und sendet die Daten per USB-Serial an das Display. Mehr dazu: <a href="https://codexbar.app/" target="_blank" rel="noopener" style="color:var(--accent-foreground);font-weight:600;">codexbar.app</a>.
+      <div class="hero-visual" aria-label="AI Monitor Display und Mac App">
+        <div class="desk">
+          <div class="display-device">
+            <div class="display-screen">
+              <div class="screen-top">
+                <span>14:38</span>
+                <span>remaining</span>
+              </div>
+              <div class="provider"><span class="provider-dot"></span>CODEX</div>
+              <div class="usage-row">
+                <header><span>Session</span><span>42%</span></header>
+                <div class="bar"><span style="width:42%"></span></div>
+              </div>
+              <div class="usage-row">
+                <header><span>Weekly</span><span>71%</span></header>
+                <div class="bar"><span style="width:71%"></span></div>
+              </div>
+              <div class="usage-row">
+                <header><span>Claude</span><span>18%</span></header>
+                <div class="bar orange"><span style="width:18%"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="mac-card" aria-label="AI Monitor Mac App Status">
+          <div class="window-dots"><span></span><span></span><span></span></div>
+          <div class="app-line"><strong>CodexBar</strong><span class="status-pill">verbunden</span></div>
+          <div class="app-line"><strong>ESP32 Display</strong><span class="status-pill">USB</span></div>
+          <div class="app-line"><strong>Board</strong><span>ST7789</span></div>
+          <div class="app-line"><strong>Provider</strong><span>Codex</span></div>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <div class="card install-section">
-      <h2 style="margin-bottom:1rem;">Firmware flashen</h2>
-      <div style="display:flex;flex-direction:column;gap:0.75rem;align-items:center;">
-        <esp-web-install-button manifest="manifest.json">
-          <button slot="activate">Firmware installieren (ILI9341 / R-Board)</button>
-        </esp-web-install-button>
-        <esp-web-install-button manifest="manifest-st7789.json">
-          <button slot="activate">Firmware installieren (ST7789 / Hybrid-Board)</button>
-        </esp-web-install-button>
+    <section class="shell section" id="setup">
+      <div class="section-header">
+        <p class="eyebrow">Einmal einrichten, danach läuft es nebenbei</p>
+        <h2>Die App ist jetzt der Mittelpunkt.</h2>
+        <p>Die Webseite muss nicht mehr direkt flashen. Die Mac App erkennt das Display, lädt die passende Firmware aus GitHub Releases und schreibt die Daten von CodexBar per USB auf das Board.</p>
       </div>
-      <p class="browser-note">Erfordert Chrome oder Edge mit Web Serial. Aktuelle Firmware: v2.11.4</p>
-      <p class="browser-note" style="margin-top:0.5rem;">Wenn dein Display nach dem Flashen komplett weiß bleibt, war meist die falsche Panel-Variante gewählt.</p>
-    </div>
+      <div class="flow" aria-label="Setup Schritte">
+        <article class="flow-step">
+          <div>
+            <span class="num">01</span>
+            <h3>CodexBar installieren</h3>
+            <p>CodexBar meldet dich bei Claude, Codex oder Antigravity an und schreibt die lokale Usage-Datei.</p>
+          </div>
+          <div class="flow-icon" aria-hidden="true">CB</div>
+        </article>
+        <article class="flow-step">
+          <div>
+            <span class="num">02</span>
+            <h3>AI Monitor App laden</h3>
+            <p>Die App liest CodexBar, erkennt das Display und merkt sich Einstellungen pro Gerät.</p>
+          </div>
+          <div class="flow-icon" aria-hidden="true">Mac</div>
+        </article>
+        <article class="flow-step">
+          <div>
+            <span class="num">03</span>
+            <h3>Display verbinden</h3>
+            <p>ESP32 per USB-Datenkabel anschließen. Kein WLAN, keine Provider-Credentials auf dem Board.</p>
+          </div>
+          <div class="flow-icon" aria-hidden="true">USB</div>
+        </article>
+        <article class="flow-step">
+          <div>
+            <span class="num">04</span>
+            <h3>Firmware in der App flashen</h3>
+            <p>ILI9341 oder ST7789 auswählen, flashen, Provider wählen, fertig.</p>
+          </div>
+          <div class="flow-icon" aria-hidden="true">FW</div>
+        </article>
+      </div>
+    </section>
 
-    <div class="card">
-      <h2>Troubleshooting</h2>
-      <dl class="troubleshooting">
-        <dt>Kein Port sichtbar?</dt>
-        <dd>Stelle sicher, dass du ein USB-Datenkabel verwendest (nicht nur Ladekabel). Installiere ggf. den <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">CP2102-Treiber</a> oder <a href="https://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank" rel="noopener">CH340-Treiber</a>.</dd>
+    <section class="shell section split" id="download">
+      <aside class="download-panel">
+        <p class="eyebrow">Downloads</p>
+        <h2>Alles startet auf dem Mac.</h2>
+        <p>Lade zuerst CodexBar und danach AI Monitor. Firmware-Updates, Board-Variante, Helligkeit, Sprache und Provider steuerst du anschließend in der AI Monitor App.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.17.1/AIMonitor.dmg">AIMonitor.dmg</a>
+          <a class="button secondary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/app-v1.17.1" target="_blank" rel="noopener">App Release</a>
+        </div>
+      </aside>
 
-        <dt>Flash schlägt fehl?</dt>
-        <dd>Drücke den Reset-Button auf dem Board und versuche es erneut. Stelle sicher, dass keine andere Anwendung (Arduino IDE, PlatformIO, AI Monitor App) den Port belegt.</dd>
+      <div class="download-list">
+        <article class="plain-card">
+          <h3>1. CodexBar</h3>
+          <p>Pflicht-Datenquelle für Claude, Codex und Antigravity. AI Monitor spricht nicht direkt mit den Providern, sondern liest den lokalen CodexBar-Snapshot.</p>
+          <div class="tag-list">
+            <a class="tag" href="https://codexbar.app/" target="_blank" rel="noopener">codexbar.app</a>
+            <a class="tag" href="https://github.com/steipete/CodexBar" target="_blank" rel="noopener">Repository</a>
+            <a class="tag" href="https://github.com/steipete/CodexBar/releases/latest" target="_blank" rel="noopener">Download</a>
+          </div>
+        </article>
+        <article class="plain-card">
+          <h3>2. AI Monitor App</h3>
+          <p>Menüleisten-App für macOS. Sie erkennt USB-Displays, schickt Live-Daten, flasht Firmware und verwaltet Einstellungen pro Gerät.</p>
+          <div class="tag-list">
+            <span class="tag">macOS 13+</span>
+            <span class="tag">Apple Silicon</span>
+            <span class="tag">App v1.17.1</span>
+          </div>
+        </article>
+        <article class="plain-card">
+          <h3>3. Firmware</h3>
+          <p>Die Firmware liegt weiter in GitHub Releases. Der normale Weg ist aber die App, weil sie das richtige Release lädt und die Board-Variante pro Gerät merkt.</p>
+          <div class="tag-list">
+            <a class="tag" href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/v2.11.4" target="_blank" rel="noopener">Firmware v2.11.4</a>
+            <span class="tag">ILI9341</span>
+            <span class="tag">ST7789</span>
+          </div>
+        </article>
+      </div>
+    </section>
 
-        <dt>Display bleibt schwarz oder komplett weiß nach dem Flashen?</dt>
-        <dd>Trenne das USB-Kabel kurz und starte neu. Falls das Display weiter weiß bleibt, flash bitte die andere Panel-Variante (ILI9341 vs. ST7789).</dd>
+    <section class="shell section" id="hardware">
+      <div class="section-header">
+        <p class="eyebrow">Hardware</p>
+        <h2>Ein günstiges CYD reicht.</h2>
+        <p>Unterstützt werden beide gängigen ESP32-2432S028-Varianten. Wenn die Anzeige nach einem Flash weiß bleibt oder verdreht wirkt, war meist die andere Panel-Variante richtig.</p>
+      </div>
 
-        <dt>Mac App erkennt das Display nicht?</dt>
-        <dd>Prüfe, ob der USB-Treiber (CP2102 oder CH340) installiert ist. Unter <code style="font-family:var(--font-mono);font-size:0.8rem;background:rgba(59,130,246,0.1);padding:0.1rem 0.35rem;border-radius:4px;">ls /dev/tty.usb*</code> sollte ein Gerät erscheinen.</dd>
-      </dl>
-    </div>
+      <div class="hardware-grid">
+        <article class="board-card">
+          <div class="board-visual" aria-hidden="true"></div>
+          <div class="board-copy">
+            <h3>ESP32-2432S028 / ESP32-2432S028R</h3>
+            <p>2.8-Zoll-TFT, Touch, ESP32-WROOM-32 und USB-Serial. Die App unterscheidet ILI9341- und ST7789-Displays beim Firmware-Flash.</p>
+            <div class="tag-list">
+              <span class="tag">R-Board: ILI9341</span>
+              <span class="tag">Non-R: ST7789</span>
+              <span class="tag">Backlight GPIO 21</span>
+            </div>
+          </div>
+        </article>
 
-    <div class="card">
-      <h2>Gehäuse</h2>
-      <p>3D-druckbare Gehäuse für den CYD auf MakerWorld:</p>
-      <div style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.5rem;">
-        <a href="https://makerworld.com/de/models/1382304-aura-smart-weather-forecast-display?from=search#profileId-1430975" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:0.4rem;color:var(--primary);font-size:0.875rem;font-weight:500;text-decoration:none;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          Vertikal: Aura Display-Gehäuse
+        <div class="support-stack">
+          <article class="plain-card">
+            <h3>Was du brauchst</h3>
+            <ul>
+              <li>ESP32-2432S028 oder ESP32-2432S028R</li>
+              <li>USB-Datenkabel, kein reines Ladekabel</li>
+              <li>Mac mit macOS 13 oder neuer</li>
+              <li>CodexBar mit mindestens einem eingerichteten Provider</li>
+            </ul>
+          </article>
+          <article class="plain-card">
+            <h3>Gute Gehäuse</h3>
+            <p>Die CYD-Boards passen in mehrere 3D-Druck-Gehäuse. Zwei brauchbare Ausgangspunkte liegen bei MakerWorld.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="shell section">
+      <div class="section-header">
+        <p class="eyebrow">Gehause</p>
+        <h2>Schreibtisch statt Breadboard.</h2>
+      </div>
+      <div class="case-links">
+        <a class="case-link" href="https://makerworld.com/de/models/1382304-aura-smart-weather-forecast-display?from=search#profileId-1430975" target="_blank" rel="noopener">
+          <span>Vertikal</span>
+          <strong>Aura Display-Gehäuse</strong>
         </a>
-        <a href="https://makerworld.com/de/models/609280-desk-stand-for-xtouch-with-esp32-cyd-jc2432w328?from=search#profileId-532299" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:0.4rem;color:var(--primary);font-size:0.875rem;font-weight:500;text-decoration:none;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          Horizontal: Desk Stand für CYD
+        <a class="case-link" href="https://makerworld.com/de/models/609280-desk-stand-for-xtouch-with-esp32-cyd-jc2432w328?from=search#profileId-532299" target="_blank" rel="noopener">
+          <span>Horizontal</span>
+          <strong>Desk Stand für ESP32 CYD</strong>
         </a>
       </div>
-    </div>
-  </div>
+    </section>
+
+    <section class="shell section split" id="hilfe">
+      <div class="section-header">
+        <p class="eyebrow">Hilfe</p>
+        <h2>Wenn etwas nicht sofort auftaucht.</h2>
+        <p>Die häufigsten Probleme liegen bei Kabel, USB-Treiber oder der falschen Display-Variante. Die App führt durch den Flash-Prozess, aber diese Checks helfen beim Einordnen.</p>
+      </div>
+      <div class="support-stack">
+        <details open>
+          <summary>Die App sieht keinen Port</summary>
+          <p>Prüfe zuerst das USB-Kabel. Viele Kabel laden nur. Bei CH340-Boards kann der <a href="https://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank" rel="noopener">CH340-Treiber</a> helfen, bei CP2102-Boards der <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">Silicon-Labs-Treiber</a>.</p>
+        </details>
+        <details>
+          <summary>Display bleibt weiß oder zeigt falsche Farben</summary>
+          <p>Dann wurde sehr wahrscheinlich die falsche Firmware-Variante geflasht. In der App beim Firmware-Flash zwischen ILI9341 und ST7789 wechseln.</p>
+        </details>
+        <details>
+          <summary>CodexBar-Daten fehlen</summary>
+          <p>CodexBar muss laufen und für den gewählten Provider Daten schreiben. In AI Monitor kannst du Claude, Codex oder Antigravity danach als Anzeigequelle wählen.</p>
+        </details>
+        <details>
+          <summary>Manueller Firmware-Download</summary>
+          <p>Die aktuellen Firmware-Binaries liegen im Release <a href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/v2.11.4" target="_blank" rel="noopener">v2.11.4</a>. Der normale Weg bleibt der Flash aus der Mac App.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="final-cta">
+      <div class="shell">
+        <div>
+          <h2>Bereit für ein ruhiges Limit-Display?</h2>
+          <p>Installiere CodexBar, lade AI Monitor und stecke das ESP32-Display an. Danach bleibt die Nutzung sichtbar, ohne dass ein Browserfenster offen sein muss.</p>
+        </div>
+        <a class="button primary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.17.1/AIMonitor.dmg">Mac App laden</a>
+      </div>
+    </section>
+  </main>
 
   <footer>
-    <span id="version-tag">Firmware v2.11.4 · App v1.17.1</span> &middot;
-    <a href="https://github.com/tobymarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a> &middot;
-    <a href="https://www.flaticon.com/free-icons/chatbot" title="chatbot icons" target="_blank" rel="noopener">Chatbot icons created by LAFS - Flaticon</a>
+    <div class="shell footer-row">
+      <span>AI Monitor · Firmware v2.11.4 · App v1.17.1</span>
+      <span>
+        <a href="https://github.com/tobymarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a>
+        &nbsp;/&nbsp;
+        <a href="https://codexbar.app/" target="_blank" rel="noopener">CodexBar</a>
+        &nbsp;/&nbsp;
+        <a href="https://www.flaticon.com/free-icons/chatbot" title="chatbot icons" target="_blank" rel="noopener">Icon attribution</a>
+      </span>
+    </div>
   </footer>
-
-  <script>
-    // Web Serial check
-    if (!('serial' in navigator)) {
-      document.getElementById('unsupported').style.display = 'block';
-    }
-
-    // Theme toggle with localStorage persistence
-    const toggle = document.getElementById('themeToggle');
-    const html = document.documentElement;
-
-    function setTheme(dark) {
-      html.classList.toggle('dark', dark);
-      localStorage.setItem('theme', dark ? 'dark' : 'light');
-    }
-
-    // Init: check saved preference or system preference
-    const saved = localStorage.getItem('theme');
-    if (saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      setTheme(true);
-    }
-
-    toggle.addEventListener('click', () => {
-      setTheme(!html.classList.contains('dark'));
-    });
-  </script>
 </body>
 </html>

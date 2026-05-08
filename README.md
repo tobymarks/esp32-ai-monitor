@@ -31,10 +31,10 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 ## Quick Start
 
 1. **Buy** an [ESP32-2432S028 / ESP32-2432S028R board](https://de.aliexpress.com/item/1005007731775734.html), also known as a Cheap Yellow Display.
-2. **Flash** the firmware via the [Web Installer](https://tobymarks.github.io/esp32-ai-monitor/) or PlatformIO.
-3. **Install and run [CodexBar](https://codexbar.app/)** so it can write the local usage snapshot.
-4. **Download** the AI Monitor Mac app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases).
-5. **Plug** the ESP32 into your Mac via a USB data cable and choose the provider in the AI Monitor settings window.
+2. **Install and run [CodexBar](https://codexbar.app/)** so it can write the local usage snapshot.
+3. **Download** the AI Monitor Mac app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases).
+4. **Plug** the ESP32 into your Mac via a USB data cable.
+5. **Flash** the right firmware variant and choose the provider in the AI Monitor settings window.
 
 ## Requirements
 
@@ -43,7 +43,7 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 - Claude, Codex, or Antigravity access in CodexBar
 - ESP32-2432S028 / ESP32-2432S028R CYD board
 - USB data cable, not a charge-only cable
-- Chrome or Edge for the browser-based firmware installer
+- Optional: PlatformIO if you want to build or flash the firmware manually
 
 ## CodexBar Dependency
 
@@ -72,7 +72,7 @@ Common hardware:
 - **MCU:** ESP32-WROOM-32
 - **Backlight:** GPIO 21
 
-If the display stays white or shows noise after flashing, flash the other panel variant from the installer.
+If the display stays white or shows noise after flashing, flash the other panel variant from the AI Monitor app.
 
 ## Enclosures
 
@@ -129,7 +129,7 @@ The supported Mac app source lives in `companion/` and is built with Swift, AppK
 | ESP32 Firmware | PlatformIO, Arduino-ESP32, TFT_eSPI, LVGL v9, ArduinoJson |
 | Mac App | Swift, AppKit, POSIX serial, GitHub Releases API |
 | Data Source | CodexBar `widget-snapshot.json` |
-| Installer | GitHub Pages, ESP Web Tools |
+| Website | GitHub Pages |
 
 ## Attribution
 
