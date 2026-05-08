@@ -1,44 +1,65 @@
 # AI Monitor
 
-A Mac menubar app + ESP32 desk display that shows your Claude Pro/Max subscription usage limits in real-time. Session limits, weekly limits, and cost tracking -- always visible on your desk.
+A macOS background app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads the local CodexBar usage snapshot for Claude, Codex, or Antigravity, then streams the current limits to a small USB-connected CYD display.
+
+No WiFi on the ESP32, no display-side cloud credentials, no browser tab to keep open.
 
 ## How It Works
 
-The **AI Monitor** Mac menubar app reads your Claude OAuth token from the macOS Keychain (Claude Code credentials), polls `api.anthropic.com/api/oauth/usage` every 60 seconds, and sends the data via USB serial to the ESP32. The ESP32 with its 2.8" color display renders the dashboard. No WiFi needed -- just USB.
+CodexBar collects the provider usage data and writes a local `widget-snapshot.json`. The **AI Monitor** Mac app watches that file, applies your selected provider and display settings, and sends a compact JSON frame over USB serial to the ESP32. The ESP32 renders the dashboard on the 2.8" color display.
 
+```text
+AI providers -> CodexBar snapshot -> AI Monitor.app -> USB serial -> ESP32 CYD display
 ```
-Claude API  -->  Mac Menubar App  --USB-->  ESP32 CYD Display
-```
+
+The Mac app can also flash firmware, check GitHub Releases for app and firmware updates, and remember per-device display settings.
 
 ## Features
 
-- Session limit (5h window) with progress bar and reset countdown
-- Weekly limit with progress bar and reset countdown
-- Extra usage / cost tracking ($used / $limit)
-- Splash screen with spinner while waiting for data
-- 1-minute polling, aligned to full minutes
-- Automatic USB detection and instant data on connect
-- Rate limit handling with exponential backoff
-- Portrait and landscape display orientation
+- Claude, Codex, and Antigravity provider views
+- Session, weekly, and third usage rows where available
+- Antigravity model rows for Claude, Gemini Pro, and Gemini Flash
+- Used or remaining percentage display mode
+- Live reset countdowns and local display clock
+- Optional cost/extra-usage support when supplied by the provider data
+- Automatic USB serial detection and instant resend on connect
+- Per-device settings for orientation, theme, language, brightness, timezone, and board variant
+- Portrait plus left/right landscape layouts
+- Firmware flashing for ILI9341 and ST7789 CYD variants
+- Optional menu bar quick menu for provider switching
 
 ## Quick Start
 
-1. **Buy** the ESP32-2432S028R board (~$8 on [AliExpress](https://de.aliexpress.com/item/1005007731775734.html))
-2. **Flash** firmware via the [Web Installer](https://tobymarks.github.io/esp32-ai-monitor/) or PlatformIO
-3. **Download** the AI Monitor Mac app
-4. **Plug** the ESP32 into your Mac via USB -- done!
+1. **Buy** an [ESP32-2432S028 / ESP32-2432S028R board](https://de.aliexpress.com/item/1005007731775734.html), also known as a Cheap Yellow Display.
+2. **Flash** the firmware via the [Web Installer](https://tobymarks.github.io/esp32-ai-monitor/) or PlatformIO.
+3. **Install and run CodexBar** so it can write the local usage snapshot.
+4. **Download** the AI Monitor Mac app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases).
+5. **Plug** the ESP32 into your Mac via a USB data cable and choose the provider in the AI Monitor settings window.
 
 ## Requirements
 
-- macOS 13+ (Apple Silicon)
-- Claude Pro or Max subscription
-- Claude Code CLI installed (provides the OAuth token in Keychain)
+- macOS 13+ on Apple Silicon
+- CodexBar installed and writing `widget-snapshot.json`
+- Claude, Codex, or Antigravity access in CodexBar
+- ESP32-2432S028 / ESP32-2432S028R CYD board
+- USB data cable, not a charge-only cable
+- Chrome or Edge for the browser-based firmware installer
 
 ## Hardware
 
-- **Board:** [ESP32-2432S028R](https://de.aliexpress.com/item/1005007731775734.html) (Cheap Yellow Display, ~$8)
-- **Display:** 2.8" ILI9341 (320x240, SPI)
+Supported board family:
+
+- **ESP32-2432S028R / R board:** ILI9341 display controller
+- **ESP32-2432S028 / Hybrid board:** ST7789 display controller
+
+Common hardware:
+
+- **Display:** 2.8" 320x240 TFT
+- **Touch:** XPT2046
 - **MCU:** ESP32-WROOM-32
+- **Backlight:** GPIO 21
+
+If the display stays white or shows noise after flashing, flash the other panel variant from the installer.
 
 ## Enclosures
 
@@ -53,32 +74,49 @@ Claude API  -->  Mac Menubar App  --USB-->  ESP32 CYD Display
 
 ```bash
 # Install PlatformIO, then:
-pio run -t upload
+pio run
+pio run -e esp32dev -t upload
 pio device monitor
 ```
 
-### Installer Binary
+Firmware targets:
+
+- `esp32dev`: ILI9341 / R-board build
+- `esp32dev-st7789`: ST7789 / Hybrid-board build
+
+### Installer Binaries
 
 ```bash
 ./scripts/build_firmware.sh
 ```
 
-Merges all partitions into `installer/bin/ai-monitor.bin` and updates the manifest version. Requires PlatformIO CLI and esptool.py (`pip install esptool`).
+This merges the bootloader, partitions, app image, and boot app into browser-flashable binaries under `installer/bin/`, then updates the installer manifests. It requires PlatformIO CLI and `esptool.py`.
 
 ### Mac Companion App
 
-The companion app is in `companion-v2/` and built with Swift (AppKit, Keychain Services, POSIX serial).
+```bash
+cd companion-v2
+./build.sh
+```
+
+The current Mac app lives in `companion-v2/` and is built with Swift, AppKit, POSIX serial I/O, and GitHub Releases update checks. The older `companion/` app is kept only as historical reference.
+
+## Release Flow
+
+- Firmware releases use tags like `v2.11.3`.
+- Mac app releases use tags like `app-v1.17.1`.
+- Pushes to `main` that touch firmware or installer files build and deploy the GitHub Pages installer.
+- Firmware tags build release assets for both ILI9341 and ST7789 variants.
+- App tags build `AIMonitor.zip` and `AIMonitor.dmg` via the macOS workflow.
 
 ## Tech Stack
 
 | Component | Stack |
 |-----------|-------|
-| ESP32 | PlatformIO, TFT_eSPI, LVGL v9, ArduinoJson |
-| Mac App | Swift, AppKit, Keychain Services, POSIX serial |
-
-## CI/CD
-
-Push to `main` with changes in `src/` or `platformio.ini` triggers a GitHub Actions workflow that builds the firmware and deploys the installer to GitHub Pages automatically.
+| ESP32 Firmware | PlatformIO, Arduino-ESP32, TFT_eSPI, LVGL v9, ArduinoJson |
+| Mac App | Swift, AppKit, POSIX serial, GitHub Releases API |
+| Data Source | CodexBar `widget-snapshot.json` |
+| Installer | GitHub Pages, ESP Web Tools |
 
 ## Attribution
 

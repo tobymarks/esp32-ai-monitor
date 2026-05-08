@@ -426,7 +426,7 @@
         </div>
         <h1>AI Monitor</h1>
       </div>
-      <p class="subtitle">Dein Claude-Nutzungslimits immer im Blick</p>
+      <p class="subtitle">Claude, Codex und Antigravity auf dem Schreibtisch im Blick</p>
     </div>
 
     <div class="unsupported" id="unsupported">
@@ -435,37 +435,38 @@
 
     <div class="card">
       <h2>Was ist das?</h2>
-      <p>Ein kompaktes Desk-Display, das deine Claude Pro/Max Nutzungslimits in Echtzeit anzeigt. Session-Limits (5h), Wochenlimits und Kosten-Tracking &mdash; per USB mit deinem Mac verbunden, kein WiFi nötig.</p>
+      <p>Ein kompaktes Desk-Display, das deine AI-Nutzungslimits aus CodexBar anzeigt. Claude, Codex und Antigravity laufen lokal über die Mac App zum ESP32 &mdash; per USB verbunden, ohne WiFi auf dem Display.</p>
       <ul class="features">
-        <li>Session- und Wochenlimits mit Fortschrittsbalken</li>
+        <li>Claude-, Codex- und Antigravity-Ansichten</li>
+        <li>Session-, Wochen- und Modelllimits mit Fortschritt</li>
         <li>Live Reset-Countdown</li>
-        <li>Kosten-Tracking ($used / $limit)</li>
-        <li>1-Minuten-Polling, immer aktuell</li>
+        <li>Used- oder Remaining-Prozentmodus</li>
+        <li>Optionales Kosten-/Extra-Usage-Tracking</li>
         <li>Automatische USB-Erkennung</li>
-        <li>Portrait- und Landscape-Modus</li>
+        <li>Portrait, Landscape, Theme, Sprache und Helligkeit pro Gerät</li>
       </ul>
     </div>
 
     <div class="card">
       <h2>Was du brauchst</h2>
       <ol class="steps">
-        <li><a href="https://de.aliexpress.com/item/1005007731775734.html" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">ESP32-2432S028R Board</a> (~8&thinsp;$, &bdquo;Cheap Yellow Display&ldquo;)</li>
+        <li><a href="https://de.aliexpress.com/item/1005007731775734.html" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">ESP32-2432S028 / ESP32-2432S028R Board</a> (~8&thinsp;$, &bdquo;Cheap Yellow Display&ldquo;)</li>
         <li>USB-Datenkabel (kein reines Ladekabel)</li>
-        <li>Mac mit macOS 13+ (Apple Silicon)</li>
-        <li>Claude Pro oder Max Abo</li>
-        <li>Claude Code CLI installiert</li>
+        <li>Mac mit macOS 13+ auf Apple Silicon</li>
+        <li>CodexBar installiert und mindestens ein Provider dort eingerichtet</li>
+        <li>AI Monitor Mac App aus den GitHub Releases</li>
       </ol>
     </div>
 
     <div class="card">
       <h2>Setup in 3 Schritten</h2>
       <ol class="steps">
-        <li>Firmware unten flashen (oder via PlatformIO)</li>
+        <li>Passende Firmware unten flashen (ILI9341 oder ST7789)</li>
         <li><strong>AI Monitor Mac App</strong> herunterladen (via <a href="https://github.com/tobymarks/esp32-ai-monitor/releases" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">GitHub Releases</a>)</li>
-        <li>ESP32 per USB an den Mac anschließen &mdash; fertig!</li>
+        <li>ESP32 per USB an den Mac anschließen und Provider wählen</li>
       </ol>
       <div class="info-box">
-        <strong>So funktioniert es:</strong> Die Mac App liest deine Claude-Limits über die CLI aus und sendet die Daten per USB-Serial an das Display. Kein WiFi, kein Cloud-Dienst &mdash; alles lokal.
+        <strong>So funktioniert es:</strong> CodexBar schreibt lokal eine Usage-Snapshot-Datei. Die AI Monitor Mac App liest diesen Snapshot, wendet deine Display-Einstellungen an und sendet die Daten per USB-Serial an das Display.
       </div>
     </div>
 
@@ -479,7 +480,7 @@
           <button slot="activate">Firmware installieren (ST7789 / Hybrid-Board)</button>
         </esp-web-install-button>
       </div>
-      <p class="browser-note">Erfordert Chrome oder Edge mit Web Serial</p>
+      <p class="browser-note">Erfordert Chrome oder Edge mit Web Serial. Aktuelle Firmware: v2.11.3</p>
       <p class="browser-note" style="margin-top:0.5rem;">Wenn dein Display nach dem Flashen komplett weiß bleibt, war meist die falsche Panel-Variante gewählt.</p>
     </div>
 
@@ -517,7 +518,7 @@
   </div>
 
   <footer>
-    <span id="version-tag">v2.0.0</span> &middot;
+    <span id="version-tag">Firmware v2.11.3 · App v1.17.1</span> &middot;
     <a href="https://github.com/tobymarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a> &middot;
     <a href="https://www.flaticon.com/free-icons/chatbot" title="chatbot icons" target="_blank" rel="noopener">Chatbot icons created by LAFS - Flaticon</a>
   </footer>
