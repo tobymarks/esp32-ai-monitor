@@ -9,4 +9,4 @@
 installer/bin/*.bin
 
 # Mac companion app build output
-companion-v2/build/
+companion/build/

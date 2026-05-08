@@ -32,18 +32,31 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 
 1. **Buy** an [ESP32-2432S028 / ESP32-2432S028R board](https://de.aliexpress.com/item/1005007731775734.html), also known as a Cheap Yellow Display.
 2. **Flash** the firmware via the [Web Installer](https://tobymarks.github.io/esp32-ai-monitor/) or PlatformIO.
-3. **Install and run CodexBar** so it can write the local usage snapshot.
+3. **Install and run [CodexBar](https://codexbar.app/)** so it can write the local usage snapshot.
 4. **Download** the AI Monitor Mac app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases).
 5. **Plug** the ESP32 into your Mac via a USB data cable and choose the provider in the AI Monitor settings window.
 
 ## Requirements
 
 - macOS 13+ on Apple Silicon
-- CodexBar installed and writing `widget-snapshot.json`
+- [CodexBar](https://codexbar.app/) installed and writing `widget-snapshot.json`
 - Claude, Codex, or Antigravity access in CodexBar
 - ESP32-2432S028 / ESP32-2432S028R CYD board
 - USB data cable, not a charge-only cable
 - Chrome or Edge for the browser-based firmware installer
+
+## CodexBar Dependency
+
+AI Monitor does not talk to Claude, Codex, or Antigravity directly. CodexBar is the required local data source: it signs in to your providers, tracks usage limits, and writes the snapshot that AI Monitor sends to the desk display.
+
+Install CodexBar first:
+
+- Website: [codexbar.app](https://codexbar.app/)
+- Repository: [steipete/CodexBar](https://github.com/steipete/CodexBar)
+- Latest download: [CodexBar GitHub Releases](https://github.com/steipete/CodexBar/releases/latest)
+- Homebrew: `brew install --cask steipete/tap/codexbar`
+
+After CodexBar is running, enable the providers you want there. AI Monitor will then offer Claude, Codex, and Antigravity as display sources.
 
 ## Hardware
 
@@ -95,11 +108,11 @@ This merges the bootloader, partitions, app image, and boot app into browser-fla
 ### Mac Companion App
 
 ```bash
-cd companion-v2
+cd companion
 ./build.sh
 ```
 
-The current Mac app lives in `companion-v2/` and is built with Swift, AppKit, POSIX serial I/O, and GitHub Releases update checks. The older `companion/` app is kept only as historical reference.
+The supported Mac app source lives in `companion/` and is built with Swift, AppKit, POSIX serial I/O, and GitHub Releases update checks.
 
 ## Release Flow
 

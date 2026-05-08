@@ -15,7 +15,7 @@
             TEMPLATE: Neuen <item> Block fuer jedes Release hinzufuegen.
 
             Workflow (manuell):
-            1. App bauen: cd companion-v2 && ./build.sh
+            1. App bauen: cd companion && ./build.sh
             2. ZIP erstellen: cd build && zip -r AIMonitor.zip "AI Monitor.app"
             3. GitHub Release erstellen mit Tag "app-vX.Y.Z"
             4. AIMonitor.zip als Release-Asset hochladen

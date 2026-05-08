@@ -435,7 +435,7 @@
 
     <div class="card">
       <h2>Was ist das?</h2>
-      <p>Ein kompaktes Desk-Display, das deine AI-Nutzungslimits aus CodexBar anzeigt. Claude, Codex und Antigravity laufen lokal über die Mac App zum ESP32 &mdash; per USB verbunden, ohne WiFi auf dem Display.</p>
+      <p>Ein kompaktes Desk-Display, das deine AI-Nutzungslimits aus <a href="https://codexbar.app/" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">CodexBar</a> anzeigt. Claude, Codex und Antigravity laufen lokal über die Mac App zum ESP32 &mdash; per USB verbunden, ohne WiFi auf dem Display.</p>
       <ul class="features">
         <li>Claude-, Codex- und Antigravity-Ansichten</li>
         <li>Session-, Wochen- und Modelllimits mit Fortschritt</li>
@@ -453,20 +453,21 @@
         <li><a href="https://de.aliexpress.com/item/1005007731775734.html" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">ESP32-2432S028 / ESP32-2432S028R Board</a> (~8&thinsp;$, &bdquo;Cheap Yellow Display&ldquo;)</li>
         <li>USB-Datenkabel (kein reines Ladekabel)</li>
         <li>Mac mit macOS 13+ auf Apple Silicon</li>
-        <li>CodexBar installiert und mindestens ein Provider dort eingerichtet</li>
+        <li><a href="https://codexbar.app/" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">CodexBar</a> installiert und mindestens ein Provider dort eingerichtet</li>
         <li>AI Monitor Mac App aus den GitHub Releases</li>
       </ol>
     </div>
 
     <div class="card">
-      <h2>Setup in 3 Schritten</h2>
+      <h2>Setup in 4 Schritten</h2>
       <ol class="steps">
+        <li><strong>CodexBar</strong> installieren: <a href="https://github.com/steipete/CodexBar" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">Repo</a> · <a href="https://github.com/steipete/CodexBar/releases/latest" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">Download</a></li>
         <li>Passende Firmware unten flashen (ILI9341 oder ST7789)</li>
         <li><strong>AI Monitor Mac App</strong> herunterladen (via <a href="https://github.com/tobymarks/esp32-ai-monitor/releases" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">GitHub Releases</a>)</li>
         <li>ESP32 per USB an den Mac anschließen und Provider wählen</li>
       </ol>
       <div class="info-box">
-        <strong>So funktioniert es:</strong> CodexBar schreibt lokal eine Usage-Snapshot-Datei. Die AI Monitor Mac App liest diesen Snapshot, wendet deine Display-Einstellungen an und sendet die Daten per USB-Serial an das Display.
+        <strong>So funktioniert es:</strong> CodexBar schreibt lokal eine Usage-Snapshot-Datei. Die AI Monitor Mac App liest diesen Snapshot, wendet deine Display-Einstellungen an und sendet die Daten per USB-Serial an das Display. Mehr dazu: <a href="https://codexbar.app/" target="_blank" rel="noopener" style="color:var(--accent-foreground);font-weight:600;">codexbar.app</a>.
       </div>
     </div>
 

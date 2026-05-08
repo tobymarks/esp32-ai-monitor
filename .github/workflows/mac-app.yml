@@ -45,30 +45,30 @@ jobs:
           python3 -m platformio platform install espressif32 || true
 
       - name: Build AI Monitor.app (ad-hoc signing)
-        working-directory: companion-v2
+        working-directory: companion
         run: |
           # build.sh erzeugt /tmp/aimonitor-build/AI Monitor.app, kopiert nach
-          # companion-v2/build/ und baut ZIP + DMG. Signing ist ad-hoc (codesign
+          # companion/build/ und baut ZIP + DMG. Signing ist ad-hoc (codesign
           # --sign -), da Tobias einziger Nutzer ist und das Bundle vor dem
           # Start per xattr-Clean von der Quarantine befreit wird.
           ./build.sh
 
       - name: List build artifacts
-        working-directory: companion-v2
+        working-directory: companion
         run: ls -lah build/
 
       - name: Upload ZIP artifact
         uses: actions/upload-artifact@v4
         with:
           name: AIMonitor-zip
-          path: companion-v2/build/AIMonitor.zip
+          path: companion/build/AIMonitor.zip
           if-no-files-found: error
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
           name: AIMonitor-dmg
-          path: companion-v2/build/AIMonitor.dmg
+          path: companion/build/AIMonitor.dmg
           if-no-files-found: warn
 
       # Ab v1.13.0: Der CI-Build ist nur ad-hoc-signiert und würde manuell
@@ -94,6 +94,6 @@ jobs:
           fi
           echo "No existing assets — uploading CI build to $TAG."
           gh release upload "$TAG" \
-            companion-v2/build/AIMonitor.zip \
-            companion-v2/build/AIMonitor.dmg \
+            companion/build/AIMonitor.zip \
+            companion/build/AIMonitor.dmg \
             --clobber
