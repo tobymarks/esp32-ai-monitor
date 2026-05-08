@@ -20,6 +20,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // Header
     private var providerSegmented: NSSegmentedControl!
     private var appSettingsToggle: NSButton!
+    private var updateChannelPopup: NSPopUpButton!
 
     // Linke Spalte — CodexBar
     private var codexBarStatusDot: NSTextField!
@@ -261,9 +262,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildAppBox() -> NSView {
         let container = NSView()
 
-        let heading = makeSectionHeading("App")
+        let heading = makeSectionHeading("App & Updates")
         heading.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(heading)
+
+        updateChannelPopup = NSPopUpButton()
+        updateChannelPopup.addItems(withTitles: UpdateChannel.allCases.map(\.displayLabel))
+        updateChannelPopup.target = self
+        updateChannelPopup.action = #selector(updateChannelChosen)
+        updateChannelPopup.translatesAutoresizingMaskIntoConstraints = false
+        updateChannelPopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        let channelRow = twoColumnRow("Update-Kanal", updateChannelPopup)
+        channelRow.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(channelRow)
+
+        let channelHelper = NSTextField(labelWithString: "Stable nutzt veröffentlichte Releases. Beta zeigt zusätzlich Vorabversionen für App und Firmware.")
+        channelHelper.font = NSFont.systemFont(ofSize: 11)
+        channelHelper.textColor = .secondaryLabelColor
+        channelHelper.lineBreakMode = .byWordWrapping
+        channelHelper.maximumNumberOfLines = 2
+        channelHelper.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(channelHelper)
 
         appSettingsToggle = NSButton(checkboxWithTitle: "Menüleisten-Schnellmenü aktivieren",
                                      target: self,
@@ -284,8 +303,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             heading.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             heading.topAnchor.constraint(equalTo: container.topAnchor),
 
+            channelRow.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            channelRow.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
+
+            channelHelper.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            channelHelper.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            channelHelper.topAnchor.constraint(equalTo: channelRow.bottomAnchor, constant: 4),
+
             appSettingsToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            appSettingsToggle.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
+            appSettingsToggle.topAnchor.constraint(equalTo: channelHelper.bottomAnchor, constant: 8),
 
             helper.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             helper.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
@@ -790,6 +816,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if appSettingsToggle != nil {
             appSettingsToggle.state = Settings.shared.menuBarQuickMenuEnabled ? .on : .off
         }
+        if updateChannelPopup != nil {
+            updateChannelPopup.selectItem(at: Settings.shared.updateChannel == .beta ? 1 : 0)
+        }
 
         // CodexBar
         let src = monitor.codexBar
@@ -1018,7 +1047,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         updateDisplayControlsEnabled()
 
         // Footer-Version (falls kAppVersion sich in einem Hot-Reload mal aendert)
-        footerVersionLabel?.stringValue = "AI Monitor v\(kAppVersion)"
+        let channelSuffix = Settings.shared.updateChannel == .beta ? " · Beta-Kanal" : ""
+        footerVersionLabel?.stringValue = "AI Monitor v\(kAppVersion)\(channelSuffix)"
 
         refreshLiveLabels()
     }
@@ -1090,6 +1120,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func menuBarQuickMenuToggled() {
         Settings.shared.menuBarQuickMenuEnabled = (appSettingsToggle.state == .on)
+    }
+
+    @objc private func updateChannelChosen() {
+        Settings.shared.updateChannel = updateChannelPopup.indexOfSelectedItem == 1 ? .beta : .stable
+        update()
     }
 
     @objc private func reloadCodexBar() {
