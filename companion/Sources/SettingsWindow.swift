@@ -25,6 +25,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Header
     private var providerSegmented: NSSegmentedControl!
+    private var sectionSegmented: NSSegmentedControl!
+    private var contentContainer: NSView!
+    private var sectionViews: [NSView] = []
     private var appSettingsToggle: NSButton!
     private var updateChannelPopup: NSPopUpButton!
     private var setupStatusDot: NSTextField!
@@ -107,6 +110,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private var refreshTimer: Timer?
 
+    private enum SettingsSection: Int, CaseIterable {
+        case overview
+        case display
+        case connection
+        case updates
+        case diagnostics
+
+        var title: String {
+            switch self {
+            case .overview: return "Übersicht"
+            case .display: return "Display"
+            case .connection: return "Verbindung"
+            case .updates: return "Updates"
+            case .diagnostics: return "Diagnose"
+            }
+        }
+    }
+
     convenience init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 660),
@@ -154,17 +175,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildUI() {
         guard let content = window?.contentView else { return }
 
-        // Header (h=48) oben, Footer (h=28) unten, dazwischen zwei Spalten 50/50.
         let header = buildHeader()
         let headerDivider = makeHorizontalDivider()
+        let navigation = buildSectionNavigation()
         let footerDivider = makeHorizontalDivider()
         let footer = buildFooter()
-        let appBox = buildAppBox()
-        let leftColumn = buildLeftColumn()
-        let rightColumn = buildRightColumn()
-        let columnDivider = makeVerticalDivider()
+        contentContainer = NSView()
+        buildSectionPages(in: contentContainer)
 
-        [header, headerDivider, appBox, leftColumn, rightColumn, columnDivider, footerDivider, footer].forEach {
+        [header, headerDivider, navigation, contentContainer, footerDivider, footer].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview($0)
         }
@@ -184,10 +203,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             headerDivider.topAnchor.constraint(equalTo: header.bottomAnchor),
             headerDivider.heightAnchor.constraint(equalToConstant: 1),
 
-            appBox.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
-            appBox.trailingAnchor.constraint(lessThanOrEqualTo: rightGuide, constant: -20),
-            appBox.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 10),
-            appBox.widthAnchor.constraint(equalToConstant: 440),
+            navigation.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
+            navigation.trailingAnchor.constraint(lessThanOrEqualTo: rightGuide, constant: -20),
+            navigation.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 12),
+
+            contentContainer.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
+            contentContainer.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
+            contentContainer.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 16),
+            contentContainer.bottomAnchor.constraint(lessThanOrEqualTo: footerDivider.topAnchor, constant: -16),
 
             // Footer
             footerDivider.leadingAnchor.constraint(equalTo: leftGuide),
@@ -199,25 +222,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             footer.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
             footer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: 0),
             footer.heightAnchor.constraint(equalToConstant: 28),
-
-            // Linke Spalte
-            leftColumn.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
-            leftColumn.topAnchor.constraint(equalTo: appBox.bottomAnchor, constant: 10),
-            leftColumn.bottomAnchor.constraint(lessThanOrEqualTo: footerDivider.topAnchor, constant: -16),
-            leftColumn.widthAnchor.constraint(equalToConstant: 440),
-
-            // Vertikaler Divider zwischen den Spalten
-            columnDivider.centerXAnchor.constraint(equalTo: content.centerXAnchor),
-            columnDivider.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 12),
-            columnDivider.bottomAnchor.constraint(equalTo: footerDivider.topAnchor, constant: -12),
-            columnDivider.widthAnchor.constraint(equalToConstant: 1),
-
-            // Rechte Spalte
-            rightColumn.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
-            rightColumn.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 16),
-            rightColumn.bottomAnchor.constraint(lessThanOrEqualTo: footerDivider.topAnchor, constant: -16),
-            rightColumn.widthAnchor.constraint(equalToConstant: 440),
         ])
+        showSection(.overview)
     }
 
     // MARK: - Header
@@ -235,6 +241,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                                                target: self,
                                                action: #selector(providerChosen))
         providerSegmented.segmentStyle = .rounded
+        providerSegmented.toolTip = "Wählt, welche CodexBar-Daten auf dem Display angezeigt werden."
         providerSegmented.selectedSegment = CodexBarProvider
             .normalized(Settings.shared.selectedProvider)
             .segmentIndex
@@ -249,6 +256,60 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             providerSegmented.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
         return container
+    }
+
+    private func buildSectionNavigation() -> NSView {
+        let container = NSView()
+
+        sectionSegmented = NSSegmentedControl(labels: SettingsSection.allCases.map(\.title),
+                                              trackingMode: .selectOne,
+                                              target: self,
+                                              action: #selector(sectionChosen))
+        sectionSegmented.segmentStyle = .rounded
+        sectionSegmented.selectedSegment = SettingsSection.overview.rawValue
+        sectionSegmented.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(sectionSegmented)
+
+        NSLayoutConstraint.activate([
+            sectionSegmented.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            sectionSegmented.topAnchor.constraint(equalTo: container.topAnchor),
+            sectionSegmented.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
+    }
+
+    private func buildSectionPages(in container: NSView) {
+        sectionViews = [
+            buildOverviewPage(),
+            buildDisplayPage(),
+            buildConnectionPage(),
+            buildUpdatesPage(),
+            buildDiagnosticsPage()
+        ]
+
+        for view in sectionViews {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                view.topAnchor.constraint(equalTo: container.topAnchor),
+                view.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor),
+            ])
+        }
+    }
+
+    private func showSection(_ section: SettingsSection) {
+        for (index, view) in sectionViews.enumerated() {
+            view.isHidden = index != section.rawValue
+        }
+        sectionSegmented?.selectedSegment = section.rawValue
+    }
+
+    @objc private func sectionChosen() {
+        let index = sectionSegmented.selectedSegment
+        guard let section = SettingsSection(rawValue: index) else { return }
+        showSection(section)
     }
 
     // MARK: - Footer
@@ -266,6 +327,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // zum Update-Checker, weil unter .accessory kein macOS-App-Menue rendert.
         footerAboutButton = makeLinkButton("Über AI Monitor", action: #selector(showAbout))
         footerUpdateButton = makeLinkButton("Nach Updates suchen …", action: #selector(checkAppUpdate))
+        footerUpdateButton.toolTip = "Prüft App- und Firmware-Releases auf GitHub."
         container.addSubview(footerAboutButton)
         container.addSubview(footerUpdateButton)
 
@@ -284,37 +346,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - App
 
-    private func buildAppBox() -> NSView {
+    private func buildOverviewPage() -> NSView {
         let container = NSView()
 
-        let heading = makeSectionHeading("App & Updates")
+        let heading = makeSectionHeading("Übersicht")
         heading.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(heading)
 
-        updateChannelPopup = NSPopUpButton()
-        updateChannelPopup.addItems(withTitles: UpdateChannel.allCases.map(\.displayLabel))
-        updateChannelPopup.target = self
-        updateChannelPopup.action = #selector(updateChannelChosen)
-        updateChannelPopup.translatesAutoresizingMaskIntoConstraints = false
-        updateChannelPopup.widthAnchor.constraint(equalToConstant: 160).isActive = true
-        let channelRow = twoColumnRow("Update-Kanal", updateChannelPopup)
-        channelRow.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(channelRow)
-
-        let channelHelper = NSTextField(labelWithString: "Stable nutzt veröffentlichte Releases. Beta zeigt zusätzlich Vorabversionen für App und Firmware.")
-        channelHelper.font = NSFont.systemFont(ofSize: 11)
-        channelHelper.textColor = .secondaryLabelColor
-        channelHelper.lineBreakMode = .byWordWrapping
-        channelHelper.maximumNumberOfLines = 2
-        channelHelper.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(channelHelper)
-
         setupStatusDot = NSTextField(labelWithString: "\u{25CF}")
-        setupStatusDot.font = NSFont.systemFont(ofSize: 13)
+        setupStatusDot.font = NSFont.systemFont(ofSize: 16)
         setupStatusDot.textColor = .secondaryLabelColor
 
         setupStatusLabel = NSTextField(labelWithString: "Setup wird geprüft …")
-        setupStatusLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        setupStatusLabel.font = NSFont.systemFont(ofSize: 16, weight: .semibold)
 
         let setupStatusRow = NSStackView(views: [setupStatusDot, setupStatusLabel])
         setupStatusRow.orientation = .horizontal
@@ -330,24 +374,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         setupDetailLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(setupDetailLabel)
 
-        setupTestButton = NSButton(title: "Testbild senden", target: self, action: #selector(sendTestFrame))
-        setupTestButton.bezelStyle = .rounded
-        setupTestButton.controlSize = .small
-
-        setupCopyButton = NSButton(title: "Diagnose kopieren", target: self, action: #selector(copyDiagnostics))
-        setupCopyButton.bezelStyle = .rounded
-        setupCopyButton.controlSize = .small
-
-        let setupActionRow = NSStackView(views: [setupTestButton, setupCopyButton])
-        setupActionRow.orientation = .horizontal
-        setupActionRow.spacing = 8
-        setupActionRow.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(setupActionRow)
-
         appSettingsToggle = NSButton(checkboxWithTitle: "Menüleisten-Schnellmenü aktivieren",
                                      target: self,
                                      action: #selector(menuBarQuickMenuToggled))
         appSettingsToggle.font = NSFont.systemFont(ofSize: 13)
+        appSettingsToggle.toolTip = "Zeigt Provider-Auswahl und Status direkt in der macOS-Menüleiste."
         appSettingsToggle.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(appSettingsToggle)
 
@@ -359,38 +390,117 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         helper.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(helper)
 
+        let codexBox = buildCodexBarBox()
+        codexBox.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(codexBox)
+
         NSLayoutConstraint.activate([
             heading.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             heading.topAnchor.constraint(equalTo: container.topAnchor),
 
-            channelRow.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            channelRow.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 8),
-
-            channelHelper.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            channelHelper.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            channelHelper.topAnchor.constraint(equalTo: channelRow.bottomAnchor, constant: 4),
-
             setupStatusRow.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            setupStatusRow.topAnchor.constraint(equalTo: channelHelper.bottomAnchor, constant: 8),
+            setupStatusRow.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 14),
 
             setupDetailLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             setupDetailLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             setupDetailLabel.topAnchor.constraint(equalTo: setupStatusRow.bottomAnchor, constant: 4),
-            setupDetailLabel.widthAnchor.constraint(equalToConstant: 420),
-
-            setupActionRow.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            setupActionRow.topAnchor.constraint(equalTo: setupDetailLabel.bottomAnchor, constant: 8),
+            setupDetailLabel.widthAnchor.constraint(equalToConstant: 620),
 
             appSettingsToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            appSettingsToggle.topAnchor.constraint(equalTo: setupActionRow.bottomAnchor, constant: 8),
+            appSettingsToggle.topAnchor.constraint(equalTo: setupDetailLabel.bottomAnchor, constant: 18),
 
             helper.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             helper.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
             helper.topAnchor.constraint(equalTo: appSettingsToggle.bottomAnchor, constant: 4),
-            helper.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            codexBox.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            codexBox.topAnchor.constraint(equalTo: helper.bottomAnchor, constant: 24),
+            codexBox.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor),
         ])
 
         return container
+    }
+
+    private func buildUpdatesPage() -> NSView {
+        let appUpdateBox = buildAppUpdateBox()
+        let firmwareBox = buildFirmwareBox()
+
+        let stack = NSStackView(views: [appUpdateBox, firmwareBox])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 24
+        return stack
+    }
+
+    private func buildAppUpdateBox() -> NSView {
+        let heading = makeSectionHeading("App & Updates")
+
+        updateChannelPopup = NSPopUpButton()
+        updateChannelPopup.addItems(withTitles: UpdateChannel.allCases.map(\.displayLabel))
+        updateChannelPopup.target = self
+        updateChannelPopup.action = #selector(updateChannelChosen)
+        updateChannelPopup.translatesAutoresizingMaskIntoConstraints = false
+        updateChannelPopup.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        let channelRow = twoColumnRow("Update-Kanal", updateChannelPopup)
+
+        let channelHelper = NSTextField(labelWithString: "Stable nutzt veröffentlichte Releases. Beta zeigt zusätzlich Vorabversionen für App und Firmware.")
+        channelHelper.font = NSFont.systemFont(ofSize: 11)
+        channelHelper.textColor = .secondaryLabelColor
+        channelHelper.lineBreakMode = .byWordWrapping
+        channelHelper.maximumNumberOfLines = 2
+        channelHelper.toolTip = "Stable zeigt nur veröffentlichte Versionen. Beta zeigt zusätzlich Vorabversionen."
+        updateChannelPopup.toolTip = channelHelper.toolTip
+
+        let checkButton = NSButton(title: "Nach Updates suchen …", target: self, action: #selector(checkAppUpdate))
+        checkButton.bezelStyle = .rounded
+        checkButton.toolTip = "Prüft App- und Firmware-Releases auf GitHub."
+
+        let stack = NSStackView(views: [heading, channelRow, channelHelper, checkButton])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        return stack
+    }
+
+    private func buildConnectionPage() -> NSView {
+        let portBox = buildPortBox()
+        let wifiBox = buildWiFiBox()
+
+        let stack = NSStackView(views: [portBox, wifiBox])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 24
+        return stack
+    }
+
+    private func buildDisplayPage() -> NSView {
+        return buildDisplayBox()
+    }
+
+    private func buildDiagnosticsPage() -> NSView {
+        let heading = makeSectionHeading("Diagnose")
+
+        setupTestButton = NSButton(title: "Testbild senden", target: self, action: #selector(sendTestFrame))
+        setupTestButton.bezelStyle = .rounded
+        setupTestButton.toolTip = "Sendet einen Beispiel-Screen an das Display, um Verbindung und Darstellung zu prüfen."
+
+        setupCopyButton = NSButton(title: "Diagnose kopieren", target: self, action: #selector(copyDiagnostics))
+        setupCopyButton.bezelStyle = .rounded
+        setupCopyButton.toolTip = "Kopiert einen technischen Bericht für Fehlersuche und Support."
+
+        let actions = NSStackView(views: [setupTestButton, setupCopyButton])
+        actions.orientation = .horizontal
+        actions.spacing = 8
+
+        let helper = NSTextField(wrappingLabelWithString: "Technische Funktionen für Fehlersuche, Support und Setup-Kontrolle.")
+        helper.font = NSFont.systemFont(ofSize: 12)
+        helper.textColor = .secondaryLabelColor
+
+        let stack = NSStackView(views: [heading, helper, actions])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        return stack
     }
 
     private func makeLinkButton(_ title: String, action: Selector) -> NSButton {
@@ -452,6 +562,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         codexBarReloadButton = NSButton(title: "Jetzt neu laden", target: self, action: #selector(reloadCodexBar))
         codexBarReloadButton.bezelStyle = .rounded
         codexBarReloadButton.controlSize = .small
+        codexBarReloadButton.toolTip = "Liest die aktuellen CodexBar-Daten erneut ein."
 
         let spacerBeforeButton = NSView()
         spacerBeforeButton.translatesAutoresizingMaskIntoConstraints = false
@@ -489,12 +600,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         portPopup = NSPopUpButton()
         portPopup.target = self
         portPopup.action = #selector(portChosen)
+        portPopup.toolTip = "Automatisch wählt den ersten passenden USB-Serial-Port. Manuelle Auswahl pinnt ein bestimmtes Gerät."
         portPopup.translatesAutoresizingMaskIntoConstraints = false
         portPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         portRefreshButton = NSButton(title: "Ports neu scannen", target: self, action: #selector(refreshPorts))
         portRefreshButton.bezelStyle = .rounded
         portRefreshButton.controlSize = .small
+        portRefreshButton.toolTip = "Sucht erneut nach angeschlossenen ESP32-Geräten."
 
         let controlRow = NSStackView(views: [portPopup, portRefreshButton])
         controlRow.orientation = .horizontal
@@ -528,12 +641,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         wifiNetworkPopup.addItem(withTitle: "Noch nicht gescannt")
         wifiNetworkPopup.target = self
         wifiNetworkPopup.action = #selector(wifiNetworkChosen)
+        wifiNetworkPopup.toolTip = "Netzwerke, die das ESP32-Display aktuell sieht."
         wifiNetworkPopup.translatesAutoresizingMaskIntoConstraints = false
         wifiNetworkPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         wifiScanButton = NSButton(title: "Scannen", target: self, action: #selector(scanWiFi))
         wifiScanButton.bezelStyle = .rounded
         wifiScanButton.controlSize = .small
+        wifiScanButton.toolTip = "Sucht WLAN-Netzwerke aus Sicht des ESP32-Displays."
 
         let scanRow = NSStackView(views: [wifiNetworkPopup, wifiScanButton])
         scanRow.orientation = .horizontal
@@ -541,16 +656,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         wifiPasswordField = NSSecureTextField()
         wifiPasswordField.placeholderString = "Passwort"
+        wifiPasswordField.toolTip = "WLAN-Passwort für das ausgewählte Netzwerk. Wird auf dem Display gespeichert."
         wifiPasswordField.translatesAutoresizingMaskIntoConstraints = false
         wifiPasswordField.widthAnchor.constraint(equalToConstant: 180).isActive = true
 
         wifiConnectButton = NSButton(title: "Verbinden", target: self, action: #selector(connectWiFi))
         wifiConnectButton.bezelStyle = .rounded
         wifiConnectButton.controlSize = .small
+        wifiConnectButton.toolTip = "Speichert das WLAN auf dem Display und verbindet es."
 
         wifiForgetButton = NSButton(title: "Vergessen", target: self, action: #selector(forgetWiFi))
         wifiForgetButton.bezelStyle = .rounded
         wifiForgetButton.controlSize = .small
+        wifiForgetButton.toolTip = "Löscht die gespeicherten WLAN-Daten auf dem Display."
 
         let connectRow = NSStackView(views: [wifiPasswordField, wifiConnectButton, wifiForgetButton])
         connectRow.orientation = .horizontal
@@ -588,6 +706,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         themePopup.addItems(withTitles: ["Automatisch (macOS)", "Dark", "Light"])
         themePopup.target = self
         themePopup.action = #selector(themeChosen)
+        themePopup.toolTip = "Legt fest, ob das Display hell, dunkel oder passend zu macOS angezeigt wird."
         let themeRow = twoColumnRow("Theme", themePopup)
 
         // Prozent-Logik (global für alle Provider)
@@ -598,6 +717,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ])
         percentModePopup.target = self
         percentModePopup.action = #selector(percentModeChosen)
+        percentModePopup.toolTip = "Wählt, ob Nutzung oder verbleibendes Kontingent angezeigt wird."
         percentModePopup.translatesAutoresizingMaskIntoConstraints = false
         percentModePopup.widthAnchor.constraint(equalToConstant: 240).isActive = true
         let percentModeRow = twoColumnRow("Prozentmodus", percentModePopup)
@@ -611,6 +731,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ])
         orientationPopup.target = self
         orientationPopup.action = #selector(orientationChosen)
+        orientationPopup.toolTip = "Dreht die Anzeige passend zur USB-Position."
         let orientRow = twoColumnRow("Ausrichtung", orientationPopup)
 
         // Language
@@ -618,6 +739,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         languagePopup.addItems(withTitles: ["Deutsch", "English"])
         languagePopup.target = self
         languagePopup.action = #selector(languageChosen)
+        languagePopup.toolTip = "Sprache der Labels auf dem ESP32-Display."
         let langRow = twoColumnRow("Sprache", languagePopup)
 
         // TimeZone (v1.12.0) — steuert displayTime auf dem ESP32.
@@ -625,6 +747,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         rebuildTimeZonePopup()
         timeZonePopup.target = self
         timeZonePopup.action = #selector(timeZoneChosen)
+        timeZonePopup.toolTip = "Bestimmt Uhrzeit und Reset-Zeiten auf dem Display."
         timeZonePopup.translatesAutoresizingMaskIntoConstraints = false
         timeZonePopup.widthAnchor.constraint(equalToConstant: 240).isActive = true
         let tzRow = twoColumnRow("Zeitzone", timeZonePopup)
@@ -633,6 +756,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         brightnessSlider = NSSlider(value: Double(Settings.shared.lastKnownBrightness),
                                     minValue: 5, maxValue: 100,
                                     target: self, action: #selector(brightnessChanged))
+        brightnessSlider.toolTip = "Helligkeit des angeschlossenen Displays."
         brightnessSlider.isContinuous = true
         brightnessSlider.numberOfTickMarks = 0
         brightnessSlider.translatesAutoresizingMaskIntoConstraints = false
@@ -1052,6 +1176,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         fwFlashButton = NSButton(title: "Firmware flashen …", target: self, action: #selector(flashFirmware))
         fwFlashButton.bezelStyle = .rounded
+        fwFlashButton.toolTip = "Installiert die aktuelle Display-Firmware über USB. Nutze die andere Variante, wenn das Bild falsch wirkt."
 
         fwProgressBar = NSProgressIndicator()
         fwProgressBar.style = .bar
