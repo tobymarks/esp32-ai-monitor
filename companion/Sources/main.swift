@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.7 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.8 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.7"
+let kAppVersion = "1.20.8"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -1124,6 +1124,11 @@ class FirmwareManager {
     var flashPhase: FirmwareFlashPhase = .idle
     /// Prozent innerhalb der Write-Phase (nur relevant wenn `.writing`).
     var flashWritePercent: Int = 0
+    var lastFlashErrorSummary: String?
+    var lastFlashErrorDetail: String?
+    var lastFlashPort: String?
+    var lastFlashVariant: String?
+    var lastFlashAt: Date?
     var onUpdate: (() -> Void)?
 
     private var firmwareDir: String {
@@ -1378,10 +1383,10 @@ class FirmwareManager {
 
     func flashFirmware(port: String, completion: @escaping (Bool, String) -> Void) {
         guard let binPath = downloadedBinPath, FileManager.default.fileExists(atPath: binPath) else {
-            completion(false, "Keine Firmware-Datei vorhanden"); return
+            completion(false, recordFlashFailure("Keine Firmware-Datei vorhanden")); return
         }
         guard let tool = resolveEsptool() else {
-            completion(false, "esptool nicht gefunden.\nInstalliere mit: pip3 install esptool"); return
+            completion(false, recordFlashFailure("esptool nicht gefunden")); return
         }
         isFlashing = true
         setPhase(.connecting)
@@ -1485,7 +1490,7 @@ class FirmwareManager {
                     }
                     let shortError = errorText.isEmpty ? "esptool Exit-Code \(exitCode)" :
                         (errorText.components(separatedBy: "\n").last(where: { !$0.isEmpty }) ?? errorText)
-                    completion(false, "\(S().flashFailedPrefix) \(shortError)")
+                    completion(false, self.recordFlashFailure(shortError))
                 }
             } catch {
                 self.setPhase(.failed)
@@ -1495,7 +1500,7 @@ class FirmwareManager {
                     self.flashPhase = .idle
                     self.onUpdate?()
                 }
-                completion(false, "esptool konnte nicht gestartet werden: \(error.localizedDescription)")
+                completion(false, self.recordFlashFailure("esptool konnte nicht gestartet werden: \(error.localizedDescription)"))
             }
         }
     }
@@ -1514,6 +1519,67 @@ class FirmwareManager {
 
     func canFlash(serialConnected: Bool) -> Bool {
         return !isFlashing && !isDownloading && serialConnected && downloadedBinPath != nil
+    }
+
+    func beginFlashAttempt(port: String, variant: String) {
+        lastFlashPort = port
+        lastFlashVariant = variant
+        lastFlashAt = Date()
+        lastFlashErrorSummary = nil
+        lastFlashErrorDetail = nil
+    }
+
+    @discardableResult
+    func recordFlashFailure(_ rawMessage: String) -> String {
+        let classified = classifyFlashError(rawMessage)
+        lastFlashErrorSummary = classified.summary
+        lastFlashErrorDetail = classified.detail
+        lastFlashAt = Date()
+        return "\(classified.summary)\n\n\(classified.detail)"
+    }
+
+    private func classifyFlashError(_ rawMessage: String) -> (summary: String, detail: String) {
+        let lower = rawMessage.lowercased()
+        if lower.contains("no serial data received") ||
+            lower.contains("failed to connect") ||
+            lower.contains("timed out waiting for packet") ||
+            lower.contains("invalid head of packet") {
+            return (
+                "Display nicht im Flash-Modus erreichbar.",
+                "USB-Kabel prüfen, das Display kurz neu verbinden und erneut flashen. Falls dein Board eine Boot-Taste hat, halte sie beim Start des Flashens gedrückt."
+            )
+        }
+        if lower.contains("resource busy") || lower.contains("device busy") ||
+            lower.contains("could not open") || lower.contains("permission denied") {
+            return (
+                "USB-Port ist gerade blockiert.",
+                "Trenne andere serielle Tools, stecke das Display neu ein und scanne die Ports erneut."
+            )
+        }
+        if lower.contains("no such file") || lower.contains("keine firmware-datei") ||
+            lower.contains("not found") || lower.contains("kein ") {
+            return (
+                "Firmware-Datei fehlt.",
+                "Prüfe die Updates erneut. Wenn das Release unvollständig ist, warte auf ein vollständiges Firmware-Release oder öffne es im Browser."
+            )
+        }
+        if lower.contains("exit-code") || lower.contains("fatal error") || lower.contains("write_flash") {
+            return (
+                "Schreiben der Firmware wurde abgebrochen.",
+                "Versuche denselben Flash erneut. Wenn das Display danach falsch aussieht, wähle im Recovery-Dialog die andere Display-Variante."
+            )
+        }
+        if lower.contains("esptool nicht gefunden") || lower.contains("could not be started") ||
+            lower.contains("konnte nicht gestartet") {
+            return (
+                "Flash-Werkzeug konnte nicht gestartet werden.",
+                "Die App enthält das Flash-Werkzeug normalerweise selbst. Installiere die App neu oder nutze den DMG-Download aus dem aktuellen Release."
+            )
+        }
+        return (
+            "Flash konnte nicht abgeschlossen werden.",
+            "\(rawMessage)\n\nDu kannst denselben Flash erneut versuchen oder die andere Display-Variante wählen."
+        )
     }
 }
 
@@ -2970,9 +3036,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let version = fw.latestVersionDisplay != "?" ? fw.latestVersionDisplay : fw.installedVersionDisplay
         let shortPort = (port as NSString).lastPathComponent
         let info = "ESP32 \(shortPort) — Firmware \(version)"
+        let missingAssets = fw.missingExpectedAssetNames
+        let esptoolReady = fw.resolveEsptool() != nil
+        let canStart = fw.hasExpectedReleaseAssets && esptoolReady && !fw.isFlashing && !fw.isDownloading
+        let preflight = [
+            "USB: \(shortPort) erkannt",
+            fw.hasExpectedReleaseAssets
+                ? "Firmware-Dateien: vollständig"
+                : "Firmware-Dateien fehlen: \(missingAssets.joined(separator: ", "))",
+            esptoolReady ? "Flash-Werkzeug: verfügbar" : "Flash-Werkzeug: nicht verfügbar",
+            "Hinweis: USB-Kabel während des Flashens nicht trennen."
+        ]
+        let warning = canStart ? nil : "Flashen ist erst möglich, wenn USB, Firmware-Dateien und Flash-Werkzeug bereit sind."
 
         FlashDialogController.presentModal(info: info,
-                                           defaultVariant: defaultVariant) { [weak self] chosenVariant in
+                                           defaultVariant: defaultVariant,
+                                           preflightItems: preflight,
+                                           warning: warning,
+                                           canStart: canStart) { [weak self] chosenVariant in
             guard let self = self else { return }
             guard let variant = chosenVariant else { return }  // Abbrechen
             self.performFlash(port: port, variant: variant)
@@ -2983,6 +3064,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Ausgelagert aus `runFirmwareFlash`, damit der Dialog-Callback klar bleibt.
     fileprivate func performFlash(port: String, variant: String) {
         let fw = FirmwareManager.shared
+        fw.beginFlashAttempt(port: port, variant: variant)
 
         // Variant im aktiven Profil persistieren (falls Gerät bekannt ist),
         // damit der Dialog beim naechsten Flash dieselbe Wahl vorauswaehlt.
@@ -3004,9 +3086,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     if success {
                         self?.monitor.queueDiagnosticTestFrameAfterNextConnect()
                     } else {
-                        self?.alert(title: S().flashFailed,
-                                    info: message,
-                                    style: .critical)
+                        self?.presentFlashRecovery(message: message, port: port, variant: variant)
                     }
                 }
             }
@@ -3026,6 +3106,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                    style: .warning) }
             }
         }
+    }
+
+    private func presentFlashRecovery(message: String, port: String, variant: String) {
+        let alert = NSAlert()
+        alert.messageText = S().flashFailed
+        alert.informativeText = "\(message)\n\nRecovery: Du kannst denselben Flash erneut versuchen oder die andere Display-Variante flashen."
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Erneut flashen")
+        alert.addButton(withTitle: "Andere Variante")
+        alert.addButton(withTitle: "Schließen")
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            performFlash(port: port, variant: variant)
+        case .alertSecondButtonReturn:
+            performFlash(port: port, variant: oppositeDisplayVariant(variant))
+        default:
+            break
+        }
+    }
+
+    private func oppositeDisplayVariant(_ variant: String) -> String {
+        return variant == kDisplayVariantST7789 ? kDisplayVariantILI9341 : kDisplayVariantST7789
     }
 
     func runAppUpdateCheck() {
@@ -3048,7 +3151,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard appMgr.hasUpdate else { return }
         let alert = NSAlert()
         alert.messageText = S().appUpdateAvailable
-        var info = "\(appMgr.latestVersionDisplay) \(S().firmwareAvailable)\nInstalled: v\(kAppVersion)"
+        let assetNames = appMgr.latestRelease?.assets.map(\.name).joined(separator: ", ") ?? "—"
+        let hasZip = appMgr.latestRelease?.assets.contains { $0.name == kAppAssetName } ?? false
+        let hasDMG = appMgr.latestRelease?.assets.contains { $0.name == "AIMonitor.dmg" } ?? false
+        var info = """
+        Version: \(appMgr.latestVersionDisplay)
+        Installiert: v\(kAppVersion)
+        Paket: \(hasZip ? "AIMonitor.zip gefunden" : "AIMonitor.zip fehlt")
+        DMG: \(hasDMG ? "gefunden" : "fehlt")
+        macOS prüft Signatur und Notarisierung beim Start der App.
+        Assets: \(assetNames)
+        """
         if let body = appMgr.latestRelease?.body, !body.isEmpty {
             let plain = body
                 .replacingOccurrences(of: "## ", with: "")
@@ -3061,8 +3174,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         alert.informativeText = info
         alert.alertStyle = .informational
-        let hasAsset = appMgr.latestRelease?.assets.contains { $0.name == kAppAssetName } ?? false
-        alert.addButton(withTitle: hasAsset ? S().download : S().openInBrowser)
+        alert.addButton(withTitle: hasZip ? S().download : S().openInBrowser)
         alert.addButton(withTitle: S().later)
         alert.addButton(withTitle: S().skipVersion)
         let response = alert.runModal()

@@ -2128,6 +2128,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lines.append("- Release-Assets vollständig: \(fw.hasExpectedReleaseAssets ? "ja" : "nein")")
         lines.append("- Fehlende Release-Assets: \(fw.missingExpectedAssetNames.isEmpty ? "—" : fw.missingExpectedAssetNames.joined(separator: ", "))")
         lines.append("- Flash läuft: \(fw.isFlashing ? "ja" : "nein")")
+        lines.append("- Letzter Flash-Port: \(fw.lastFlashPort ?? "—")")
+        lines.append("- Letzte Flash-Variante: \(fw.lastFlashVariant ?? "—")")
+        lines.append("- Letzter Flash-Zeitpunkt: \(dateText(fw.lastFlashAt))")
+        lines.append("- Letzter Flash-Fehler: \(fw.lastFlashErrorSummary ?? "—")")
+        lines.append("- Letzte Flash-Fehlerhilfe: \(fw.lastFlashErrorDetail ?? "—")")
 
         return lines.joined(separator: "\n")
     }
@@ -2586,8 +2591,15 @@ final class FlashDialogController: NSWindowController {
     /// aufgerufen oder mit `nil` bei Abbruch.
     static func presentModal(info: String,
                              defaultVariant: String,
+                             preflightItems: [String],
+                             warning: String?,
+                             canStart: Bool,
                              completion: @escaping (String?) -> Void) {
-        let controller = FlashDialogController(info: info, defaultVariant: defaultVariant)
+        let controller = FlashDialogController(info: info,
+                                               defaultVariant: defaultVariant,
+                                               preflightItems: preflightItems,
+                                               warning: warning,
+                                               canStart: canStart)
         controller.completion = completion
         guard let window = controller.window else { completion(nil); return }
         // Modal gegenueber dem Settings-Fenster (falls offen), sonst
@@ -2601,13 +2613,24 @@ final class FlashDialogController: NSWindowController {
     private var completion: ((String?) -> Void)?
     private var radioStandard: NSButton!
     private var radioAlternative: NSButton!
+    private var startBtn: NSButton!
     private let defaultVariant: String
     private let infoText: String
+    private let preflightItems: [String]
+    private let warning: String?
+    private let canStart: Bool
 
-    init(info: String, defaultVariant: String) {
+    init(info: String,
+         defaultVariant: String,
+         preflightItems: [String],
+         warning: String?,
+         canStart: Bool) {
         self.infoText = info
         self.defaultVariant = defaultVariant
-        let rect = NSRect(x: 0, y: 0, width: 460, height: 270)
+        self.preflightItems = preflightItems
+        self.warning = warning
+        self.canStart = canStart
+        let rect = NSRect(x: 0, y: 0, width: 520, height: 380)
         let mask: NSWindow.StyleMask = [.titled, .closable]
         let window = NSWindow(contentRect: rect, styleMask: mask,
                               backing: .buffered, defer: false)
@@ -2632,6 +2655,24 @@ final class FlashDialogController: NSWindowController {
         infoLabel.textColor = .secondaryLabelColor
         infoLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(infoLabel)
+
+        let preflightTitle = NSTextField(labelWithString: "Preflight-Check")
+        preflightTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        preflightTitle.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(preflightTitle)
+
+        let preflightText = NSTextField(wrappingLabelWithString: preflightItems.joined(separator: "\n"))
+        preflightText.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        preflightText.textColor = canStart ? .secondaryLabelColor : .systemOrange
+        preflightText.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(preflightText)
+
+        let warningLabel = NSTextField(wrappingLabelWithString: warning ?? "")
+        warningLabel.font = NSFont.systemFont(ofSize: 11)
+        warningLabel.textColor = .systemOrange
+        warningLabel.isHidden = (warning == nil)
+        warningLabel.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(warningLabel)
 
         let groupLabel = NSTextField(labelWithString: S().flashDialogBoardVariant)
         groupLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
@@ -2661,9 +2702,13 @@ final class FlashDialogController: NSWindowController {
         hint.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(hint)
 
-        let startBtn = NSButton(title: S().flashDialogStart, target: self, action: #selector(onStart))
+        startBtn = NSButton(title: S().flashDialogStart, target: self, action: #selector(onStart))
         startBtn.bezelStyle = .rounded
         startBtn.keyEquivalent = "\r"  // Enter
+        startBtn.isEnabled = canStart
+        startBtn.toolTip = canStart
+            ? "Startet Download und Flash mit der gewählten Display-Variante."
+            : "Flashen ist blockiert, bis der Preflight-Check grün ist."
         startBtn.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(startBtn)
 
@@ -2682,7 +2727,19 @@ final class FlashDialogController: NSWindowController {
             infoLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
             infoLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
 
-            groupLabel.topAnchor.constraint(equalTo: infoLabel.bottomAnchor, constant: 18),
+            preflightTitle.topAnchor.constraint(equalTo: infoLabel.bottomAnchor, constant: 16),
+            preflightTitle.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            preflightTitle.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            preflightText.topAnchor.constraint(equalTo: preflightTitle.bottomAnchor, constant: 6),
+            preflightText.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            preflightText.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            warningLabel.topAnchor.constraint(equalTo: preflightText.bottomAnchor, constant: 6),
+            warningLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            warningLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            groupLabel.topAnchor.constraint(equalTo: warningLabel.bottomAnchor, constant: 14),
             groupLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
 
             radioStandard.topAnchor.constraint(equalTo: groupLabel.bottomAnchor, constant: 8),
