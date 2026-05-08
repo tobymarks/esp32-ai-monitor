@@ -8,7 +8,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.12.0-beta.4"
+#define APP_VERSION "2.12.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // Display-Controller-ID (aus Build-Flags abgeleitet, Compile-Zeit).

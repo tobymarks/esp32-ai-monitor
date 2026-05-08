@@ -1,6 +1,6 @@
 {
   "name": "AI Monitor (ST7789 / Hybrid-Board)",
-  "version": "2.12.0-beta.4",
+  "version": "2.12.0",
   "home_assistant_domain": "",
   "builds": [
     {
