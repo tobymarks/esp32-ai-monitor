@@ -35,6 +35,8 @@
 #include <string.h>
 #include <time.h>
 
+LV_FONT_DECLARE(font_standby_clock_76);
+
 // ============================================================
 // Widget references (created once, updated in-place)
 // ============================================================
@@ -92,8 +94,6 @@ static bool       first_data_received = false;
 static lv_obj_t *standby_overlay    = nullptr;
 static lv_obj_t *standby_clock      = nullptr;
 static lv_obj_t *standby_wifi       = nullptr;
-static lv_obj_t *standby_segments[4][7] = {{nullptr}};
-static lv_obj_t *standby_colon[2] = {nullptr, nullptr};
 
 static const char* ag_default_title(uint8_t idx) {
     switch (idx) {
@@ -143,57 +143,6 @@ static void on_long_press(lv_event_t *e) {
 // ============================================================
 // Standby clock overlay
 // ============================================================
-static void set_segment_rect(lv_obj_t *obj, int16_t x, int16_t y, int16_t w, int16_t h, int16_t radius) {
-    lv_obj_set_pos(obj, x, y);
-    lv_obj_set_size(obj, w, h);
-    lv_obj_set_style_radius(obj, radius, LV_PART_MAIN);
-}
-
-static lv_obj_t* create_standby_segment(lv_obj_t *parent) {
-    lv_obj_t *seg = lv_obj_create(parent);
-    lv_obj_remove_style_all(seg);
-    lv_obj_set_style_bg_opa(seg, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(seg, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_border_width(seg, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(seg, LV_OBJ_FLAG_SCROLLABLE);
-    return seg;
-}
-
-static void layout_standby_digit(uint8_t idx, int16_t x, int16_t y, int16_t w, int16_t h, int16_t t) {
-    int16_t mid = (h - t) / 2;
-    int16_t v_h = mid - t;
-    int16_t radius = t / 2;
-
-    set_segment_rect(standby_segments[idx][0], x + t,     y,             w - 2 * t, t, radius);
-    set_segment_rect(standby_segments[idx][1], x + w - t, y + t,         t,         v_h, radius);
-    set_segment_rect(standby_segments[idx][2], x + w - t, y + mid + t,   t,         v_h, radius);
-    set_segment_rect(standby_segments[idx][3], x + t,     y + h - t,     w - 2 * t, t, radius);
-    set_segment_rect(standby_segments[idx][4], x,         y + mid + t,   t,         v_h, radius);
-    set_segment_rect(standby_segments[idx][5], x,         y + t,         t,         v_h, radius);
-    set_segment_rect(standby_segments[idx][6], x + t,     y + mid,       w - 2 * t, t, radius);
-}
-
-static void set_standby_digit(uint8_t idx, char c) {
-    static const uint8_t masks[10] = {
-        0b00111111, // 0
-        0b00000110, // 1
-        0b01011011, // 2
-        0b01001111, // 3
-        0b01100110, // 4
-        0b01101101, // 5
-        0b01111101, // 6
-        0b00000111, // 7
-        0b01111111, // 8
-        0b01101111  // 9
-    };
-
-    uint8_t mask = (c >= '0' && c <= '9') ? masks[c - '0'] : 0;
-    for (uint8_t i = 0; i < 7; i++) {
-        lv_color_t color = (mask & (1 << i)) ? lv_color_white() : lv_color_black();
-        lv_obj_set_style_bg_color(standby_segments[idx][i], color, LV_PART_MAIN);
-    }
-}
-
 static void format_standby_clock(char *buf, size_t len) {
     time_t now = time(nullptr);
     if (now > 1700000000) {  // system clock has been set by the Mac frame
@@ -216,16 +165,7 @@ static void update_standby_clock() {
 
     char tbuf[6];
     format_standby_clock(tbuf, sizeof(tbuf));
-
-    set_standby_digit(0, tbuf[0]);
-    set_standby_digit(1, tbuf[1]);
-    set_standby_digit(2, tbuf[3]);
-    set_standby_digit(3, tbuf[4]);
-
-    bool colon_on = tbuf[2] == ':';
-    for (uint8_t i = 0; i < 2; i++) {
-        lv_obj_set_style_bg_color(standby_colon[i], colon_on ? lv_color_white() : lv_color_black(), LV_PART_MAIN);
-    }
+    lv_label_set_text(standby_clock, tbuf);
 
     if (standby_wifi != nullptr) {
         lv_label_set_text(standby_wifi, wifi_time_is_connected() ? LV_SYMBOL_WIFI : LV_SYMBOL_DUMMY);
@@ -239,9 +179,6 @@ static void hide_standby_overlay() {
     standby_overlay = nullptr;
     standby_clock = nullptr;
     standby_wifi = nullptr;
-    memset(standby_segments, 0, sizeof(standby_segments));
-    standby_colon[0] = nullptr;
-    standby_colon[1] = nullptr;
     Serial.println("[UI] Standby clock hidden — fresh host data received");
 }
 
@@ -274,48 +211,15 @@ static void show_standby_overlay() {
     lv_obj_set_style_text_font(standby_wifi, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_pos(standby_wifi, 8, 11);
 
-    standby_clock = lv_obj_create(standby_overlay);
-    lv_obj_remove_style_all(standby_clock);
-    lv_obj_set_style_bg_opa(standby_clock, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(standby_clock, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(standby_clock, LV_OBJ_FLAG_SCROLLABLE);
-
-    const bool wide = SCREEN_WIDTH >= 300;
-    const int16_t digit_w = wide ? 52 : 44;
-    const int16_t digit_h = wide ? 104 : 88;
-    const int16_t seg_t = wide ? 10 : 8;
-    const int16_t gap = wide ? 8 : 6;
-    const int16_t colon_w = wide ? 18 : 14;
-    const int16_t clock_w = digit_w * 4 + gap * 3 + colon_w;
-    const int16_t clock_x = (SCREEN_WIDTH - clock_w) / 2;
-    const int16_t clock_y = (SCREEN_HEIGHT - digit_h) / 2;
-
-    lv_obj_set_size(standby_clock, SCREEN_WIDTH, SCREEN_HEIGHT);
-    lv_obj_set_pos(standby_clock, 0, 0);
-
-    for (uint8_t d = 0; d < 4; d++) {
-        for (uint8_t s = 0; s < 7; s++) {
-            standby_segments[d][s] = create_standby_segment(standby_clock);
-        }
-    }
-
-    int16_t x = clock_x;
-    layout_standby_digit(0, x, clock_y, digit_w, digit_h, seg_t);
-    x += digit_w + gap;
-    layout_standby_digit(1, x, clock_y, digit_w, digit_h, seg_t);
-    x += digit_w + gap;
-
-    standby_colon[0] = create_standby_segment(standby_clock);
-    standby_colon[1] = create_standby_segment(standby_clock);
-    int16_t dot = seg_t;
-    set_segment_rect(standby_colon[0], x + (colon_w - dot) / 2, clock_y + digit_h / 3 - dot / 2, dot, dot, dot / 2);
-    set_segment_rect(standby_colon[1], x + (colon_w - dot) / 2, clock_y + digit_h * 2 / 3 - dot / 2, dot, dot, dot / 2);
-    x += colon_w + gap;
-
-    layout_standby_digit(2, x, clock_y, digit_w, digit_h, seg_t);
-    x += digit_w + gap;
-    layout_standby_digit(3, x, clock_y, digit_w, digit_h, seg_t);
+    standby_clock = lv_label_create(standby_overlay);
+    lv_obj_set_width(standby_clock, SCREEN_WIDTH);
+    lv_obj_set_style_text_align(standby_clock, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(standby_clock, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(standby_clock, &font_standby_clock_76, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(standby_clock, 2, LV_PART_MAIN);
+    lv_label_set_long_mode(standby_clock, LV_LABEL_LONG_CLIP);
     update_standby_clock();
+    lv_obj_align(standby_clock, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_move_foreground(standby_overlay);
     Serial.println("[UI] Standby clock shown — host data timed out");
