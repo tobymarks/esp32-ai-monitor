@@ -4,10 +4,8 @@
  * Ab v1.11.0: Querformat-Layout, 960×560, nicht resizable. Zwei-Spalten-Split
  * statt langer vertikaler Liste. Header mit Provider-Umschalter rechts.
  *
- * Ab v1.11.1: „Über AI Monitor" und „Nach Updates suchen …" dauerhaft im
- * Footer sichtbar — der v1.11.0-Pfad ueber das native Main-Menu funktioniert
- * unter .accessory/LSUIElement=YES nicht (macOS rendert keine System-Menueleiste
- * fuer solche Apps). „Beenden" bleibt auf ⌘Q (kein Button im Settings-Fenster).
+ * Ab v1.20.9: Footer bleibt bewusst schlank. Updates liegen nur noch im
+ * Updates-Tab; „Über AI Monitor" bleibt unten sichtbar.
  */
 
 import Cocoa
@@ -128,7 +126,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // Footer
     private var footerVersionLabel: NSTextField!
     private var footerAboutButton: NSButton!
-    private var footerUpdateButton: NSButton!
 
     private var refreshTimer: Timer?
 
@@ -357,22 +354,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         footerVersionLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(footerVersionLabel)
 
-        // Ab v1.11.1 dauerhaft sichtbar — die einzigen Wege zur App-Info und
-        // zum Update-Checker, weil unter .accessory kein macOS-App-Menue rendert.
         footerAboutButton = makeLinkButton("Über AI Monitor", action: #selector(showAbout))
-        footerUpdateButton = makeLinkButton("Nach Updates suchen …", action: #selector(checkAppUpdate))
-        footerUpdateButton.toolTip = "Prüft App- und Firmware-Releases auf GitHub."
         container.addSubview(footerAboutButton)
-        container.addSubview(footerUpdateButton)
 
         NSLayoutConstraint.activate([
             footerVersionLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             footerVersionLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
 
-            footerUpdateButton.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            footerUpdateButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-
-            footerAboutButton.trailingAnchor.constraint(equalTo: footerUpdateButton.leadingAnchor, constant: -16),
+            footerAboutButton.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             footerAboutButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
         return container
