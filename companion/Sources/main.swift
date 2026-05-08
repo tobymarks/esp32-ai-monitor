@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.18.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.18.2 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.18.1"
+let kAppVersion = "1.18.2"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -890,13 +890,24 @@ class AppUpdateManager {
     }
 
     private func selectAppRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
-        releases.first { release in
-            switch Settings.shared.updateChannel {
-            case .stable:
-                return release.tag_name.hasPrefix("app-v") && !release.prerelease
-            case .beta:
-                return release.tag_name.hasPrefix("app-beta-v") || release.tag_name.hasPrefix("app-v")
-            }
+        let stableReleases = releases.filter {
+            $0.tag_name.hasPrefix("app-v") && !$0.prerelease
+        }
+        let betaReleases = releases.filter {
+            $0.tag_name.hasPrefix("app-beta-v") && $0.prerelease
+        }
+
+        switch Settings.shared.updateChannel {
+        case .stable:
+            return newestAppRelease(from: stableReleases)
+        case .beta:
+            return newestAppRelease(from: betaReleases) ?? newestAppRelease(from: stableReleases)
+        }
+    }
+
+    private func newestAppRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
+        releases.max {
+            compareVersions(normalizeVersion($0.tag_name), normalizeVersion($1.tag_name)) == .orderedAscending
         }
     }
 
@@ -1198,14 +1209,18 @@ class FirmwareManager {
     }
 
     private func selectFirmwareRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
-        releases.first { release in
-            switch Settings.shared.updateChannel {
-            case .stable:
-                return release.tag_name.hasPrefix("v") && !release.tag_name.hasPrefix("app-") && !release.prerelease
-            case .beta:
-                return release.tag_name.hasPrefix("fw-beta-v")
-                    || (release.tag_name.hasPrefix("v") && !release.tag_name.hasPrefix("app-"))
-            }
+        let stableReleases = releases.filter {
+            $0.tag_name.hasPrefix("v") && !$0.tag_name.hasPrefix("app-") && !$0.prerelease
+        }
+        let betaReleases = releases.filter {
+            $0.tag_name.hasPrefix("fw-beta-v") && $0.prerelease
+        }
+
+        switch Settings.shared.updateChannel {
+        case .stable:
+            return newestFirmwareRelease(from: stableReleases)
+        case .beta:
+            return newestFirmwareRelease(from: betaReleases) ?? newestFirmwareRelease(from: stableReleases)
         }
     }
 
@@ -1214,6 +1229,27 @@ class FirmwareManager {
             return String(releaseTag.dropFirst("fw-beta-".count))
         }
         return releaseTag
+    }
+
+    private func newestFirmwareRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
+        releases.max {
+            compareFirmwareVersions(firmwareVersionTag(from: $0.tag_name), firmwareVersionTag(from: $1.tag_name)) == .orderedAscending
+        }
+    }
+
+    private func compareFirmwareVersions(_ a: String, _ b: String) -> ComparisonResult {
+        let normalizedA = a.hasPrefix("v") ? String(a.dropFirst()) : a
+        let normalizedB = b.hasPrefix("v") ? String(b.dropFirst()) : b
+        let aParts = normalizedA.split(separator: ".").compactMap { Int($0.split(separator: "-").first ?? "") }
+        let bParts = normalizedB.split(separator: ".").compactMap { Int($0.split(separator: "-").first ?? "") }
+        let count = max(aParts.count, bParts.count)
+        for i in 0..<count {
+            let av = i < aParts.count ? aParts[i] : 0
+            let bv = i < bParts.count ? bParts[i] : 0
+            if av > bv { return .orderedDescending }
+            if av < bv { return .orderedAscending }
+        }
+        return .orderedSame
     }
 
     func downloadFirmware(completion: @escaping (Bool, String?) -> Void) {
