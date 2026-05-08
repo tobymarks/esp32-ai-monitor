@@ -53,6 +53,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var healthFirmwareLabel: NSTextField!
     private var healthFirmwareDetailLabel: NSTextField!
     private var setupTestButton: NSButton!
+    private var displayTestButton: NSButton!
     private var setupCopyButton: NSButton!
 
     // Linke Spalte — CodexBar
@@ -831,7 +832,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func buildDisplayBox() -> NSView {
-        let heading = makeSectionHeading("Display-Einstellungen")
+        let heading = makeSectionHeading("Display einrichten")
+        let intro = NSTextField(wrappingLabelWithString: "Stelle das verbundene Display in drei Schritten ein: Gerät erkennen, Darstellung wählen, Ergebnis prüfen.")
+        intro.font = NSFont.systemFont(ofSize: 12)
+        intro.textColor = .secondaryLabelColor
 
         // Geräte-Zeile (ab v1.14.0)
         let deviceRowBuilt = buildDeviceRow()
@@ -912,24 +916,93 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lastUpdateLabel.font = NSFont.systemFont(ofSize: 11)
         lastUpdateLabel.textColor = .secondaryLabelColor
 
-        let rowsStack = NSStackView(views: [
-            deviceRowBuilt,
-            deviceProfilesRow,
+        let deviceStep = buildDisplaySetupStep(
+            number: "1",
+            title: "Display auswählen",
+            detail: "Name und Profil helfen, mehrere Displays auseinanderzuhalten.",
+            views: [deviceRowBuilt, deviceProfilesRow]
+        )
+
+        let appearanceRows = NSStackView(views: [
+            orientRow,
+            brightRow,
             themeRow,
             percentModeRow,
-            orientRow,
             langRow,
-            tzRow,
-            brightRow
+            tzRow
         ])
-        rowsStack.orientation = .vertical
-        rowsStack.alignment = .leading
-        rowsStack.spacing = 8
+        appearanceRows.orientation = .vertical
+        appearanceRows.alignment = .leading
+        appearanceRows.spacing = 8
 
-        let stack = NSStackView(views: [heading, rowsStack, lastUpdateLabel])
+        let appearanceStep = buildDisplaySetupStep(
+            number: "2",
+            title: "Darstellung einstellen",
+            detail: "Ausrichtung und Helligkeit sind die wichtigsten Werte. Alles wird direkt an das ESP32-Display gesendet.",
+            views: [appearanceRows]
+        )
+
+        let testButton = NSButton(title: "Testbild senden", target: self, action: #selector(sendTestFrame))
+        testButton.bezelStyle = .rounded
+        testButton.toolTip = "Sendet einen Beispiel-Screen, um Ausrichtung, Helligkeit und Verbindung zu prüfen."
+        displayTestButton = testButton
+
+        let testHelper = NSTextField(wrappingLabelWithString: "Sende nach Änderungen ein Testbild. Wenn es falsch gedreht ist, ändere die Ausrichtung und teste erneut.")
+        testHelper.font = NSFont.systemFont(ofSize: 11)
+        testHelper.textColor = .secondaryLabelColor
+
+        let testStep = buildDisplaySetupStep(
+            number: "3",
+            title: "Ergebnis prüfen",
+            detail: "Das Testbild bestätigt, dass Darstellung und USB-Verbindung zusammenpassen.",
+            views: [testButton, testHelper, lastUpdateLabel]
+        )
+
+        let stack = NSStackView(views: [heading, intro, deviceStep, appearanceStep, testStep])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 12
+        stack.spacing = 14
+        return stack
+    }
+
+    private func buildDisplaySetupStep(number: String,
+                                       title: String,
+                                       detail: String,
+                                       views: [NSView]) -> NSView {
+        let numberLabel = NSTextField(labelWithString: number)
+        numberLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        numberLabel.alignment = .center
+        numberLabel.textColor = .white
+        numberLabel.wantsLayer = true
+        numberLabel.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        numberLabel.layer?.cornerRadius = 9
+        numberLabel.translatesAutoresizingMaskIntoConstraints = false
+        numberLabel.widthAnchor.constraint(equalToConstant: 18).isActive = true
+        numberLabel.heightAnchor.constraint(equalToConstant: 18).isActive = true
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+
+        let header = NSStackView(views: [numberLabel, titleLabel])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 8
+
+        let detailLabel = NSTextField(wrappingLabelWithString: detail)
+        detailLabel.font = NSFont.systemFont(ofSize: 11)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 620).isActive = true
+
+        let content = NSStackView(views: views)
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 8
+
+        let stack = NSStackView(views: [header, detailLabel, content])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
         return stack
     }
 
@@ -1939,7 +2012,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let serialState = monitor.serialPort.state
         let ready = codexOK && serialState == .connected
 
-        setupTestButton.isEnabled = (serialState == .connected)
+        setupTestButton?.isEnabled = (serialState == .connected)
+        displayTestButton?.isEnabled = (serialState == .connected)
         setupCopyButton.isEnabled = true
 
         if ready {
