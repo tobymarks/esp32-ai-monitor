@@ -40,6 +40,7 @@ static size_t serial_buf_pos = 0;
 static MonitorState state;
 static bool new_data_flag = false;
 static char display_time[6] = "--:--";
+static int16_t timezone_offset_minutes = 60;  // Default: Europe/Berlin winter time
 
 // ============================================================
 // Provider helpers
@@ -159,6 +160,34 @@ static void print_frame_error(int frame_id, int schema_version, const char *mess
 // ============================================================
 const char* serial_get_display_time() {
     return display_time;
+}
+
+static void apply_timezone_offset_minutes(int offset_minutes) {
+    if (offset_minutes < -14 * 60 || offset_minutes > 14 * 60) {
+        return;
+    }
+
+    timezone_offset_minutes = (int16_t)offset_minutes;
+
+    // POSIX TZ signs are inverted: UTC+2 is encoded as "AIM-2".
+    int posix_minutes = -offset_minutes;
+    char sign = '+';
+    if (posix_minutes < 0) {
+        sign = '-';
+        posix_minutes = -posix_minutes;
+    }
+
+    int hours = posix_minutes / 60;
+    int minutes = posix_minutes % 60;
+    char tz_buf[16];
+    if (minutes == 0) {
+        snprintf(tz_buf, sizeof(tz_buf), "AIM%c%d", sign, hours);
+    } else {
+        snprintf(tz_buf, sizeof(tz_buf), "AIM%c%d:%02d", sign, hours, minutes);
+    }
+
+    setenv("TZ", tz_buf, 1);
+    tzset();
 }
 
 // ============================================================
@@ -388,6 +417,10 @@ static void parse_json(const char *json_str) {
         strlcpy(display_time, dtime, sizeof(display_time));
     }
 
+    if (doc["tzOffsetMinutes"].is<int>()) {
+        apply_timezone_offset_minutes(doc["tzOffsetMinutes"].as<int>());
+    }
+
     // Set system clock from ISO "time" field (needed for countdown calculations)
     const char *time_str = doc["time"];
     if (time_str) {
@@ -579,9 +612,8 @@ void serial_receiver_init() {
     state.is_fetching = false;
     state.token_valid = false;
 
-    // Set timezone for localtime_r() — CET/CEST (Germany)
-    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
-    tzset();
+    // Default timezone until the Mac companion sends its selected offset.
+    apply_timezone_offset_minutes(timezone_offset_minutes);
     g_language = g_config.language;  // Apply saved language
     state.provider = PROVIDER_CLAUDE;
     strlcpy(state.provider_label, "CLAUDE", sizeof(state.provider_label));

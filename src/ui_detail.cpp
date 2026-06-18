@@ -150,7 +150,7 @@ void ui_detail_create(const MonitorState &state) {
     lv_obj_set_style_text_font(lbl_prov, &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_set_pos(lbl_prov, 34, 10);
 
-    // Time — uses getLocalTime() (works after settimeofday)
+    // Time — uses timezone offset sent by the Mac companion app.
     lv_obj_t *lbl_time = lv_label_create(header);
     {
         struct tm timeinfo;

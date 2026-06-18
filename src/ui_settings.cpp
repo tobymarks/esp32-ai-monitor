@@ -113,7 +113,7 @@ void ui_settings_create() {
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_set_pos(lbl_title, 34, 8);
 
-    // Time — uses getLocalTime() (works after settimeofday)
+    // Time — uses timezone offset sent by the Mac companion app.
     lv_obj_t *lbl_time = lv_label_create(header);
     {
         struct tm timeinfo;

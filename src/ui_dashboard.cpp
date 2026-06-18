@@ -145,7 +145,7 @@ static void on_long_press(lv_event_t *e) {
 // ============================================================
 static void format_standby_clock(char *buf, size_t len) {
     time_t now = time(nullptr);
-    if (now > 1700000000) {  // system clock has been set by the Mac frame
+    if (now > 1700000000) {  // system clock + timezone offset have been set by the Mac frame
         struct tm local;
         localtime_r(&now, &local);
         strftime(buf, len, "%H:%M", &local);
@@ -690,7 +690,7 @@ void ui_dashboard_update(const MonitorState &state) {
         lv_obj_set_style_text_font(lbl_provider, provider_font, LV_PART_MAIN);
     }
 
-    // ---- Clock (system time set via settimeofday from Mac's UTC) ----
+    // ---- Clock (system time set via settimeofday + timezone offset from Mac) ----
     if (lbl_time != nullptr) {
         time_t now = time(nullptr);
         if (now > 1700000000) {  // system clock has been set (post-2023)

@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.10 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.11 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.10"
+let kAppVersion = "1.20.11"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -2443,6 +2443,7 @@ class UsageMonitor {
         timeFmt.dateFormat = "HH:mm"
         timeFmt.timeZone = Settings.shared.effectiveTimeZone()
         let localTime = timeFmt.string(from: now)
+        let tzOffsetMinutes = Settings.shared.effectiveTimeZone().secondsFromGMT(for: now) / 60
 
         func rowTitle(_ index: Int) -> String {
             if provider == .antigravity {
@@ -2489,6 +2490,7 @@ class UsageMonitor {
             "sentAt": nowISO,
             "time": nowISO,
             "displayTime": localTime,
+            "tzOffsetMinutes": tzOffsetMinutes,
             "data": [
                 [
                     "source": "diagnostic",
@@ -2622,7 +2624,8 @@ class UsageMonitor {
         // Ab v1.12.0 berücksichtigt `displayTime` die im Settings-Fenster
         // gewählte Zeitzone. „auto" folgt weiterhin der System-Zeitzone.
         timeFmt.timeZone = Settings.shared.effectiveTimeZone()
-        let localTime = timeFmt.string(from: Date())
+        let localTime = timeFmt.string(from: now)
+        let tzOffsetMinutes = Settings.shared.effectiveTimeZone().secondsFromGMT(for: now) / 60
 
         func defaultRowTitle(_ index: Int) -> String {
             switch provider {
@@ -2715,6 +2718,7 @@ class UsageMonitor {
             "sentAt": nowISO,
             "time": nowISO,
             "displayTime": localTime,
+            "tzOffsetMinutes": tzOffsetMinutes,
             "data": [
                 [
                     "source": "codexbar",
