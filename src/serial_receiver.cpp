@@ -37,6 +37,8 @@ static const size_t SERIAL_FRAME_MAX_SIZE = SERIAL_BUF_SIZE - 1;
 static const char *SERIAL_FRAME_MAGIC = "AIM1";
 static const unsigned long DATA_TIMEOUT_MS = 300000;  // 5 minutes
 static const uint8_t USAGE_ROW_MAX = 3;
+// Fenstergroesse (Minuten) ab der ein Usage-Feld als "weekly" gilt: 7*24*60.
+static const int WEEKLY_WINDOW_MINUTES = 10080;
 
 // ============================================================
 // State
@@ -531,15 +533,15 @@ static void parse_json(const char *json_str) {
     JsonObject secondary = usage["secondary"];
     JsonObject tertiary = usage["tertiary"];
 
-    // --- Weekly: find field with windowMinutes >= 10080 ---
+    // --- Weekly: find field with windowMinutes >= WEEKLY_WINDOW_MINUTES ---
     // Check secondary first, then tertiary
     JsonObject weekly_source;
     int sec_window = secondary["windowMinutes"] | 0;
     int ter_window = tertiary["windowMinutes"] | 0;
 
-    if (sec_window >= 10080) {
+    if (sec_window >= WEEKLY_WINDOW_MINUTES) {
         weekly_source = secondary;
-    } else if (ter_window >= 10080) {
+    } else if (ter_window >= WEEKLY_WINDOW_MINUTES) {
         weekly_source = tertiary;
     } else {
         // Fallback: use secondary

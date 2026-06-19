@@ -30,7 +30,7 @@ static unsigned long last_connect_attempt = 0;
 
 static bool system_time_is_valid() {
     time_t now = time(nullptr);
-    return now > 1700000000;  // post-2023
+    return now > CLOCK_VALID_EPOCH;  // post-2023
 }
 
 static void load_credentials() {

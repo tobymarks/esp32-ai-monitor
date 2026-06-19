@@ -83,40 +83,54 @@ void backlight_apply_percent(uint8_t pct)
 //   - resizes LVGL display
 //   - recreates dashboard so layout uses new SCREEN_WIDTH/HEIGHT
 // ============================================================
-void apply_orientation(uint8_t orientation)
+// Lesbarer Name der Orientierung — nur fuer Logging.
+static const char *orientation_name(uint8_t orientation)
 {
-    const char *orient_name;
+    switch (orientation) {
+        case ORIENTATION_LANDSCAPE_LEFT:  return "landscape_left";
+        case ORIENTATION_LANDSCAPE_RIGHT: return "landscape_right";
+        default:                          return "portrait";
+    }
+}
+
+// Setzt TFT-Rotation und Runtime-Screen-Dimensionen passend zur Orientierung.
+// Gemeinsam genutzt von setup() (Boot, vor LVGL) und apply_orientation()
+// (Live-Wechsel) — frueher an beiden Stellen identisch dupliziert.
+static void apply_rotation(uint8_t orientation)
+{
     switch (orientation) {
         case ORIENTATION_LANDSCAPE_LEFT:
             tft.setRotation(3);
             SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
             SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
-            orient_name = "landscape_left";
             break;
         case ORIENTATION_LANDSCAPE_RIGHT:
             tft.setRotation(1);
             SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
             SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
-            orient_name = "landscape_right";
             break;
         case ORIENTATION_PORTRAIT:
         default:
             tft.setRotation(0);
             SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
             SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
-            orient_name = "portrait";
             break;
     }
+}
 
-    // Re-apply touch calibration (landscape uses rotation preset 5, portrait 2)
-    if (orientation == ORIENTATION_LANDSCAPE_LEFT ||
-        orientation == ORIENTATION_LANDSCAPE_RIGHT) {
-        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 5 };
-        tft.setTouch(calData);
-    } else {
-        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 2 };
-        tft.setTouch(calData);
-    }
+// Re-apply touch calibration (landscape uses rotation preset 5, portrait 2).
+static void apply_touch_cal(uint8_t orientation)
+{
+    const uint8_t preset = (orientation == ORIENTATION_LANDSCAPE_LEFT ||
+                            orientation == ORIENTATION_LANDSCAPE_RIGHT) ? 5 : 2;
+    uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, preset };
+    tft.setTouch(calData);
+}
+
+void apply_orientation(uint8_t orientation)
+{
+    apply_rotation(orientation);
+    apply_touch_cal(orientation);
 
     // Blank the panel so no garbled pixels leak through during recreate
     tft.fillScreen(TFT_BLACK);
@@ -132,7 +146,7 @@ void apply_orientation(uint8_t orientation)
     ui_dashboard_recreate();
 
     Serial.printf("[TFT] Rotation switched live to %s (%ux%u)\n",
-                  orient_name, SCREEN_WIDTH, SCREEN_HEIGHT);
+                  orientation_name(orientation), SCREEN_WIDTH, SCREEN_HEIGHT);
 }
 
 // ============================================================
@@ -270,36 +284,12 @@ void setup()
     // Set initial rotation + SCREEN_WIDTH/HEIGHT for LVGL display-create below.
     // We do it inline (apply_orientation expects an already-created LVGL display
     // plus a dashboard screen — neither exists yet at this point in boot).
-    switch (g_config.orientation) {
-        case ORIENTATION_LANDSCAPE_LEFT:
-            tft.setRotation(3);
-            SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
-            SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
-            break;
-        case ORIENTATION_LANDSCAPE_RIGHT:
-            tft.setRotation(1);
-            SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
-            SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
-            break;
-        case ORIENTATION_PORTRAIT:
-        default:
-            tft.setRotation(0);
-            SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
-            SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
-            break;
-    }
+    apply_rotation(g_config.orientation);
     tft.fillScreen(TFT_BLACK);
     Serial.printf("[TFT] Display initialized (%ux%u)\n", SCREEN_WIDTH, SCREEN_HEIGHT);
 
     // --- Touch init ---
-    if (g_config.orientation == ORIENTATION_LANDSCAPE_LEFT ||
-        g_config.orientation == ORIENTATION_LANDSCAPE_RIGHT) {
-        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 5 };
-        tft.setTouch(calData);
-    } else {
-        uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, 2 };
-        tft.setTouch(calData);
-    }
+    apply_touch_cal(g_config.orientation);
     Serial.println("[Touch] XPT2046 initialized via TFT_eSPI");
 
     // --- LVGL init ---

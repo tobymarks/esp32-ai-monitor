@@ -851,6 +851,44 @@ struct GitHubAsset: Codable {
 }
 
 // ============================================================
+// MARK: - Semantic Version
+// ============================================================
+
+/// Zentraler Vergleich semantischer Versionen. Ersetzt vier zuvor getrennt
+/// gepflegte, leicht abweichende Vergleichs-Implementierungen (AppUpdate-,
+/// Firmware-, SerialPort- und UsageMonitor-Manager). Strippt alle bekannten
+/// Tag-Praefixe (v / app-v / app-beta-v / fw-beta- / fw-beta-v), schneidet
+/// pro Komponente einen `-suffix` ab (z.B. "14-rc1" -> 14) und vergleicht
+/// komponentenweise; fehlende Stellen zaehlen als 0.
+enum SemVer {
+    static func parts(_ raw: String) -> [Int] {
+        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for prefix in ["fw-beta-v", "fw-beta-", "app-beta-v", "app-v", "v"] {
+            if cleaned.hasPrefix(prefix) {
+                cleaned = String(cleaned.dropFirst(prefix.count))
+                break
+            }
+        }
+        return cleaned.split(separator: ".").map { component in
+            Int(component.split(separator: "-").first ?? "") ?? 0
+        }
+    }
+
+    static func compare(_ a: String, _ b: String) -> ComparisonResult {
+        let aParts = parts(a)
+        let bParts = parts(b)
+        let count = max(aParts.count, bParts.count)
+        for i in 0..<count {
+            let av = i < aParts.count ? aParts[i] : 0
+            let bv = i < bParts.count ? bParts[i] : 0
+            if av > bv { return .orderedDescending }
+            if av < bv { return .orderedAscending }
+        }
+        return .orderedSame
+    }
+}
+
+// ============================================================
 // MARK: - App Update Manager
 // ============================================================
 
@@ -1088,16 +1126,7 @@ class AppUpdateManager {
     }
 
     private func compareVersions(_ a: String, _ b: String) -> ComparisonResult {
-        let aParts = a.split(separator: ".").compactMap { Int($0) }
-        let bParts = b.split(separator: ".").compactMap { Int($0) }
-        let count = max(aParts.count, bParts.count)
-        for i in 0..<count {
-            let av = i < aParts.count ? aParts[i] : 0
-            let bv = i < bParts.count ? bParts[i] : 0
-            if av > bv { return .orderedDescending }
-            if av < bv { return .orderedAscending }
-        }
-        return .orderedSame
+        SemVer.compare(a, b)
     }
 }
 
@@ -1321,18 +1350,7 @@ class FirmwareManager {
     }
 
     private func compareFirmwareVersions(_ a: String, _ b: String) -> ComparisonResult {
-        let normalizedA = a.hasPrefix("v") ? String(a.dropFirst()) : a
-        let normalizedB = b.hasPrefix("v") ? String(b.dropFirst()) : b
-        let aParts = normalizedA.split(separator: ".").compactMap { Int($0.split(separator: "-").first ?? "") }
-        let bParts = normalizedB.split(separator: ".").compactMap { Int($0.split(separator: "-").first ?? "") }
-        let count = max(aParts.count, bParts.count)
-        for i in 0..<count {
-            let av = i < aParts.count ? aParts[i] : 0
-            let bv = i < bParts.count ? bParts[i] : 0
-            if av > bv { return .orderedDescending }
-            if av < bv { return .orderedAscending }
-        }
-        return .orderedSame
+        SemVer.compare(a, b)
     }
 
     func downloadFirmware(completion: @escaping (Bool, String?) -> Void) {
@@ -1708,29 +1726,7 @@ class SerialPortManager {
     var isConnected: Bool { fileDescriptor >= 0 }
 
     private func compareSemanticVersion(_ a: String, _ b: String) -> ComparisonResult {
-        func parts(_ raw: String) -> [Int] {
-            var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            for prefix in ["fw-beta-v", "fw-beta-", "app-beta-v", "app-v", "v"] {
-                if cleaned.hasPrefix(prefix) {
-                    cleaned = String(cleaned.dropFirst(prefix.count))
-                    break
-                }
-            }
-            return cleaned.split(separator: ".").map { component in
-                Int(component.split(separator: "-").first ?? "") ?? 0
-            }
-        }
-
-        let aParts = parts(a)
-        let bParts = parts(b)
-        let count = max(aParts.count, bParts.count)
-        for index in 0..<count {
-            let av = index < aParts.count ? aParts[index] : 0
-            let bv = index < bParts.count ? bParts[index] : 0
-            if av > bv { return .orderedDescending }
-            if av < bv { return .orderedAscending }
-        }
-        return .orderedSame
+        SemVer.compare(a, b)
     }
 
     private func supportsFramedJSONTransport() -> Bool {
@@ -2490,29 +2486,7 @@ class UsageMonitor {
     }
 
     private func compareSemanticVersion(_ a: String, _ b: String) -> ComparisonResult {
-        func parts(_ raw: String) -> [Int] {
-            var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            for prefix in ["fw-beta-v", "fw-beta-", "app-beta-v", "app-v", "v"] {
-                if cleaned.hasPrefix(prefix) {
-                    cleaned = String(cleaned.dropFirst(prefix.count))
-                    break
-                }
-            }
-            return cleaned.split(separator: ".").map { component in
-                Int(component.split(separator: "-").first ?? "") ?? 0
-            }
-        }
-
-        let aParts = parts(a)
-        let bParts = parts(b)
-        let count = max(aParts.count, bParts.count)
-        for index in 0..<count {
-            let av = index < aParts.count ? aParts[index] : 0
-            let bv = index < bParts.count ? bParts[index] : 0
-            if av > bv { return .orderedDescending }
-            if av < bv { return .orderedAscending }
-        }
-        return .orderedSame
+        SemVer.compare(a, b)
     }
 
     // ---- Sende-Funktionen ----
@@ -2567,6 +2541,21 @@ class UsageMonitor {
         sendLastUsageSnapshotIfAvailable()
     }
 
+    // Gecachte Formatter — werden bei jedem Frame-Send genutzt; die Erzeugung
+    // eines DateFormatter ist teuer. Der HH:mm-Formatter bekommt seine
+    // timeZone pro Aufruf gesetzt (sie kann sich aendern); alle Zugriffe
+    // laufen auf dem Main-Thread.
+    private static let frameISOFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static let frameTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
     /// Schickt ein synthetisches, klar erkennbares Testbild ans Display. Das ist
     /// fuer Setup/Diagnose gedacht und nutzt dasselbe Envelope-Format wie echte
     /// CodexBar-Daten.
@@ -2577,8 +2566,7 @@ class UsageMonitor {
         let provider = CodexBarProvider.normalized(Settings.shared.selectedProvider)
         let activeProvider = provider.rawValue
 
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime]
+        let isoFormatter = Self.frameISOFormatter
         let now = Date()
         let nowISO = isoFormatter.string(from: now)
         let frameId = allocateFrameId()
@@ -2586,8 +2574,7 @@ class UsageMonitor {
         let secondaryReset = isoFormatter.string(from: now.addingTimeInterval(2 * 24 * 3600 + 4 * 3600))
         let tertiaryReset = isoFormatter.string(from: now.addingTimeInterval(6 * 3600))
 
-        let timeFmt = DateFormatter()
-        timeFmt.dateFormat = "HH:mm"
+        let timeFmt = Self.frameTimeFormatter
         timeFmt.timeZone = Settings.shared.effectiveTimeZone()
         let localTime = timeFmt.string(from: now)
         let tzOffsetMinutes = Settings.shared.effectiveTimeZone().secondsFromGMT(for: now) / 60
@@ -2765,14 +2752,12 @@ class UsageMonitor {
         let secondaryWindow = entry.secondary?.windowMinutes ?? 10080
         let tertiaryWindow = entry.tertiary?.windowMinutes ?? 10080
 
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime]
+        let isoFormatter = Self.frameISOFormatter
         let now = Date()
         let nowISO = isoFormatter.string(from: now)
         let frameId = allocateFrameId()
 
-        let timeFmt = DateFormatter()
-        timeFmt.dateFormat = "HH:mm"
+        let timeFmt = Self.frameTimeFormatter
         // Ab v1.12.0 berücksichtigt `displayTime` die im Settings-Fenster
         // gewählte Zeitzone. „auto" folgt weiterhin der System-Zeitzone.
         timeFmt.timeZone = Settings.shared.effectiveTimeZone()

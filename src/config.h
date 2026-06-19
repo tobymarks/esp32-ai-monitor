@@ -91,6 +91,15 @@
 #define PIN_LDR        34
 
 // ============================================================
+// Uhr-Gueltigkeit
+// ============================================================
+// Schwelle (Unix-Epoch, ~2023-11) ab der die Systemuhr als "echt gesetzt"
+// gilt. Vor dem ersten Mac-Frame bzw. NTP-Sync steht die RTC auf 1970; ein
+// time(nullptr) groesser dieser Schwelle bedeutet, dass Uhrzeit + TZ-Offset
+// gueltig sind und angezeigt werden duerfen.
+#define CLOCK_VALID_EPOCH 1700000000
+
+// ============================================================
 // Display dimensions (physical panel)
 // ============================================================
 #define DISPLAY_SHORT_SIDE 240

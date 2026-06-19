@@ -145,7 +145,7 @@ static void on_long_press(lv_event_t *e) {
 // ============================================================
 static void format_standby_clock(char *buf, size_t len) {
     time_t now = time(nullptr);
-    if (now > 1700000000) {  // system clock + timezone offset have been set by the Mac frame
+    if (now > CLOCK_VALID_EPOCH) {  // system clock + timezone offset have been set by the Mac frame
         struct tm local;
         localtime_r(&now, &local);
         strftime(buf, len, "%H:%M", &local);
@@ -659,7 +659,7 @@ void ui_dashboard_update(const MonitorState &state) {
     state_stored = true;
 
     const bool has_recent_data = serial_has_recent_data();
-    const bool clock_is_set = time(nullptr) > 1700000000;
+    const bool clock_is_set = time(nullptr) > CLOCK_VALID_EPOCH;
     const bool should_show_standby = !has_recent_data && (state.usage.valid || clock_is_set);
 
     // Hide splash overlay once we receive the first valid data
@@ -693,7 +693,7 @@ void ui_dashboard_update(const MonitorState &state) {
     // ---- Clock (system time set via settimeofday + timezone offset from Mac) ----
     if (lbl_time != nullptr) {
         time_t now = time(nullptr);
-        if (now > 1700000000) {  // system clock has been set (post-2023)
+        if (now > CLOCK_VALID_EPOCH) {  // system clock has been set (post-2023)
             struct tm local;
             localtime_r(&now, &local);
             char tbuf[6];

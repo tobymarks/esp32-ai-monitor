@@ -411,12 +411,23 @@ final class CodexBarSource {
         }
     }
 
+    // Gecachte Formatter — Erzeugung ist teuer und die Konfiguration ist
+    // konstant; ISO8601DateFormatter ist fuer reines Parsen thread-safe.
+    // Gecachte Formatter — Erzeugung ist teuer und die Konfiguration ist
+    // konstant; ISO8601DateFormatter ist fuer reines Parsen thread-safe.
+    private static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
     private func parseISO8601(_ s: String) -> Date? {
-        let f1 = ISO8601DateFormatter()
-        f1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = f1.date(from: s) { return d }
-        let f2 = ISO8601DateFormatter()
-        f2.formatOptions = [.withInternetDateTime]
-        return f2.date(from: s)
+        if let d = Self.isoFractional.date(from: s) { return d }
+        return Self.isoPlain.date(from: s)
     }
 }
