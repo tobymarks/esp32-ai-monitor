@@ -3,7 +3,7 @@ name: Build & Deploy Installer
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['v*', 'fw-beta-v*']
     paths:
       - 'src/**'
       - 'platformio.ini'
@@ -26,15 +26,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Bei einem Release-Tag (v*) muss APP_VERSION in src/config.h exakt zum
-      # Tag passen, sonst wird eine falsch versionierte Firmware released.
+      # Bei einem Release-Tag (v* / fw-beta-v*) muss APP_VERSION in src/config.h
+      # exakt zum Tag passen, sonst wird eine falsch versionierte Firmware
+      # released.
       - name: Verify firmware version matches tag
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/fw-beta-v')
         run: |
-          TAG="${GITHUB_REF#refs/tags/v}"
+          REF="${GITHUB_REF#refs/tags/}"
+          if [[ "$REF" == fw-beta-v* ]]; then TAG="${REF#fw-beta-v}"; else TAG="${REF#v}"; fi
           CODE=$(grep '#define APP_VERSION' src/config.h | head -1 | sed 's/.*"\(.*\)".*/\1/')
           if [ "$TAG" != "$CODE" ]; then
-            echo "::error::Tag v$TAG passt nicht zu APP_VERSION '$CODE' in src/config.h"
+            echo "::error::Tag $REF passt nicht zu APP_VERSION '$CODE' in src/config.h (erwartet $TAG)"
             exit 1
           fi
           echo "Version OK: $CODE"
@@ -132,7 +134,7 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/fw-beta-v')
     runs-on: ubuntu-latest
     steps:
       - name: Download firmware binaries
@@ -145,6 +147,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
+          # fw-beta-v*-Tags werden als prerelease veroeffentlicht, damit der
+          # Firmware-Updater sie nur im Beta-Kanal anbietet.
+          prerelease: ${{ startsWith(github.ref, 'refs/tags/fw-beta-v') }}
           generate_release_notes: true
           files: |
             release-assets/ai-monitor.bin

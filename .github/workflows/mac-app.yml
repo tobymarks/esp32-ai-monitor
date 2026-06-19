@@ -7,6 +7,7 @@ on:
   push:
     tags:
       - 'app-v*.*.*'
+      - 'app-beta-v*'
   workflow_dispatch:
     inputs:
       upload_to_release:
@@ -31,12 +32,13 @@ jobs:
         uses: actions/checkout@v4
 
       # Die App-Version steht an drei manuell gepflegten Stellen. Bei einem
-      # app-v*-Tag muessen alle drei zum Tag passen, sonst meldet der In-App-
-      # Updater eine andere Version als ausgeliefert wird.
+      # app-v* / app-beta-v*-Tag muessen alle drei zum Tag passen, sonst meldet
+      # der In-App-Updater eine andere Version als ausgeliefert wird.
       - name: Verify app version matches tag
-        if: startsWith(github.ref, 'refs/tags/app-v')
+        if: startsWith(github.ref, 'refs/tags/app-v') || startsWith(github.ref, 'refs/tags/app-beta-v')
         run: |
-          TAG="${GITHUB_REF#refs/tags/app-v}"
+          REF="${GITHUB_REF#refs/tags/}"
+          if [[ "$REF" == app-beta-v* ]]; then TAG="${REF#app-beta-v}"; else TAG="${REF#app-v}"; fi
           CODE=$(grep 'let kAppVersion' companion/Sources/main.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
           BUILDSH=$(grep '^APP_VERSION=' companion/build.sh | head -1 | sed 's/.*"\(.*\)".*/\1/')
           PLIST=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' companion/Resources/Info.plist)
@@ -44,7 +46,7 @@ jobs:
           for pair in "kAppVersion:$CODE" "build.sh:$BUILDSH" "Info.plist:$PLIST"; do
             name="${pair%%:*}"; val="${pair#*:}"
             if [ "$val" != "$TAG" ]; then
-              echo "::error::Tag app-v$TAG passt nicht zu $name '$val'"
+              echo "::error::Tag $REF passt nicht zu $name '$val' (erwartet Version $TAG)"
               fail=1
             fi
           done
@@ -106,13 +108,27 @@ jobs:
       # GitHub-Secrets hinterlegt, wird dieser Guard entfernt und CI übernimmt
       # Signing/Notarization komplett.
       - name: Attach assets to GitHub Release (guarded)
-        if: startsWith(github.ref, 'refs/tags/app-v')
+        if: startsWith(github.ref, 'refs/tags/app-v') || startsWith(github.ref, 'refs/tags/app-beta-v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          # Prüfe, ob AIMonitor.zip bereits als Release-Asset existiert. Wenn
-          # ja: lokaler Build war zuerst da (signiert + stapled) — CI-Assets
+          # Release anlegen, falls es noch nicht existiert. Beta-Tags
+          # (app-beta-v*) werden als prerelease markiert, damit der In-App-
+          # Updater sie ausschliesslich im Beta-Kanal anbietet. Bei stabilen
+          # app-v*-Tags legt i.d.R. der manuelle, signierte Upload das Release
+          # an — dieser create-Fallback greift nur, wenn keiner existiert.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if [[ "$TAG" == app-beta-v* ]]; then
+              gh release create "$TAG" --prerelease --title "$TAG" \
+                --notes "Automatisierter Beta-Build (ad-hoc signiert)."
+            else
+              gh release create "$TAG" --title "$TAG" \
+                --notes "Automatisierter Build."
+            fi
+          fi
+          # Guard: Prüfe, ob AIMonitor.zip bereits als Release-Asset existiert.
+          # Wenn ja: lokaler Build war zuerst da (signiert + stapled) — CI-Assets
           # NICHT überschreiben.
           if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | grep -q "^AIMonitor.zip$"; then
             echo "Release $TAG already has AIMonitor.zip — assuming stapled local build. Skipping CI upload."
