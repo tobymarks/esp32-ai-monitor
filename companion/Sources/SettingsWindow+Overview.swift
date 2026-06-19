@@ -576,12 +576,15 @@ extension SettingsWindowController {
     }
 
     @objc private func reloadCodexBar() {
-        if Settings.shared.codexBarSnapshotBookmarkData == nil {
-            configureCodexBarAccess()
-            return
-        }
-        monitor?.codexBar.loadOnce()
+        // Erst neu laden. Liefert die aktuelle Quelle keine frischen Daten
+        // (nicht eingerichtet, stale, missing, Parse-Fehler), direkt den
+        // Auswahl-Dialog öffnen — deckt auch den Fall ab, dass ein alter
+        // Bookmark auf eine inzwischen verschobene/veraltete Datei zeigt.
+        let status = monitor?.codexBar.loadOnce()
         update()
+        if status?.isOK != true {
+            configureCodexBarAccess()
+        }
     }
 
     private func configureCodexBarAccess() {
