@@ -41,6 +41,11 @@ swiftc \
   Sources/main.swift \
   Sources/CodexBarSource.swift \
   Sources/SettingsWindow.swift \
+  Sources/SettingsWindow+Overview.swift \
+  Sources/SettingsWindow+Display.swift \
+  Sources/SettingsWindow+Connection.swift \
+  Sources/SettingsWindow+Updates.swift \
+  Sources/SettingsWindow+Diagnostics.swift \
   -framework Cocoa \
   -framework Security \
   -framework ServiceManagement \
