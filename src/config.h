@@ -44,6 +44,44 @@
 #define PIN_TOUCH_CS   33
 #define PIN_TOUCH_IRQ  36
 
+// --- Pin-Konsistenz-Guard ---------------------------------------------------
+// Die TFT_eSPI-Library bekommt ihre Pins als Compile-Makros (TFT_*, TOUCH_*)
+// aus platformio.ini; unsere eigene LEDC-Backlight- und Touch-Logik nutzt die
+// PIN_*-Defines hier. Beide Quellen MUESSEN denselben physischen GPIO meinen.
+// Da config.h nach den -D-Build-Flags kompiliert, sind die TFT_eSPI-Makros
+// hier sichtbar — dieser Guard macht jede Divergenz zwischen den beiden
+// Pin-Quellen zu einem Compile-Fehler statt zu einem stillen Hardware-Bug.
+#if defined(TFT_MISO) && (PIN_TFT_MISO != TFT_MISO)
+#error "PIN_TFT_MISO (config.h) != TFT_MISO (platformio.ini)"
+#endif
+#if defined(TFT_MOSI) && (PIN_TFT_MOSI != TFT_MOSI)
+#error "PIN_TFT_MOSI (config.h) != TFT_MOSI (platformio.ini)"
+#endif
+#if defined(TFT_SCLK) && (PIN_TFT_SCLK != TFT_SCLK)
+#error "PIN_TFT_SCLK (config.h) != TFT_SCLK (platformio.ini)"
+#endif
+#if defined(TFT_CS) && (PIN_TFT_CS != TFT_CS)
+#error "PIN_TFT_CS (config.h) != TFT_CS (platformio.ini)"
+#endif
+#if defined(TFT_DC) && (PIN_TFT_DC != TFT_DC)
+#error "PIN_TFT_DC (config.h) != TFT_DC (platformio.ini)"
+#endif
+#if defined(TFT_RST) && (PIN_TFT_RST != TFT_RST)
+#error "PIN_TFT_RST (config.h) != TFT_RST (platformio.ini)"
+#endif
+#if defined(TOUCH_CS) && (PIN_TOUCH_CS != TOUCH_CS)
+#error "PIN_TOUCH_CS (config.h) != TOUCH_CS (platformio.ini)"
+#endif
+#if defined(TOUCH_MOSI) && (PIN_TOUCH_MOSI != TOUCH_MOSI)
+#error "PIN_TOUCH_MOSI (config.h) != TOUCH_MOSI (platformio.ini)"
+#endif
+#if defined(TOUCH_MISO) && (PIN_TOUCH_MISO != TOUCH_MISO)
+#error "PIN_TOUCH_MISO (config.h) != TOUCH_MISO (platformio.ini)"
+#endif
+#if defined(TOUCH_CLK) && (PIN_TOUCH_CLK != TOUCH_CLK)
+#error "PIN_TOUCH_CLK (config.h) != TOUCH_CLK (platformio.ini)"
+#endif
+
 // --- Onboard RGB LED ---
 #define PIN_LED_R       4
 #define PIN_LED_G      16

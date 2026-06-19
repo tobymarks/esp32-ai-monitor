@@ -27,9 +27,5 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
 	</dict>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>SUFeedURL</key>
-	<string>https://tobymarks.github.io/esp32-ai-monitor/appcast.xml</string>
 </dict>
 </plist>

@@ -26,6 +26,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Bei einem Release-Tag (v*) muss APP_VERSION in src/config.h exakt zum
+      # Tag passen, sonst wird eine falsch versionierte Firmware released.
+      - name: Verify firmware version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          CODE=$(grep '#define APP_VERSION' src/config.h | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$TAG" != "$CODE" ]; then
+            echo "::error::Tag v$TAG passt nicht zu APP_VERSION '$CODE' in src/config.h"
+            exit 1
+          fi
+          echo "Version OK: $CODE"
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
