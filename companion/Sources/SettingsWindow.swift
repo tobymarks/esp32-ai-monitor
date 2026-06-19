@@ -102,6 +102,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var timeZonePopup: NSPopUpButton!
     private var brightnessSlider: NSSlider!
     private var brightnessValueLabel: NSTextField!
+    private var brightnessPersistTimer: Timer?
     private var lastUpdateLabel: NSTextField!
 
     // Zeitzone: Reihenfolge der häufigen Einträge. Erster Eintrag ist
@@ -188,6 +189,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         stopRefreshTimer()
+        brightnessPersistTimer?.invalidate()
+        brightnessPersistTimer = nil
     }
 
     private func startRefreshTimer() {
@@ -2552,7 +2555,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc private func brightnessChanged() {
         let pct = Int(brightnessSlider.doubleValue.rounded())
         brightnessValueLabel.stringValue = "\(pct) %"
-        monitor?.sendBrightnessToESP32(pct)
+        monitor?.sendBrightnessToESP32(pct, persist: false)
+        brightnessPersistTimer?.invalidate()
+        brightnessPersistTimer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            let finalPct = Int(self.brightnessSlider.doubleValue.rounded())
+            self.monitor?.sendBrightnessToESP32(finalPct, persist: true)
+        }
     }
 
     @objc fileprivate func flashFirmware() {

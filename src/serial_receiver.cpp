@@ -272,7 +272,9 @@ static bool parse_command(JsonDocument &doc) {
         return true;
     }
 
-    // --- set_brightness (0..100 percent, persisted in NVS) ---
+    // --- set_brightness (0..100 percent) ---
+    // `persist=false` applies the PWM live without writing NVS. This lets the
+    // Mac app preview slider changes and save only the final debounced value.
     if (strcmp(cmd, "set_brightness") == 0) {
         if (!doc["value"].is<int>()) {
             Serial.println("{\"type\":\"error\",\"message\":\"set_brightness: missing or invalid value\"}");
@@ -281,10 +283,15 @@ static bool parse_command(JsonDocument &doc) {
         int val = doc["value"];
         if (val < BRIGHTNESS_MIN_PERCENT) val = BRIGHTNESS_MIN_PERCENT;
         if (val > BRIGHTNESS_MAX_PERCENT) val = BRIGHTNESS_MAX_PERCENT;
+        bool persist = doc["persist"] | true;
         g_config.brightness_pct = (uint8_t)val;
-        config_save(g_config);
         backlight_apply_percent(g_config.brightness_pct);
-        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_brightness\",\"value\":%d}\n", val);
+        if (persist) {
+            config_save(g_config);
+        }
+        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_brightness\",\"value\":%d,\"persist\":%s}\n",
+                      val,
+                      persist ? "true" : "false");
         return true;
     }
 

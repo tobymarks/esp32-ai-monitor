@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.12 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.13 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.12"
+let kAppVersion = "1.20.13"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -2202,6 +2202,7 @@ class SerialPortManager {
 class UsageMonitor {
     private static let serialSchemaVersion = 1
     private static let serialAckFirmwareVersion = "2.12.1"
+    private static let serialBrightnessPreviewFirmwareVersion = "2.12.4"
     private static let serialAutoRepairThreshold = 3
     private static let serialAutoRepairCooldown: TimeInterval = 60
 
@@ -2413,6 +2414,13 @@ class UsageMonitor {
         return compareSemanticVersion(version, Self.serialAckFirmwareVersion) != .orderedAscending
     }
 
+    private func firmwareSupportsBrightnessPreview() -> Bool {
+        let version = serialPort.deviceFirmwareVersion
+            ?? Settings.shared.installedFirmwareVersion
+            ?? ""
+        return compareSemanticVersion(version, Self.serialBrightnessPreviewFirmwareVersion) != .orderedAscending
+    }
+
     private func compareSemanticVersion(_ a: String, _ b: String) -> ComparisonResult {
         func parts(_ raw: String) -> [Int] {
             var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -2611,14 +2619,19 @@ class UsageMonitor {
         }
     }
 
-    /// Sendet den aktuellen Brightness-Wert (0..100) an den ESP32. Persistenz
-    /// liegt in NVS auf der Firmware; hier nur Cache für UI-Vorbelegung.
-    func sendBrightnessToESP32(_ percent: Int) {
+    /// Sendet den aktuellen Brightness-Wert (0..100) an den ESP32.
+    /// `persist=false` nutzt neue Firmware als Live-Preview ohne NVS-Write.
+    func sendBrightnessToESP32(_ percent: Int, persist: Bool = true) {
         let clamped = max(5, min(100, percent))
         Settings.shared.lastKnownBrightness = clamped
         guard serialPort.isReadyForCommands else { return }
-        let cmd = "{\"cmd\":\"set_brightness\",\"value\":\(clamped)}"
-        if serialPort.sendJSON(cmd) { NSLog("[Serial] Sent set_brightness: %d", clamped) }
+        if !persist && !firmwareSupportsBrightnessPreview() {
+            return
+        }
+        let cmd = "{\"cmd\":\"set_brightness\",\"value\":\(clamped),\"persist\":\(persist ? "true" : "false")}"
+        if serialPort.sendJSON(cmd) {
+            NSLog("[Serial] Sent set_brightness: %d persist=%@", clamped, persist ? "true" : "false")
+        }
     }
 
     func sendStandbyToESP32() {
