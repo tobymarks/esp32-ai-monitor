@@ -9,6 +9,7 @@
 #include "ui_common.h"
 #include "ui_dashboard.h"
 #include "config.h"
+#include "providers.h"
 #include "localization.h"
 
 #include <lvgl.h>
@@ -113,9 +114,9 @@ void ui_detail_create(const MonitorState &state) {
 
     const UsageData &data = state.usage;
     // v2.9.0+: Label dynamisch aus dem Envelope (state.provider_label).
-    const char *provider_name = state.provider_label[0] != '\0' ? state.provider_label
-                                                                : ((state.provider == PROVIDER_OPENAI) ? "CODEX"
-                                                                 : ((state.provider == PROVIDER_ANTIGRAVITY) ? "ANTIGRAVITY" : "CLAUDE"));
+    const char *provider_name = state.provider_label[0] != '\0'
+                                    ? state.provider_label
+                                    : provider_label_from_id(state.provider);
     lv_color_t brand_color = ui_bar_color(state.provider);
 
     int16_t sw = SCREEN_WIDTH;

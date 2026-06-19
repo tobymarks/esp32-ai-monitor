@@ -72,6 +72,38 @@ enum CodexBarProvider: String, CaseIterable {
             return "Antigravity"
         }
     }
+
+    /// `true`, wenn der Provider drei feste Modell-Zeilen (IDs primary/secondary/
+    /// tertiary) statt der generischen Session/Weekly/Tertiary-Fenster nutzt.
+    /// Steuert den Row-Aufbau im Envelope. Neuer Provider dieser Art: hier ergänzen.
+    var usesModelRows: Bool {
+        switch self {
+        case .antigravity: return true
+        case .claude, .codex: return false
+        }
+    }
+
+    /// Default-Titel je Zeilenindex; ein neuer Provider definiert seine Titel
+    /// ausschliesslich hier statt in verstreuten switch-Bloecken.
+    var defaultRowTitles: [String] {
+        switch self {
+        case .antigravity: return ["Claude", "Gemini Pro", "Gemini Flash"]
+        case .claude, .codex: return ["Session", "Weekly", "Tertiary"]
+        }
+    }
+
+    /// Titel fuer Zeilen jenseits von `defaultRowTitles`.
+    var fallbackRowTitle: String {
+        switch self {
+        case .antigravity: return "Model"
+        case .claude, .codex: return "Window"
+        }
+    }
+
+    /// Default-Titel fuer einen konkreten Zeilenindex (mit Fallback).
+    func defaultRowTitle(at index: Int) -> String {
+        index >= 0 && index < defaultRowTitles.count ? defaultRowTitles[index] : fallbackRowTitle
+    }
 }
 
 // MARK: - Status-Enum

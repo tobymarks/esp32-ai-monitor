@@ -26,6 +26,7 @@
 #include "ui_common.h"
 #include "ui_settings.h"
 #include "config.h"
+#include "providers.h"
 #include "localization.h"
 #include "serial_receiver.h"
 #include "wifi_time.h"
@@ -95,13 +96,10 @@ static lv_obj_t *standby_overlay    = nullptr;
 static lv_obj_t *standby_clock      = nullptr;
 static lv_obj_t *standby_wifi       = nullptr;
 
+// Default per-row titles for Antigravity, sourced from the central
+// provider table ("Claude" / "Gemini Pro" / "Gemini Flash" / "Model").
 static const char* ag_default_title(uint8_t idx) {
-    switch (idx) {
-        case 0: return "Claude";
-        case 1: return "Gemini Pro";
-        case 2: return "Gemini Flash";
-        default: return "Model";
-    }
+    return default_row_title_for_provider(PROVIDER_ANTIGRAVITY, idx);
 }
 
 // ============================================================

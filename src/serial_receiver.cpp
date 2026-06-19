@@ -16,6 +16,7 @@
 #include "serial_receiver.h"
 #include "api_common.h"
 #include "config.h"
+#include "providers.h"
 #include "config_store.h"
 #include "localization.h"
 #include "ui_common.h"
@@ -79,54 +80,11 @@ void serial_request_ui_rebuild() {
 
 // ============================================================
 // Provider helpers
+// ------------------------------------------------------------
+// provider_from_string(), provider_label_from_id() and
+// default_row_title_for_provider() now live in providers.cpp and
+// read from the central PROVIDERS[] table.
 // ============================================================
-static uint8_t provider_from_string(const char *raw) {
-    if (raw == nullptr || raw[0] == '\0') return PROVIDER_CLAUDE;
-
-    char normalized[16];
-    size_t i = 0;
-    while (raw[i] != '\0' && i < sizeof(normalized) - 1) {
-        char c = raw[i];
-        if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
-        normalized[i++] = c;
-    }
-    normalized[i] = '\0';
-
-    if (strcmp(normalized, "codex") == 0) return PROVIDER_OPENAI;
-    if (strcmp(normalized, "antigravity") == 0) return PROVIDER_ANTIGRAVITY;
-    return PROVIDER_CLAUDE;
-}
-
-static const char* provider_label_from_id(uint8_t provider) {
-    switch (provider) {
-        case PROVIDER_OPENAI:
-            return "CODEX";
-        case PROVIDER_ANTIGRAVITY:
-            return "ANTIGRAVITY";
-        case PROVIDER_CLAUDE:
-        default:
-            return "CLAUDE";
-    }
-}
-
-static const char* default_row_title_for_provider(uint8_t provider, uint8_t index) {
-    if (provider == PROVIDER_ANTIGRAVITY) {
-        switch (index) {
-            case 0: return "Claude";
-            case 1: return "Gemini Pro";
-            case 2: return "Gemini Flash";
-            default: return "Model";
-        }
-    }
-
-    switch (index) {
-        case 0: return "Session";
-        case 1: return "Weekly";
-        case 2: return "Tertiary";
-        default: return "Window";
-    }
-}
-
 static void clear_usage_rows(UsageData &usage) {
     usage.row_count = 0;
     for (uint8_t i = 0; i < USAGE_ROW_MAX; i++) {

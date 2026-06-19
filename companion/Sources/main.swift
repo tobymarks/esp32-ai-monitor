@@ -2583,12 +2583,8 @@ class UsageMonitor {
         let tzOffsetMinutes = Settings.shared.effectiveTimeZone().secondsFromGMT(for: now) / 60
 
         func rowTitle(_ index: Int) -> String {
-            if provider == .antigravity {
-                switch index {
-                case 0: return "Claude"
-                case 1: return "Gemini Pro"
-                default: return "Gemini Flash"
-                }
+            if provider.usesModelRows {
+                return provider.defaultRowTitle(at: index)
             }
             switch index {
             case 0: return "Test Session"
@@ -2812,22 +2808,7 @@ class UsageMonitor {
         let tzOffsetMinutes = Settings.shared.effectiveTimeZone().secondsFromGMT(for: now) / 60
 
         func defaultRowTitle(_ index: Int) -> String {
-            switch provider {
-            case .antigravity:
-                switch index {
-                case 0: return "Claude"
-                case 1: return "Gemini Pro"
-                case 2: return "Gemini Flash"
-                default: return "Model"
-                }
-            case .claude, .codex:
-                switch index {
-                case 0: return "Session"
-                case 1: return "Weekly"
-                case 2: return "Tertiary"
-                default: return "Window"
-                }
-            }
+            provider.defaultRowTitle(at: index)
         }
 
         let windows: [CodexBarWindow?] = [entry.primary, entry.secondary, entry.tertiary]
@@ -2839,7 +2820,7 @@ class UsageMonitor {
             rowsById[id] = row
         }
 
-        if provider == .antigravity {
+        if provider.usesModelRows {
             let antigravityIds = ["primary", "secondary", "tertiary"]
             for idx in 0..<3 {
                 let id = antigravityIds[idx]

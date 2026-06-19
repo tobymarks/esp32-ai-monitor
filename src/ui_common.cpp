@@ -4,6 +4,7 @@
 
 #include "ui_common.h"
 #include "config.h"
+#include "providers.h"
 #include "localization.h"
 #include <Arduino.h>
 #include <stdio.h>
@@ -370,15 +371,9 @@ void format_reset_date(time_t reset_epoch, char *buf, size_t len) {
 // Usage-indicator color based on provider (fixed brand colors)
 // ============================================================
 lv_color_t ui_bar_color(uint8_t provider) {
-    switch (provider) {
-        case PROVIDER_OPENAI:
-            return UI_COLOR_OPENAI;
-        case PROVIDER_ANTIGRAVITY:
-            return UI_COLOR_ANTIGRAVITY;
-        case PROVIDER_CLAUDE:
-        default:
-            return UI_COLOR_ANTHROPIC;
-    }
+    // Brand colors come from the central provider table. They are fixed
+    // (theme-independent), identical to lv_color_hex(COLOR_*).
+    return lv_color_hex(provider_info_for_id(provider)->bar_color);
 }
 
 // ============================================================
