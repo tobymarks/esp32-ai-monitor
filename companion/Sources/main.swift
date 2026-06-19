@@ -2261,6 +2261,13 @@ class UsageMonitor {
     let codexBar: CodexBarSource
     var lastUpdateDate: Date?
     var onUpdate: (() -> Void)?
+    // Serielle Queue fuer den blockierenden Usage-Frame-Versand. Der Envelope
+    // wird auf dem Main-Thread gebaut (liest Settings/CodexBar gefahrlos),
+    // nur der bis zu ~0.8 s blockierende send+ACK-Zyklus laeuft hier — so
+    // friert die UI beim 60-s-Heartbeat und bei Provider-Wechseln nicht ein.
+    // Reihenfolge bleibt durch die serielle Queue erhalten; der ioLock im
+    // SerialPortManager schuetzt zusaetzlich gegen Command-Sends vom Main-Thread.
+    private let serialSendQueue = DispatchQueue(label: "de.aimonitor.serial-send")
     var onOutdatedFirmwareDetected: ((_ deviceName: String, _ installedVersion: String, _ latestVersion: String) -> Void)?
     private var heartbeatTimer: Timer?
     private var nextFrameId = 1
@@ -2714,19 +2721,30 @@ class UsageMonitor {
         let frameId = allocateFrameId()
         let built = buildUsageEnvelope(entry: entry, provider: provider, frameId: frameId)
 
+        // Envelope + Serialisierung laufen hier auf dem Main-Thread (schnell,
+        // liest State gefahrlos). Nur der blockierende send+ACK wird auf die
+        // serielle Queue ausgelagert; das Ergebnis-Handling (State/UI) kehrt
+        // auf den Main-Thread zurueck.
+        let jsonData: Data
         do {
-            let jsonData = try JSONSerialization.data(withJSONObject: built.dict)
-            if let jsonString = String(data: jsonData, encoding: .utf8) {
-                let receipt = serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
-                if registerFrameReceipt(receipt, source: "usage") {
-                    lastUpdateDate = Date()
+            jsonData = try JSONSerialization.data(withJSONObject: built.dict)
+        } catch {
+            NSLog("[Serial] JSON encode error: %@", error.localizedDescription)
+            return
+        }
+        guard let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+
+        serialSendQueue.async { [weak self] in
+            guard let self = self else { return }
+            let receipt = self.serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
+            DispatchQueue.main.async {
+                if self.registerFrameReceipt(receipt, source: "usage") {
+                    self.lastUpdateDate = Date()
                     NSLog("[Serial] Sent usage frame #%d (%d bytes) provider=%@ s=%d%% w=%d%% t=%d%% rows=%d",
                           frameId, jsonData.count, built.activeProvider,
                           built.primaryPercent, built.secondaryPercent, built.tertiaryPercent, built.rowCount)
                 }
             }
-        } catch {
-            NSLog("[Serial] JSON encode error: %@", error.localizedDescription)
         }
     }
 
