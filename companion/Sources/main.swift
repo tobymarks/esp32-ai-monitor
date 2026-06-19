@@ -889,6 +889,68 @@ enum SemVer {
 }
 
 // ============================================================
+// MARK: - Release Fetcher
+// ============================================================
+
+/// Kapselt den gemeinsamen GitHub-Releases-Poll von AppUpdateManager und
+/// FirmwareManager: Dedup paralleler Aufrufe (isChecking + wartende
+/// completions), HTTP-Request mit Header/Timeout, Decode nach [GitHubRelease].
+/// Der `handle`-Block (im jeweiligen Manager) bekommt die dekodierten Releases
+/// (oder nil bei Netz-/HTTP-/Decode-Fehler), macht Selektion + State-Update und
+/// liefert das hasUpdate-Bool, das an alle wartenden completions geht. `handle`
+/// läuft — wie zuvor — auf dem URLSession-Background-Thread.
+final class ReleaseFetcher {
+    private let logPrefix: String
+    private var isChecking = false
+    private var pendingCompletions: [(Bool) -> Void] = []
+
+    init(logPrefix: String) { self.logPrefix = logPrefix }
+
+    func check(handle: @escaping ([GitHubRelease]?) -> Bool,
+               completion: @escaping (Bool) -> Void) {
+        if isChecking {
+            pendingCompletions.append(completion)
+            return
+        }
+        isChecking = true
+        pendingCompletions = [completion]
+
+        guard let url = URL(string: kGitHubReleasesAPI) else { finish(handle(nil)); return }
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            if let error = error {
+                NSLog("[%@] GitHub API error: %@", self.logPrefix, error.localizedDescription)
+                self.finish(handle(nil)); return
+            }
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                  let data = data else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                NSLog("[%@] GitHub API HTTP %d", self.logPrefix, status)
+                self.finish(handle(nil)); return
+            }
+            do {
+                let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+                self.finish(handle(releases))
+            } catch {
+                NSLog("[%@] JSON decode error: %@", self.logPrefix, error.localizedDescription)
+                self.finish(handle(nil))
+            }
+        }.resume()
+    }
+
+    private func finish(_ hasUpdate: Bool) {
+        let completions = pendingCompletions
+        pendingCompletions = []
+        isChecking = false
+        completions.forEach { $0(hasUpdate) }
+    }
+}
+
+// ============================================================
 // MARK: - App Update Manager
 // ============================================================
 
@@ -898,8 +960,7 @@ class AppUpdateManager {
     var latestRelease: GitHubRelease?
     var isDownloading = false
     var onUpdate: (() -> Void)?
-    private var isChecking = false
-    private var pendingCheckCompletions: [(Bool) -> Void] = []
+    private let releaseFetcher = ReleaseFetcher(logPrefix: "AppUpdate")
 
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
@@ -918,59 +979,22 @@ class AppUpdateManager {
     }
 
     func checkForUpdate(completion: @escaping (Bool) -> Void) {
-        if isChecking {
-            pendingCheckCompletions.append(completion)
-            return
-        }
-        isChecking = true
-        pendingCheckCompletions = [completion]
-
-        guard let url = URL(string: kGitHubReleasesAPI) else { finishCheck(false); return }
-        var request = URLRequest(url: url)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 15
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
-            if let error = error {
-                NSLog("[AppUpdate] GitHub API error: %@", error.localizedDescription)
-                self.finishCheck(false); return
+        releaseFetcher.check(handle: { [weak self] releases in
+            guard let self = self, let releases = releases else { return false }
+            guard let release = self.selectAppRelease(from: releases) else {
+                Settings.shared.lastAppUpdateCheck = Date()
+                DispatchQueue.main.async { self.onUpdate?() }
+                return false
             }
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
-                  let data = data else {
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                NSLog("[AppUpdate] GitHub API HTTP %d", status)
-                self.finishCheck(false); return
-            }
-            do {
-                let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-                let appRelease = self.selectAppRelease(from: releases)
-                if let release = appRelease {
-                    self.latestRelease = release
-                    Settings.shared.lastAppUpdateCheck = Date()
-                    let hasUpdate = self.hasUpdate
-                    NSLog("[AppUpdate] Channel: %@ | Target: %@ | Current: %@ | Install: %@",
-                          Settings.shared.updateChannel.rawValue, release.tag_name,
-                          self.currentAppReleaseTag, hasUpdate ? "YES" : "no")
-                    DispatchQueue.main.async { self.onUpdate?() }
-                    self.finishCheck(hasUpdate)
-                } else {
-                    Settings.shared.lastAppUpdateCheck = Date()
-                    DispatchQueue.main.async { self.onUpdate?() }
-                    self.finishCheck(false)
-                }
-            } catch {
-                NSLog("[AppUpdate] JSON decode error: %@", error.localizedDescription)
-                self.finishCheck(false)
-            }
-        }.resume()
-    }
-
-    private func finishCheck(_ hasUpdate: Bool) {
-        let completions = pendingCheckCompletions
-        pendingCheckCompletions = []
-        isChecking = false
-        completions.forEach { $0(hasUpdate) }
+            self.latestRelease = release
+            Settings.shared.lastAppUpdateCheck = Date()
+            let hasUpdate = self.hasUpdate
+            NSLog("[AppUpdate] Channel: %@ | Target: %@ | Current: %@ | Install: %@",
+                  Settings.shared.updateChannel.rawValue, release.tag_name,
+                  self.currentAppReleaseTag, hasUpdate ? "YES" : "no")
+            DispatchQueue.main.async { self.onUpdate?() }
+            return hasUpdate
+        }, completion: completion)
     }
 
     private func selectAppRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
@@ -1187,8 +1211,7 @@ class FirmwareManager {
     var lastFlashVariant: String?
     var lastFlashAt: Date?
     var onUpdate: (() -> Void)?
-    private var isChecking = false
-    private var pendingCheckCompletions: [(Bool) -> Void] = []
+    private let releaseFetcher = ReleaseFetcher(logPrefix: "Firmware")
 
     private var firmwareDir: String {
         let appSupport = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first!
@@ -1270,54 +1293,27 @@ class FirmwareManager {
     }
 
     func checkForUpdate(completion: @escaping (Bool) -> Void) {
-        if isChecking {
-            pendingCheckCompletions.append(completion)
-            return
-        }
-        isChecking = true
-        pendingCheckCompletions = [completion]
-
-        guard let url = URL(string: kGitHubReleasesAPI) else { finishCheck(false); return }
-        var request = URLRequest(url: url)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 15
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
-            if error != nil { self.finishCheck(false); return }
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200, let data = data else {
-                self.finishCheck(false); return
-            }
-            do {
-                let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-                let firmwareRelease = self.selectFirmwareRelease(from: releases)
-                guard let release = firmwareRelease else {
-                    Settings.shared.lastFirmwareCheck = Date()
-                    DispatchQueue.main.async { self.onUpdate?() }
-                    self.finishCheck(false); return
-                }
-                self.latestRelease = release
+        releaseFetcher.check(handle: { [weak self] releases in
+            guard let self = self, let releases = releases else { return false }
+            guard let release = self.selectFirmwareRelease(from: releases) else {
                 Settings.shared.lastFirmwareCheck = Date()
-                let missingAssets = self.missingExpectedAssetNames
-                if !missingAssets.isEmpty {
-                    NSLog("[Firmware] Release %@ missing expected assets: %@",
-                          release.tag_name, missingAssets.joined(separator: ", "))
-                }
-                let installed = Settings.shared.installedFirmwareVersion ?? "unbekannt"
-                let hasUpdate = (self.firmwareVersionTag(from: release.tag_name) != self.firmwareVersionTag(from: installed))
-                let binPath = self.localBinPath(for: release.tag_name)
-                if FileManager.default.fileExists(atPath: binPath) { self.downloadedBinPath = binPath }
                 DispatchQueue.main.async { self.onUpdate?() }
-                self.finishCheck(hasUpdate)
-            } catch { self.finishCheck(false) }
-        }.resume()
-    }
-
-    private func finishCheck(_ hasUpdate: Bool) {
-        let completions = pendingCheckCompletions
-        pendingCheckCompletions = []
-        isChecking = false
-        completions.forEach { $0(hasUpdate) }
+                return false
+            }
+            self.latestRelease = release
+            Settings.shared.lastFirmwareCheck = Date()
+            let missingAssets = self.missingExpectedAssetNames
+            if !missingAssets.isEmpty {
+                NSLog("[Firmware] Release %@ missing expected assets: %@",
+                      release.tag_name, missingAssets.joined(separator: ", "))
+            }
+            let installed = Settings.shared.installedFirmwareVersion ?? "unbekannt"
+            let hasUpdate = (self.firmwareVersionTag(from: release.tag_name) != self.firmwareVersionTag(from: installed))
+            let binPath = self.localBinPath(for: release.tag_name)
+            if FileManager.default.fileExists(atPath: binPath) { self.downloadedBinPath = binPath }
+            DispatchQueue.main.async { self.onUpdate?() }
+            return hasUpdate
+        }, completion: completion)
     }
 
     private func selectFirmwareRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
