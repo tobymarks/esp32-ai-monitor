@@ -27,6 +27,11 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
+    # Exponiert als env, damit Schritte per `if: env.MACOS_CERT_P12_BASE64 != ''`
+    # erkennen, ob Signing-Secrets hinterlegt sind. Fehlen sie, baut build.sh
+    # ad-hoc (kein Bruch) — der Developer-ID-Pfad greift erst nach Secret-Setup.
+    env:
+      MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,13 +77,58 @@ jobs:
           python3 -m pip install --user --break-system-packages --upgrade platformio
           python3 -m platformio platform install espressif32 || true
 
-      - name: Build AI Monitor.app (ad-hoc signing)
+      # Optionales Developer-ID-Signing + Notarization. Läuft NUR, wenn die
+      # Secrets hinterlegt sind. Importiert das .p12 in eine temporäre Keychain
+      # und legt ein notarytool-Profil "AC_NOTARY" an. build.sh erkennt die
+      # Identity dann automatisch (security find-identity) und signiert +
+      # notarisiert statt ad-hoc — so persistiert macOS die "Daten aus anderen
+      # Apps"-Erlaubnis (stabile Code-Signatur) und der Start-Dialog kommt nur
+      # einmal statt bei jedem Start.
+      - name: Import Developer ID signing certificate
+        if: env.MACOS_CERT_P12_BASE64 != ''
+        env:
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Temp-Keychain der Suchliste voranstellen (find-identity sieht sie),
+          # und als default setzen (notarytool-Profil landet/liest dort).
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          security default-keychain -s "$KEYCHAIN"
+          xcrun notarytool store-credentials "AC_NOTARY" \
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD" --keychain "$KEYCHAIN"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          echo "Signing keychain ready."
+
+      - name: Build AI Monitor.app
         working-directory: companion
+        env:
+          NOTARY_PROFILE: AC_NOTARY
         run: |
           # build.sh erzeugt /tmp/aimonitor-build/AI Monitor.app, kopiert nach
-          # companion/build/ und baut ZIP + DMG. Signing ist ad-hoc (codesign
-          # --sign -), da Tobias einziger Nutzer ist und das Bundle vor dem
-          # Start per xattr-Clean von der Quarantine befreit wird.
+          # companion/build/ und baut ZIP + DMG. Mit hinterlegten Signing-Secrets
+          # (Developer ID im Keychain) signiert + notarisiert build.sh; sonst
+          # ad-hoc (codesign --sign -), Quarantine wird beim Start per xattr-Clean
+          # entfernt.
+          if [ -n "${MACOS_CERT_P12_BASE64:-}" ]; then
+            export NOTARIZE=1
+            echo "Developer-ID-Build (signiert + notarisiert)."
+          else
+            echo "Ad-hoc-Build (keine Signing-Secrets hinterlegt)."
+          fi
           ./build.sh
 
       - name: List build artifacts

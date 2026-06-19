@@ -88,10 +88,12 @@ extension SettingsWindowController {
 
             nextStepBox.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             nextStepBox.topAnchor.constraint(equalTo: helper.bottomAnchor, constant: 20),
-            nextStepBox.widthAnchor.constraint(equalToConstant: 420),
+            nextStepBox.widthAnchor.constraint(equalToConstant: 340),
 
-            healthBox.leadingAnchor.constraint(equalTo: nextStepBox.trailingAnchor, constant: 40),
-            healthBox.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+            // Health-Box rechtsbündig am Container verankert (vorher nur lessThanOrEqual
+            // mit fester Breite -> ragte über den Rand und schnitt die detail-Spalte ab).
+            healthBox.leadingAnchor.constraint(greaterThanOrEqualTo: nextStepBox.trailingAnchor, constant: 24),
+            healthBox.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             healthBox.topAnchor.constraint(equalTo: setupStatusRow.topAnchor),
 
             codexBox.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -189,7 +191,7 @@ extension SettingsWindowController {
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingTail
         detail.translatesAutoresizingMaskIntoConstraints = false
-        detail.widthAnchor.constraint(equalToConstant: 210).isActive = true
+        detail.widthAnchor.constraint(equalToConstant: 300).isActive = true
 
         let row = NSStackView(views: [dot, titleLabel, label, detail])
         row.orientation = .horizontal
