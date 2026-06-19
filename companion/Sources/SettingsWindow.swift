@@ -246,7 +246,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             contentContainer.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
             contentContainer.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
             contentContainer.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 16),
-            contentContainer.bottomAnchor.constraint(lessThanOrEqualTo: footerDivider.topAnchor, constant: -16),
+            // Fest zwischen Navigation und Footer spannen (vorher lessThanOrEqual):
+            // ohne festen unteren Anker ist die Container-Hoehe mehrdeutig — die
+            // Seiten darin pinnen nur top, also kann Auto-Layout die Hoehe auf 0
+            // minimieren, wodurch die Seiteninhalte ueber den Container hinaus
+            // ragen und Tab-Leiste/Footer ueberlappen (nicht-deterministisch).
+            contentContainer.bottomAnchor.constraint(equalTo: footerDivider.topAnchor, constant: -16),
 
             // Footer
             footerDivider.leadingAnchor.constraint(equalTo: leftGuide),
