@@ -260,15 +260,20 @@ final class CodexBarSource {
     func loadOnce() -> CodexBarStatus {
         lastLoadedAt = Date()
 
-        // Kein Bookmark-Guard mehr: Da die App nicht sandboxed ist, findet
-        // resolveWidgetSnapshotPath() die aktuelle Datei per Auto-Discovery
-        // (Bookmark/Legacy nur als Fallback). Wird gar nichts gefunden, ist
-        // CodexBar nicht installiert/aktiv -> .missing.
+        // Ohne gewählten Bookmark kein Zugriff (siehe resolveWidgetSnapshotPath):
+        // dann fordert das UI zur einmaligen Auswahl der widget-snapshot.json auf.
+        guard Settings.shared.codexBarSnapshotBookmarkData != nil else {
+            status = .accessNotConfigured
+            lastEntry = nil
+            notify()
+            return status
+        }
+
         guard let snapshotPath = resolveWidgetSnapshotPath(),
               let data = FileManager.default.contents(atPath: snapshotPath) else {
             status = .missing
             lastEntry = nil
-            NSLog("[CodexBar] widget-snapshot.json not found in Group Containers")
+            NSLog("[CodexBar] widget-snapshot.json not found via bookmark")
             notify()
             return status
         }
@@ -399,58 +404,43 @@ final class CodexBarSource {
     /// Y5PE65HELJ.com.steipete.codexbar); ein einmal gewaehlter Bookmark zeigt
     /// dann auf eine veraltete Datei. Da die App NICHT sandboxed ist, darf sie
     /// die Container direkt lesen und die aktuell beschriebene Datei selbst finden.
-    private func discoverLatestSnapshotPath() -> String? {
-        let fm = FileManager.default
-        let root = Self.groupContainersRootPath
-        guard let entries = try? fm.contentsOfDirectory(atPath: root) else { return nil }
-        var best: (path: String, mtime: Date)?
-        for entry in entries where entry.contains("com.steipete.codexbar") {
-            let candidate = (root as NSString).appendingPathComponent(entry)
-                .appending("/widget-snapshot.json")
-            guard fm.fileExists(atPath: candidate),
-                  let attrs = try? fm.attributesOfItem(atPath: candidate),
-                  let mtime = attrs[.modificationDate] as? Date else { continue }
-            if best == nil || mtime > best!.mtime {
-                best = (candidate, mtime)
-            }
-        }
-        return best?.path
+    /// Startverzeichnis für den Öffnen-Dialog: der aktuelle CodexBar-Container
+    /// (Team-ID-prefixed). REINE Pfad-Konstruktion — kein Dateizugriff, kein
+    /// Verzeichnis-Scan → löst KEINEN TCC-Prompt aus. Existiert der Ordner
+    /// nicht, navigiert der Nutzer im Dialog selbst.
+    static func suggestedSnapshotDirectory() -> String {
+        return NSString("~/Library/Group Containers/Y5PE65HELJ.com.steipete.codexbar").expandingTildeInPath
     }
 
     private func resolveWidgetSnapshotPath() -> String? {
-        // 1. Auto-Discovery (bevorzugt): aktuell beschriebene Datei selbst finden.
-        if let discovered = discoverLatestSnapshotPath() {
-            return discovered
-        }
-
-        // 2. Fallback: vom Nutzer einmalig gewaehlter Security-Scoped Bookmark.
-        if let bookmarkData = Settings.shared.codexBarSnapshotBookmarkData {
-            do {
-                var isStale = false
-                let url = try URL(resolvingBookmarkData: bookmarkData,
-                                  options: [.withSecurityScope],
-                                  relativeTo: nil,
-                                  bookmarkDataIsStale: &isStale)
-                if isStale,
-                   let refreshed = try? url.bookmarkData(options: [.withSecurityScope],
-                                                         includingResourceValuesForKeys: nil,
-                                                         relativeTo: nil) {
-                    Settings.shared.codexBarSnapshotBookmarkData = refreshed
-                }
-                startSecurityScopedSnapshotAccess(url)
-                Settings.shared.codexBarSnapshotPath = url.path
-                return url.path
-            } catch {
-                NSLog("[CodexBar] Could not resolve snapshot bookmark: %@", error.localizedDescription)
-                Settings.shared.codexBarSnapshotBookmarkData = nil
+        // AUSSCHLIESSLICH der vom Nutzer einmalig (per Öffnen-Dialog) gewährte
+        // Security-Scoped Bookmark. KEIN programmatischer Group-Container-Scan
+        // und kein Legacy-Pfad-Zugriff: beides sind fremde App-Container und
+        // lösen auf macOS 15+/26 bei JEDEM Start den "Daten aus anderen Apps"-
+        // Prompt aus (die Erlaubnis persistiert dort nicht — auch nicht für
+        // notarisierte Apps). Der Bookmark gilt als User-Intent (Powerbox) und
+        // bleibt prompt-frei.
+        guard let bookmarkData = Settings.shared.codexBarSnapshotBookmarkData else { return nil }
+        do {
+            var isStale = false
+            let url = try URL(resolvingBookmarkData: bookmarkData,
+                              options: [.withSecurityScope],
+                              relativeTo: nil,
+                              bookmarkDataIsStale: &isStale)
+            if isStale,
+               let refreshed = try? url.bookmarkData(options: [.withSecurityScope],
+                                                     includingResourceValuesForKeys: nil,
+                                                     relativeTo: nil) {
+                Settings.shared.codexBarSnapshotBookmarkData = refreshed
             }
+            startSecurityScopedSnapshotAccess(url)
+            Settings.shared.codexBarSnapshotPath = url.path
+            return url.path
+        } catch {
+            NSLog("[CodexBar] Could not resolve snapshot bookmark: %@", error.localizedDescription)
+            Settings.shared.codexBarSnapshotBookmarkData = nil
+            return nil
         }
-
-        // 3. Letzter Fallback: bekannter Legacy-Pfad.
-        if FileManager.default.fileExists(atPath: Self.legacyWidgetSnapshotPath) {
-            return Self.legacyWidgetSnapshotPath
-        }
-        return nil
     }
 
     private func startSecurityScopedSnapshotAccess(_ url: URL) {

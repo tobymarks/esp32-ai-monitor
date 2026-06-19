@@ -170,7 +170,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 660),
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 760),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -178,9 +178,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.title = "AI Monitor"
         window.isReleasedWhenClosed = false
         window.center()
-        // Fixe Groesse — kein Resize.
-        window.minSize = NSSize(width: 960, height: 660)
-        window.maxSize = NSSize(width: 960, height: 660)
+        // Fixe Groesse — kein Resize. Höhe 760 (vorher 660): der Health-Check
+        // ist jetzt eine eigene voll-breite Sektion im vertikalen Fluss statt
+        // einer zweiten Spalte, das braucht mehr Höhe.
+        window.minSize = NSSize(width: 960, height: 760)
+        window.maxSize = NSSize(width: 960, height: 760)
         self.init(window: window)
         window.delegate = self
         buildUI()

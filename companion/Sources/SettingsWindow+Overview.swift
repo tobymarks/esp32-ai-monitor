@@ -87,17 +87,18 @@ extension SettingsWindowController {
             helper.topAnchor.constraint(equalTo: appSettingsToggle.bottomAnchor, constant: 4),
 
             nextStepBox.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            nextStepBox.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
             nextStepBox.topAnchor.constraint(equalTo: helper.bottomAnchor, constant: 20),
-            nextStepBox.widthAnchor.constraint(equalToConstant: 340),
 
-            // Health-Box rechtsbündig am Container verankert (vorher nur lessThanOrEqual
-            // mit fester Breite -> ragte über den Rand und schnitt die detail-Spalte ab).
-            healthBox.leadingAnchor.constraint(greaterThanOrEqualTo: nextStepBox.trailingAnchor, constant: 24),
-            healthBox.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            healthBox.topAnchor.constraint(equalTo: setupStatusRow.topAnchor),
+            // Health-Check ist keine zweite Spalte mehr, sondern eine eigene
+            // voll-breite Sektion im vertikalen Fluss — so werden die Status-Texte
+            // (detail-Spalte) nicht mehr am rechten Rand abgeschnitten.
+            healthBox.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            healthBox.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+            healthBox.topAnchor.constraint(equalTo: nextStepBox.bottomAnchor, constant: 22),
 
             codexBox.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            codexBox.topAnchor.constraint(equalTo: nextStepBox.bottomAnchor, constant: 24),
+            codexBox.topAnchor.constraint(equalTo: healthBox.bottomAnchor, constant: 22),
             codexBox.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor),
         ])
 
@@ -191,7 +192,7 @@ extension SettingsWindowController {
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingTail
         detail.translatesAutoresizingMaskIntoConstraints = false
-        detail.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        detail.widthAnchor.constraint(equalToConstant: 360).isActive = true
 
         let row = NSStackView(views: [dot, titleLabel, label, detail])
         row.orientation = .horizontal
@@ -592,7 +593,9 @@ extension SettingsWindowController {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.json]
-        panel.directoryURL = URL(fileURLWithPath: CodexBarSource.groupContainersRootPath)
+        // Direkt im aktuellen CodexBar-Container starten, damit die Datei mit
+        // einem Klick wählbar ist (Pfad-Vorgabe, kein App-Zugriff -> kein Prompt).
+        panel.directoryURL = URL(fileURLWithPath: CodexBarSource.suggestedSnapshotDirectory())
         panel.nameFieldStringValue = "widget-snapshot.json"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
