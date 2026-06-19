@@ -9,6 +9,7 @@
  */
 
 import Cocoa
+import UniformTypeIdentifiers
 
 private struct DisplayWiFiNetwork {
     let ssid: String
@@ -1518,6 +1519,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             codexBarValuesLabel.stringValue = "Session: — · Weekly: —"
             let msg: String
             switch src.status {
+            case .accessNotConfigured:
+                msg = "CodexBar-Zugriff noch nicht eingerichtet."
             case .missing:
                 let providerLabel = CodexBarProvider.normalized(src.provider).displayLabel
                 msg = "Keine \(providerLabel)-Daten in CodexBar gefunden."
@@ -1728,6 +1731,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         updateDisplayControlsEnabled()
         updateWiFiControlsEnabled()
         requestWiFiStatus()
+
+        if codexBarReloadButton != nil {
+            if case .accessNotConfigured = src.status {
+                codexBarReloadButton.title = "Zugriff einrichten …"
+                codexBarReloadButton.toolTip = "Wählt die widget-snapshot.json aus CodexBar einmalig aus."
+            } else {
+                codexBarReloadButton.title = "Jetzt neu laden"
+                codexBarReloadButton.toolTip = "Liest die aktuellen CodexBar-Daten erneut ein."
+            }
+        }
 
         // Footer-Version (falls kAppVersion sich in einem Hot-Reload mal aendert)
         let channelSuffix = Settings.shared.updateChannel == .beta ? " · Beta-Kanal" : ""
@@ -2077,6 +2090,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         switch status {
         case .ok:
             return "\(providerLabel)-Daten sind aktuell."
+        case .accessNotConfigured:
+            return "CodexBar-Zugriff ist noch nicht eingerichtet. Wähle einmalig die widget-snapshot.json aus."
         case .missing:
             return "Keine \(providerLabel)-Daten gefunden. CodexBar öffnen und Provider aktivieren."
         case .stale(let age):
@@ -2276,8 +2291,43 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func reloadCodexBar() {
+        if Settings.shared.codexBarSnapshotBookmarkData == nil {
+            configureCodexBarAccess()
+            return
+        }
         monitor?.codexBar.loadOnce()
         update()
+    }
+
+    private func configureCodexBarAccess() {
+        let panel = NSOpenPanel()
+        panel.title = "CodexBar-Datenquelle wählen"
+        panel.message = "Wähle die Datei widget-snapshot.json aus dem CodexBar-Ordner aus."
+        panel.prompt = "Auswählen"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.json]
+        panel.directoryURL = URL(fileURLWithPath: CodexBarSource.groupContainersRootPath)
+        panel.nameFieldStringValue = "widget-snapshot.json"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let bookmark = try url.bookmarkData(options: [.withSecurityScope],
+                                                includingResourceValuesForKeys: nil,
+                                                relativeTo: nil)
+            Settings.shared.codexBarSnapshotBookmarkData = bookmark
+            Settings.shared.codexBarSnapshotPath = url.path
+            monitor?.codexBar.loadOnce()
+            update()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "CodexBar-Zugriff fehlgeschlagen"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
     }
 
     @objc private func sendTestFrame() {

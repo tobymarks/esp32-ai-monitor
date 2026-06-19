@@ -78,6 +78,7 @@ enum CodexBarProvider: String, CaseIterable {
 
 enum CodexBarStatus: Equatable {
     case ok
+    case accessNotConfigured    // User hat noch keine CodexBar-Snapshot-Datei ausgewaehlt
     case stale(ageSeconds: Int)
     case missing                // Datei existiert nicht (CodexBar nicht installiert / nie gelaufen)
     case wrongVersion(found: Int, expected: Int)
@@ -87,6 +88,7 @@ enum CodexBarStatus: Equatable {
     var shortLabel: String {
         switch self {
         case .ok: return "OK"
+        case .accessNotConfigured: return "Zugriff einrichten"
         case .stale(let ageSec):
             let m = ageSec / 60
             return "stale (\(m)m alt)"
@@ -175,6 +177,13 @@ final class CodexBarSource {
     private var fileWatcher: DispatchSourceFileSystemObject?
     private var watchedFD: Int32 = -1
     private var watchedSnapshotPath: String?
+    private var securityScopedSnapshotURL: URL?
+    private var isAccessingSecurityScopedSnapshot = false
+
+    deinit {
+        stop()
+        stopSecurityScopedSnapshotAccess()
+    }
 
     // MARK: - Init / Lifecycle
 
@@ -219,20 +228,13 @@ final class CodexBarSource {
     func loadOnce() -> CodexBarStatus {
         lastLoadedAt = Date()
 
-        // 1. Schema-Version aus history/{provider}.json prüfen
-        if let header = readHistoryHeader() {
-            if let v = header.version, v != Self.kExpectedHistoryVersion {
-                status = .wrongVersion(found: v, expected: Self.kExpectedHistoryVersion)
-                NSLog("[CodexBar] Wrong schema version in %@.json: %d (expected %d)", provider, v, Self.kExpectedHistoryVersion)
-                notify()
-                return status
-            }
+        guard Settings.shared.codexBarSnapshotBookmarkData != nil else {
+            status = .accessNotConfigured
+            lastEntry = nil
+            notify()
+            return status
         }
-        // kein else: wenn die History-Datei noch nicht existiert (frischer Install /
-        // Provider noch nie genutzt), ist das nicht zwingend ein Fehler. Widget-
-        // Snapshot entscheidet.
 
-        // 2. widget-snapshot.json laden
         guard let snapshotPath = resolveWidgetSnapshotPath(),
               let data = FileManager.default.contents(atPath: snapshotPath) else {
             status = .missing
@@ -299,19 +301,6 @@ final class CodexBarSource {
         return status
     }
 
-    private func readHistoryHeader() -> CodexBarHistoryHeader? {
-        let path = historyFilePath()
-        guard let data = FileManager.default.contents(atPath: path) else {
-            return nil
-        }
-        do {
-            return try JSONDecoder().decode(CodexBarHistoryHeader.self, from: data)
-        } catch {
-            NSLog("[CodexBar] Could not parse %@ header: %@", path, error.localizedDescription)
-            return nil
-        }
-    }
-
     // MARK: - Poll-Timer
 
     private func schedulePoll() {
@@ -375,36 +364,43 @@ final class CodexBarSource {
         fileWatcher = nil
     }
 
-    /// Sucht den aktuellsten vorhandenen widget-snapshot.json-Pfad in allen
-    /// CodexBar-Group-Containern (legacy + Team-ID-präfixierte Varianten).
     private func resolveWidgetSnapshotPath() -> String? {
-        var candidates = [String]()
-        candidates.append(Self.legacyWidgetSnapshotPath)
-
-        let fm = FileManager.default
-        if let containerNames = try? fm.contentsOfDirectory(atPath: Self.groupContainersRootPath) {
-            for name in containerNames where name.hasSuffix(".com.steipete.codexbar") {
-                let path = (Self.groupContainersRootPath as NSString)
-                    .appendingPathComponent(name)
-                let snapshot = (path as NSString).appendingPathComponent("widget-snapshot.json")
-                candidates.append(snapshot)
+        guard let bookmarkData = Settings.shared.codexBarSnapshotBookmarkData else { return nil }
+        do {
+            var isStale = false
+            let url = try URL(resolvingBookmarkData: bookmarkData,
+                              options: [.withSecurityScope],
+                              relativeTo: nil,
+                              bookmarkDataIsStale: &isStale)
+            if isStale,
+               let refreshed = try? url.bookmarkData(options: [.withSecurityScope],
+                                                     includingResourceValuesForKeys: nil,
+                                                     relativeTo: nil) {
+                Settings.shared.codexBarSnapshotBookmarkData = refreshed
             }
+            startSecurityScopedSnapshotAccess(url)
+            Settings.shared.codexBarSnapshotPath = url.path
+            return url.path
+        } catch {
+            NSLog("[CodexBar] Could not resolve snapshot bookmark: %@", error.localizedDescription)
+            Settings.shared.codexBarSnapshotBookmarkData = nil
+            return nil
         }
+    }
 
-        let existing = Array(Set(candidates)).filter { fm.fileExists(atPath: $0) }
-        guard !existing.isEmpty else { return nil }
+    private func startSecurityScopedSnapshotAccess(_ url: URL) {
+        if securityScopedSnapshotURL == url { return }
+        stopSecurityScopedSnapshotAccess()
+        securityScopedSnapshotURL = url
+        isAccessingSecurityScopedSnapshot = url.startAccessingSecurityScopedResource()
+    }
 
-        var newestPath: String?
-        var newestDate = Date.distantPast
-        for path in existing {
-            let attrs = try? fm.attributesOfItem(atPath: path)
-            let mtime = attrs?[.modificationDate] as? Date ?? Date.distantPast
-            if mtime >= newestDate {
-                newestDate = mtime
-                newestPath = path
-            }
+    private func stopSecurityScopedSnapshotAccess() {
+        if isAccessingSecurityScopedSnapshot {
+            securityScopedSnapshotURL?.stopAccessingSecurityScopedResource()
         }
-        return newestPath
+        securityScopedSnapshotURL = nil
+        isAccessingSecurityScopedSnapshot = false
     }
 
     // MARK: - Helpers

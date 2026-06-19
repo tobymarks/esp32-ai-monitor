@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.13 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.14 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.13"
+let kAppVersion = "1.20.14"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -532,6 +532,16 @@ class Settings {
         set { defaults.set(newValue, forKey: "pendingFirmwareCheckAfterAppUpdate") }
     }
 
+    var codexBarSnapshotBookmarkData: Data? {
+        get { defaults.data(forKey: "codexBarSnapshotBookmarkData") }
+        set { defaults.set(newValue, forKey: "codexBarSnapshotBookmarkData") }
+    }
+
+    var codexBarSnapshotPath: String? {
+        get { defaults.string(forKey: "codexBarSnapshotPath") }
+        set { defaults.set(newValue, forKey: "codexBarSnapshotPath") }
+    }
+
     /// Optionales Menüleisten-Schnellmenü. Default: aus.
     var menuBarQuickMenuEnabled: Bool {
         get { defaults.bool(forKey: "menuBarQuickMenuEnabled") }
@@ -768,6 +778,8 @@ class Settings {
             "selectedProvider",
             "selectedTimeZone",
             "updateChannel",
+            "codexBarSnapshotBookmarkData",
+            "codexBarSnapshotPath",
         ]
         var copied = 0
         for k in keys {
@@ -848,6 +860,8 @@ class AppUpdateManager {
     var latestRelease: GitHubRelease?
     var isDownloading = false
     var onUpdate: (() -> Void)?
+    private var isChecking = false
+    private var pendingCheckCompletions: [(Bool) -> Void] = []
 
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
@@ -866,7 +880,14 @@ class AppUpdateManager {
     }
 
     func checkForUpdate(completion: @escaping (Bool) -> Void) {
-        guard let url = URL(string: kGitHubReleasesAPI) else { completion(false); return }
+        if isChecking {
+            pendingCheckCompletions.append(completion)
+            return
+        }
+        isChecking = true
+        pendingCheckCompletions = [completion]
+
+        guard let url = URL(string: kGitHubReleasesAPI) else { finishCheck(false); return }
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 15
@@ -875,13 +896,13 @@ class AppUpdateManager {
             guard let self = self else { return }
             if let error = error {
                 NSLog("[AppUpdate] GitHub API error: %@", error.localizedDescription)
-                completion(false); return
+                self.finishCheck(false); return
             }
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
                   let data = data else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 NSLog("[AppUpdate] GitHub API HTTP %d", status)
-                completion(false); return
+                self.finishCheck(false); return
             }
             do {
                 let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
@@ -894,17 +915,24 @@ class AppUpdateManager {
                           Settings.shared.updateChannel.rawValue, release.tag_name,
                           self.currentAppReleaseTag, hasUpdate ? "YES" : "no")
                     DispatchQueue.main.async { self.onUpdate?() }
-                    completion(hasUpdate)
+                    self.finishCheck(hasUpdate)
                 } else {
                     Settings.shared.lastAppUpdateCheck = Date()
                     DispatchQueue.main.async { self.onUpdate?() }
-                    completion(false)
+                    self.finishCheck(false)
                 }
             } catch {
                 NSLog("[AppUpdate] JSON decode error: %@", error.localizedDescription)
-                completion(false)
+                self.finishCheck(false)
             }
         }.resume()
+    }
+
+    private func finishCheck(_ hasUpdate: Bool) {
+        let completions = pendingCheckCompletions
+        pendingCheckCompletions = []
+        isChecking = false
+        completions.forEach { $0(hasUpdate) }
     }
 
     private func selectAppRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
@@ -1130,6 +1158,8 @@ class FirmwareManager {
     var lastFlashVariant: String?
     var lastFlashAt: Date?
     var onUpdate: (() -> Void)?
+    private var isChecking = false
+    private var pendingCheckCompletions: [(Bool) -> Void] = []
 
     private var firmwareDir: String {
         let appSupport = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first!
@@ -1211,16 +1241,23 @@ class FirmwareManager {
     }
 
     func checkForUpdate(completion: @escaping (Bool) -> Void) {
-        guard let url = URL(string: kGitHubReleasesAPI) else { completion(false); return }
+        if isChecking {
+            pendingCheckCompletions.append(completion)
+            return
+        }
+        isChecking = true
+        pendingCheckCompletions = [completion]
+
+        guard let url = URL(string: kGitHubReleasesAPI) else { finishCheck(false); return }
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 15
 
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
-            if error != nil { completion(false); return }
+            if error != nil { self.finishCheck(false); return }
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200, let data = data else {
-                completion(false); return
+                self.finishCheck(false); return
             }
             do {
                 let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
@@ -1228,7 +1265,7 @@ class FirmwareManager {
                 guard let release = firmwareRelease else {
                     Settings.shared.lastFirmwareCheck = Date()
                     DispatchQueue.main.async { self.onUpdate?() }
-                    completion(false); return
+                    self.finishCheck(false); return
                 }
                 self.latestRelease = release
                 Settings.shared.lastFirmwareCheck = Date()
@@ -1242,9 +1279,16 @@ class FirmwareManager {
                 let binPath = self.localBinPath(for: release.tag_name)
                 if FileManager.default.fileExists(atPath: binPath) { self.downloadedBinPath = binPath }
                 DispatchQueue.main.async { self.onUpdate?() }
-                completion(hasUpdate)
-            } catch { completion(false) }
+                self.finishCheck(hasUpdate)
+            } catch { self.finishCheck(false) }
         }.resume()
+    }
+
+    private func finishCheck(_ hasUpdate: Bool) {
+        let completions = pendingCheckCompletions
+        pendingCheckCompletions = []
+        isChecking = false
+        completions.forEach { $0(hasUpdate) }
     }
 
     private func selectFirmwareRelease(from releases: [GitHubRelease]) -> GitHubRelease? {
@@ -1515,6 +1559,17 @@ class FirmwareManager {
     var latestVersionDisplay: String {
         guard let release = latestRelease else { return "?" }
         return firmwareVersionTag(from: release.tag_name)
+    }
+
+    var latestFirmwareVersionTag: String? {
+        guard let release = latestRelease else { return nil }
+        return firmwareVersionTag(from: release.tag_name)
+    }
+
+    func isFirmwareVersionOutdated(_ installedVersion: String?) -> Bool {
+        guard let installedVersion = installedVersion,
+              let latest = latestFirmwareVersionTag else { return false }
+        return compareFirmwareVersions(firmwareVersionTag(from: installedVersion), latest) == .orderedAscending
     }
 
     func canFlash(serialConnected: Bool) -> Bool {
@@ -2210,6 +2265,7 @@ class UsageMonitor {
     let codexBar: CodexBarSource
     var lastUpdateDate: Date?
     var onUpdate: (() -> Void)?
+    var onOutdatedFirmwareDetected: ((_ deviceName: String, _ installedVersion: String, _ latestVersion: String) -> Void)?
     private var heartbeatTimer: Timer?
     private var nextFrameId = 1
     private var pendingDiagnosticAfterNextConnect = false
@@ -2279,6 +2335,7 @@ class UsageMonitor {
                     _ = self?.sendDiagnosticTestFrame()
                 }
             }
+            self.checkConnectedFirmwareVersionForUpdateNotice()
         }
         serialPort.startScanning()
 
@@ -2299,6 +2356,17 @@ class UsageMonitor {
         heartbeatTimer = nil
         codexBar.stop()
         serialPort.stopScanning()
+    }
+
+    func checkConnectedFirmwareVersionForUpdateNotice() {
+        guard serialPort.state == .connected,
+              FirmwareManager.shared.isFirmwareVersionOutdated(serialPort.deviceFirmwareVersion),
+              let latest = FirmwareManager.shared.latestFirmwareVersionTag else { return }
+        let installed = serialPort.deviceFirmwareVersion.map { "v\($0)" } ?? "unbekannt"
+        let deviceName = DeviceRegistry.shared.currentProfile()?.friendlyName ?? "Display"
+        DispatchQueue.main.async { [weak self] in
+            self?.onOutdatedFirmwareDetected?(deviceName, installed, latest)
+        }
     }
 
     private func allocateFrameId() -> Int {
@@ -2860,6 +2928,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menuBarStatusItem: NSStatusItem?
     private var menuBarQuickMenuObservation: NSObjectProtocol?
     private var updateChannelObservation: NSObjectProtocol?
+    private var shownFirmwareUpdateNoticeKeys = Set<String>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Best-effort Aufraeumen der alten Keychain-Eintraege (Anthropic OAuth Cache).
@@ -2869,6 +2938,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         monitor = UsageMonitor()
         monitor.onUpdate = { [weak self] in
             self?.settingsController?.update()
+        }
+        monitor.onOutdatedFirmwareDetected = { [weak self] deviceName, installedVersion, latestVersion in
+            self?.presentFirmwareUpdateNotice(deviceName: deviceName,
+                                              installedVersion: installedVersion,
+                                              latestVersion: latestVersion)
         }
         monitor.start()
 
@@ -3074,11 +3148,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func checkFirmwareUpdate() {
         if let lastCheck = Settings.shared.lastFirmwareCheck,
-           Date().timeIntervalSince(lastCheck) < kFirmwareCheckInterval {
-            FirmwareManager.shared.checkForUpdate { _ in }
+           Date().timeIntervalSince(lastCheck) < kFirmwareCheckInterval,
+           FirmwareManager.shared.latestRelease != nil {
+            FirmwareManager.shared.onUpdate?()
+            monitor?.checkConnectedFirmwareVersionForUpdateNotice()
             return
         }
-        FirmwareManager.shared.checkForUpdate { _ in }
+        FirmwareManager.shared.checkForUpdate { [weak self] _ in
+            self?.monitor?.checkConnectedFirmwareVersionForUpdateNotice()
+        }
     }
 
     // ---- App Update Timer ----
@@ -3091,7 +3169,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func checkAppUpdate() {
         if let lastCheck = Settings.shared.lastAppUpdateCheck,
-           Date().timeIntervalSince(lastCheck) < kAppUpdateCheckInterval { return }
+           Date().timeIntervalSince(lastCheck) < kAppUpdateCheckInterval,
+           AppUpdateManager.shared.latestRelease != nil {
+            AppUpdateManager.shared.onUpdate?()
+            return
+        }
         AppUpdateManager.shared.checkForUpdate { _ in }
     }
 
@@ -3217,6 +3299,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func oppositeDisplayVariant(_ variant: String) -> String {
         return variant == kDisplayVariantST7789 ? kDisplayVariantILI9341 : kDisplayVariantST7789
+    }
+
+    private func presentFirmwareUpdateNotice(deviceName: String,
+                                             installedVersion: String,
+                                             latestVersion: String) {
+        let deviceKey = DeviceRegistry.shared.currentMAC
+            ?? monitor.serialPort.connectedPort
+            ?? deviceName
+        let noticeKey = "\(deviceKey)|\(installedVersion)|\(latestVersion)"
+        guard !shownFirmwareUpdateNoticeKeys.contains(noticeKey) else { return }
+
+        guard settingsController != nil else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.presentFirmwareUpdateNotice(deviceName: deviceName,
+                                                  installedVersion: installedVersion,
+                                                  latestVersion: latestVersion)
+            }
+            return
+        }
+
+        shownFirmwareUpdateNoticeKeys.insert(noticeKey)
+        settingsController?.show()
+
+        let alert = NSAlert()
+        alert.messageText = "Firmware-Update verfügbar"
+        alert.informativeText = """
+        \(deviceName) läuft mit \(installedVersion).
+        Verfügbar ist \(latestVersion).
+
+        Du kannst das Display direkt jetzt aktualisieren.
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Firmware flashen")
+        alert.addButton(withTitle: "Später")
+        if alert.runModal() == .alertFirstButtonReturn {
+            runFirmwareFlash()
+        }
     }
 
     func runAppUpdateCheck() {
