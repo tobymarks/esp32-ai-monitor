@@ -2711,6 +2711,40 @@ class UsageMonitor {
         // Provider aus der CodexBar-Source (normalisiert), nicht direkt aus
         // Settings — das hält Envelope und tatsächlich gelesene Daten konsistent.
         let provider = CodexBarProvider.normalized(codexBar.provider)
+        let frameId = allocateFrameId()
+        let built = buildUsageEnvelope(entry: entry, provider: provider, frameId: frameId)
+
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: built.dict)
+            if let jsonString = String(data: jsonData, encoding: .utf8) {
+                let receipt = serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
+                if registerFrameReceipt(receipt, source: "usage") {
+                    lastUpdateDate = Date()
+                    NSLog("[Serial] Sent usage frame #%d (%d bytes) provider=%@ s=%d%% w=%d%% t=%d%% rows=%d",
+                          frameId, jsonData.count, built.activeProvider,
+                          built.primaryPercent, built.secondaryPercent, built.tertiaryPercent, built.rowCount)
+                }
+            }
+        } catch {
+            NSLog("[Serial] JSON encode error: %@", error.localizedDescription)
+        }
+    }
+
+    /// Ergebnis von `buildUsageEnvelope`: das fertige Wire-Dictionary plus die
+    /// Kennzahlen, die `sendUsageToESP32` nur fuer sein Log braucht.
+    private struct BuiltUsageEnvelope {
+        let dict: [String: Any]
+        let activeProvider: String
+        let primaryPercent: Int
+        let secondaryPercent: Int
+        let tertiaryPercent: Int
+        let rowCount: Int
+    }
+
+    /// Baut den JSON-Envelope fuer einen CodexBar-Eintrag — seiteneffektfreie
+    /// Konstruktion, exakt das Format, das zuvor inline in sendUsageToESP32
+    /// erzeugt wurde (Wire-kompatibel).
+    private func buildUsageEnvelope(entry: CodexBarEntry, provider: CodexBarProvider, frameId: Int) -> BuiltUsageEnvelope {
         let activeProvider = provider.rawValue
         let loginMethodLabel = provider.loginLabel
 
@@ -2755,7 +2789,6 @@ class UsageMonitor {
         let isoFormatter = Self.frameISOFormatter
         let now = Date()
         let nowISO = isoFormatter.string(from: now)
-        let frameId = allocateFrameId()
 
         let timeFmt = Self.frameTimeFormatter
         // Ab v1.12.0 berücksichtigt `displayTime` die im Settings-Fenster
@@ -2883,20 +2916,14 @@ class UsageMonitor {
             ]
         ]
 
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: envelope)
-            if let jsonString = String(data: jsonData, encoding: .utf8) {
-                let receipt = serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
-                if registerFrameReceipt(receipt, source: "usage") {
-                    lastUpdateDate = Date()
-                    NSLog("[Serial] Sent usage frame #%d (%d bytes) provider=%@ s=%d%% w=%d%% t=%d%% rows=%d",
-                          frameId, jsonData.count, activeProvider,
-                          primaryPercent, secondaryPercent, tertiaryPercent, rowsPayload.count)
-                }
-            }
-        } catch {
-            NSLog("[Serial] JSON encode error: %@", error.localizedDescription)
-        }
+        return BuiltUsageEnvelope(
+            dict: envelope,
+            activeProvider: activeProvider,
+            primaryPercent: primaryPercent,
+            secondaryPercent: secondaryPercent,
+            tertiaryPercent: tertiaryPercent,
+            rowCount: rowsPayload.count
+        )
     }
 }
 
