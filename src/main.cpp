@@ -13,9 +13,8 @@
  *   Mac (CodexBar) --USB-Serial--> ESP32 --> Dashboard
  *
  * Navigation:
- *   Dashboard (default) -> tap -> Detail screen
- *   Dashboard -> long press (>1s) -> Settings screen
- *   Detail / Settings -> tap back arrow -> Dashboard
+ *   Dashboard (default) -> long press (>1s) -> Settings screen
+ *   Settings -> tap back arrow -> Dashboard
  */
 
 #include <Arduino.h>
@@ -29,7 +28,6 @@
 #include "serial_receiver.h"
 #include "ui_common.h"
 #include "ui_dashboard.h"
-#include "ui_detail.h"
 #include "ui_settings.h"
 #include "wifi_time.h"
 

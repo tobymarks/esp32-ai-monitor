@@ -10,9 +10,6 @@ static const char* strings_de[] = {
     "Verbinde...",           // STR_CONNECTING
     "AI Monitor",            // STR_AI_MONITOR
     "EINSTELLUNGEN",         // STR_SETTINGS
-    "Sitzung (5h)",          // STR_SESSION_5H
-    "Woche (7d)",            // STR_WEEKLY_7D
-    "Extra (monatl.)",       // STR_EXTRA_MONTHLY
     "USB Seriell",           // STR_SOURCE_USB
     "Quelle:",               // STR_SOURCE
     "Letzte Daten:",         // STR_LAST_DATA
@@ -42,9 +39,6 @@ static const char* strings_en[] = {
     "Connecting...",         // STR_CONNECTING
     "AI Monitor",            // STR_AI_MONITOR
     "SETTINGS",              // STR_SETTINGS
-    "Session (5h)",          // STR_SESSION_5H
-    "Weekly (7d)",           // STR_WEEKLY_7D
-    "Extra (monthly)",       // STR_EXTRA_MONTHLY
     "USB Serial",            // STR_SOURCE_USB
     "Source:",               // STR_SOURCE
     "Last data:",            // STR_LAST_DATA
