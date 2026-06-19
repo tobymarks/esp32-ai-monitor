@@ -7,12 +7,14 @@
 
 #include "wifi_time.h"
 #include "config.h"
+#include "serial_receiver.h"
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <WiFi.h>
 #include <time.h>
+#include <stdlib.h>
 
 static const char *TZ_INFO = "CET-1CEST,M3.5.0,M10.5.0/3";
 static const char *NTP_SERVER_1 = "pool.ntp.org";
@@ -58,6 +60,33 @@ static void start_connect() {
 
 static void ensure_ntp_started() {
     if (ntp_configured || WiFi.status() != WL_CONNECTED) return;
+
+    // C3: If the Mac companion has already set the timezone (via TZ=AIM<offset>),
+    // we must NOT overwrite TZ with our fixed CET/CEST rule — that would undo the
+    // host-selected timezone whenever WiFi/NTP starts. We still need to sync the
+    // (UTC) clock via SNTP, so we start NTP and then restore the host's TZ.
+    // configTzTime() internally calls setenv("TZ", ...)+tzset(), so we snapshot
+    // and restore the TZ env var around it.
+    if (host_timezone_is_set()) {
+        const char *saved_tz = getenv("TZ");
+        char saved_tz_buf[24] = "";
+        if (saved_tz) {
+            strlcpy(saved_tz_buf, saved_tz, sizeof(saved_tz_buf));
+        }
+
+        configTzTime(TZ_INFO, NTP_SERVER_1, NTP_SERVER_2);  // arms SNTP for UTC sync
+
+        // Restore the host-selected timezone clobbered by configTzTime().
+        if (saved_tz_buf[0] != '\0') {
+            setenv("TZ", saved_tz_buf, 1);
+        } else {
+            unsetenv("TZ");
+        }
+        tzset();
+        ntp_configured = true;
+        Serial.println("[NTP] Sync configured (host timezone preserved)");
+        return;
+    }
 
     setenv("TZ", TZ_INFO, 1);
     tzset();

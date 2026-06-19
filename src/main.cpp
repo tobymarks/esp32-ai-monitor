@@ -141,9 +141,12 @@ void apply_orientation(uint8_t orientation)
         lv_display_set_resolution(lv_disp, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
 
-    // Recreate dashboard with new dimensions — mirrors set_theme behaviour,
-    // no reboot required.
-    ui_dashboard_recreate();
+    // C4: The dashboard recreate is deferred to loop() (see serial_receiver).
+    // All state above (rotation, SCREEN_WIDTH/HEIGHT, touch cal, LVGL
+    // resolution) is applied synchronously here; only the expensive full-screen
+    // rebuild is taken out of the Serial RX path. apply_orientation() is only
+    // ever called from the command parser, so deferring is safe.
+    serial_request_ui_rebuild();
 
     Serial.printf("[TFT] Rotation switched live to %s (%ux%u)\n",
                   orientation_name(orientation), SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -337,6 +340,15 @@ void loop()
     // Read serial data
     serial_receiver_tick();
     wifi_time_tick();
+
+    // C4: Perform any UI rebuild requested by the command parser here, OUTSIDE
+    // the Serial RX loop, so the expensive full-screen recreate is not reentrant
+    // with frame reception. State (theme/language/orientation/dimensions) was
+    // already applied synchronously in the parser.
+    if (serial_ui_rebuild_requested()) {
+        ui_dashboard_recreate();
+        serial_ui_rebuild_clear();
+    }
 
     // Update dashboard UI on new data OR every 1s (clock/countdown)
     if (dashboard_active) {

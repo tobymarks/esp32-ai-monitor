@@ -39,6 +39,12 @@ static const unsigned long DATA_TIMEOUT_MS = 300000;  // 5 minutes
 static const uint8_t USAGE_ROW_MAX = 3;
 // Fenstergroesse (Minuten) ab der ein Usage-Feld als "weekly" gilt: 7*24*60.
 static const int WEEKLY_WINDOW_MINUTES = 10080;
+// C1: Wird ein framed-Payload nach dem Header nicht innerhalb dieser Zeit
+// vollstaendig empfangen, gilt der Frame als abgebrochen und wird verworfen.
+static const unsigned long SERIAL_FRAME_TIMEOUT_MS = 2000;
+// C2: Hoechste schemaVersion, die diese Firmware versteht. Die Companion-App
+// sendet aktuell 1. Frames mit groesserer Version werden definiert abgelehnt.
+static const int SUPPORTED_SCHEMA_VERSION = 1;
 
 // ============================================================
 // State
@@ -49,11 +55,27 @@ static bool serial_discard_until_newline = false;
 static bool serial_receiving_frame = false;
 static size_t serial_frame_expected = 0;
 static size_t serial_frame_received = 0;
+// C1: Wann der aktuelle framed-Payload begonnen hat (millis()), fuer den
+// Resync-Timeout falls die Uebertragung mitten im Payload abbricht.
+static unsigned long serial_frame_started_ms = 0;
 
 static MonitorState state;
 static bool new_data_flag = false;
 static char display_time[6] = "--:--";
 static int16_t timezone_offset_minutes = 60;  // Default: Europe/Berlin winter time
+
+// C4: UI rebuilds are no longer triggered synchronously from the parser
+// (reentrant full-screen recreate mid-RX). Commands set this flag and the
+// rebuild happens in main loop() after serial_receiver_tick().
+static bool ui_rebuild_pending = false;
+
+// C3: Set once the Mac companion sends a TZ offset. While set, wifi_time must
+// not overwrite the TZ env var with its fixed NTP timezone — only sync UTC.
+static bool host_tz_set = false;
+
+void serial_request_ui_rebuild() {
+    ui_rebuild_pending = true;
+}
 
 // ============================================================
 // Provider helpers
@@ -197,6 +219,7 @@ static bool begin_framed_payload_from_header(const char *line) {
     serial_receiving_frame = true;
     serial_frame_expected = (size_t)length;
     serial_frame_received = 0;
+    serial_frame_started_ms = millis();  // C1: start of resync timeout window
     serial_buf_pos = 0;
     return true;
 }
@@ -241,232 +264,221 @@ static void apply_timezone_offset_minutes(int offset_minutes) {
 // Returns true if a command was handled (caller should skip
 // usage-data parsing).
 // ============================================================
+// --- set_orientation (dynamic — no reboot) ---
+static void handle_set_orientation(JsonDocument &doc) {
+    const char *val = doc["value"];
+    if (!val) {
+        Serial.println("{\"type\":\"error\",\"message\":\"set_orientation: missing value\"}");
+        return;
+    }
+    uint8_t new_orient;
+    if (strcmp(val, "portrait") == 0) {
+        new_orient = ORIENTATION_PORTRAIT;
+    } else if (strcmp(val, "landscape_left") == 0 || strcmp(val, "landscape") == 0) {
+        new_orient = ORIENTATION_LANDSCAPE_LEFT;
+    } else if (strcmp(val, "landscape_right") == 0) {
+        new_orient = ORIENTATION_LANDSCAPE_RIGHT;
+    } else {
+        Serial.printf("{\"type\":\"error\",\"message\":\"set_orientation: invalid value '%s'\"}\n", val);
+        return;
+    }
+    if (new_orient != g_config.orientation) {
+        g_config.orientation = new_orient;
+        config_save(g_config);
+        apply_orientation(new_orient);  // live rotation — no ESP.restart()
+    }
+    Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_orientation\",\"value\":\"%s\"}\n", val);
+}
+
+// --- set_brightness (0..100 percent) ---
+// `persist=false` applies the PWM live without writing NVS. This lets the
+// Mac app preview slider changes and save only the final debounced value.
+static void handle_set_brightness(JsonDocument &doc) {
+    if (!doc["value"].is<int>()) {
+        Serial.println("{\"type\":\"error\",\"message\":\"set_brightness: missing or invalid value\"}");
+        return;
+    }
+    int val = doc["value"];
+    if (val < BRIGHTNESS_MIN_PERCENT) val = BRIGHTNESS_MIN_PERCENT;
+    if (val > BRIGHTNESS_MAX_PERCENT) val = BRIGHTNESS_MAX_PERCENT;
+    bool persist = doc["persist"] | true;
+    g_config.brightness_pct = (uint8_t)val;
+    backlight_apply_percent(g_config.brightness_pct);
+    if (persist) {
+        config_save(g_config);
+    }
+    Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_brightness\",\"value\":%d,\"persist\":%s}\n",
+                  val,
+                  persist ? "true" : "false");
+}
+
+// --- wifi_set ---
+static void handle_wifi_set(JsonDocument &doc) {
+    const char *ssid = doc["ssid"];
+    const char *password = doc["password"] | "";
+    if (ssid == nullptr || ssid[0] == '\0') {
+        Serial.println("{\"type\":\"wifi_status\",\"configured\":false,\"connected\":false,\"ssid\":\"\",\"ip\":\"\",\"rssi\":0,\"timeSynced\":false,\"error\":\"missing ssid\"}");
+        return;
+    }
+    wifi_time_save_credentials(ssid, password);
+    wifi_time_connect_now(10000);
+    wifi_time_print_status();
+}
+
+// --- wifi_forget ---
+static void handle_wifi_forget() {
+    wifi_time_forget_credentials();
+    wifi_time_print_status();
+}
+
+// --- standby ---
+// Sent by the Mac app during a clean quit. Cable pulls and sleep still use
+// the normal timeout fallback.
+static void handle_standby() {
+    if (state.usage.valid && state.usage.last_fetch > 0) {
+        state.usage.last_fetch = millis() - DATA_TIMEOUT_MS - 1;
+    }
+    strlcpy(state.status, "Standby", sizeof(state.status));
+    new_data_flag = true;
+    Serial.println("{\"type\":\"ok\",\"cmd\":\"standby\"}");
+}
+
+// --- set_theme ---
+static void handle_set_theme(JsonDocument &doc) {
+    const char *val = doc["value"];
+    if (!val) {
+        Serial.println("{\"type\":\"error\",\"message\":\"set_theme: missing value\"}");
+        return;
+    }
+    uint8_t new_theme;
+    if (strcmp(val, "light") == 0) {
+        new_theme = THEME_LIGHT;
+    } else if (strcmp(val, "dark") == 0) {
+        new_theme = THEME_DARK;
+    } else {
+        Serial.printf("{\"type\":\"error\",\"message\":\"set_theme: invalid value '%s'\"}\n", val);
+        return;
+    }
+    g_config.theme = new_theme;
+    config_save(g_config);
+    ui_apply_theme(new_theme);
+    // Recreate dashboard with new colors (deferred to main loop — see C4)
+    serial_request_ui_rebuild();
+    Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_theme\",\"value\":\"%s\"}\n", val);
+}
+
+// --- set_language ---
+static void handle_set_language(JsonDocument &doc) {
+    const char *val = doc["value"];
+    if (!val) {
+        Serial.println("{\"type\":\"error\",\"message\":\"set_language: missing value\"}");
+        return;
+    }
+    uint8_t new_lang;
+    if (strcmp(val, "de") == 0) {
+        new_lang = LANG_DE;
+    } else if (strcmp(val, "en") == 0) {
+        new_lang = LANG_EN;
+    } else {
+        Serial.printf("{\"type\":\"error\",\"message\":\"set_language: invalid value '%s'\"}\n", val);
+        return;
+    }
+    g_language = new_lang;
+    g_config.language = new_lang;
+    config_save(g_config);
+    // Recreate dashboard with new language (deferred to main loop — see C4)
+    serial_request_ui_rebuild();
+    Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_language\",\"value\":\"%s\"}\n", val);
+}
+
+// --- get_info ---
+static void handle_get_info() {
+    const char *orient;
+    switch (g_config.orientation) {
+        case ORIENTATION_LANDSCAPE_LEFT:  orient = "landscape_left";  break;
+        case ORIENTATION_LANDSCAPE_RIGHT: orient = "landscape_right"; break;
+        case ORIENTATION_PORTRAIT:
+        default:                          orient = "portrait";        break;
+    }
+    const char *theme = (g_config.theme == THEME_LIGHT) ? "light" : "dark";
+    const char *lang = (g_config.language == LANG_EN) ? "en" : "de";
+    // MAC (Wi-Fi STA, lowercase-Hex mit Doppelpunkten) als Device-ID fuer
+    // Per-Device-Profile in der Mac-App (ab App v1.14.0 / FW v2.10.0).
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    char mac_str[18];
+    snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    // `display` kommt aus DISPLAY_ID (config.h), Compile-Zeit-Ableitung
+    // aus ILI9341_DRIVER / ST7789_DRIVER. Info-Only, keine FW-Logik.
+    // Seit v2.10.1.
+    Serial.printf("{\"type\":\"info\",\"version\":\"%s\",\"mac\":\"%s\","
+                  "\"display\":\"%s\","
+                  "\"orientation\":\"%s\","
+                  "\"theme\":\"%s\",\"language\":\"%s\",\"brightness\":%u,"
+                  "\"serialTransport\":\"%s\",\"maxFrameBytes\":%u,"
+                  "\"wifiConfigured\":%s,\"wifiConnected\":%s,\"timeSynced\":%s,"
+                  "\"uptime\":%lu,\"heap\":%u}\n",
+                  APP_VERSION, mac_str, DISPLAY_ID, orient, theme, lang,
+                  (unsigned)g_config.brightness_pct,
+                  SERIAL_FRAME_MAGIC,
+                  (unsigned)SERIAL_FRAME_MAX_SIZE,
+                  wifi_time_has_credentials() ? "true" : "false",
+                  wifi_time_is_connected() ? "true" : "false",
+                  wifi_time_is_synced() ? "true" : "false",
+                  (unsigned long)(millis() / 1000),
+                  (unsigned)ESP.getFreeHeap());
+}
+
+// --- reboot ---
+static void handle_reboot() {
+    Serial.println("{\"type\":\"ok\",\"cmd\":\"reboot\"}");
+    delay(200);
+    ESP.restart();
+}
+
+// Dispatch only — each command's logic lives in a focused handler above.
 static bool parse_command(JsonDocument &doc) {
     if (!doc["cmd"].is<const char*>()) return false;
 
     const char *cmd = doc["cmd"];
     Serial.printf("[Serial] Command received: %s\n", cmd);
 
-    // --- set_orientation (dynamic — no reboot) ---
     if (strcmp(cmd, "set_orientation") == 0) {
-        const char *val = doc["value"];
-        if (!val) {
-            Serial.println("{\"type\":\"error\",\"message\":\"set_orientation: missing value\"}");
-            return true;
-        }
-        uint8_t new_orient;
-        if (strcmp(val, "portrait") == 0) {
-            new_orient = ORIENTATION_PORTRAIT;
-        } else if (strcmp(val, "landscape_left") == 0 || strcmp(val, "landscape") == 0) {
-            new_orient = ORIENTATION_LANDSCAPE_LEFT;
-        } else if (strcmp(val, "landscape_right") == 0) {
-            new_orient = ORIENTATION_LANDSCAPE_RIGHT;
-        } else {
-            Serial.printf("{\"type\":\"error\",\"message\":\"set_orientation: invalid value '%s'\"}\n", val);
-            return true;
-        }
-        if (new_orient != g_config.orientation) {
-            g_config.orientation = new_orient;
-            config_save(g_config);
-            apply_orientation(new_orient);  // live rotation — no ESP.restart()
-        }
-        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_orientation\",\"value\":\"%s\"}\n", val);
-        return true;
-    }
-
-    // --- set_brightness (0..100 percent) ---
-    // `persist=false` applies the PWM live without writing NVS. This lets the
-    // Mac app preview slider changes and save only the final debounced value.
-    if (strcmp(cmd, "set_brightness") == 0) {
-        if (!doc["value"].is<int>()) {
-            Serial.println("{\"type\":\"error\",\"message\":\"set_brightness: missing or invalid value\"}");
-            return true;
-        }
-        int val = doc["value"];
-        if (val < BRIGHTNESS_MIN_PERCENT) val = BRIGHTNESS_MIN_PERCENT;
-        if (val > BRIGHTNESS_MAX_PERCENT) val = BRIGHTNESS_MAX_PERCENT;
-        bool persist = doc["persist"] | true;
-        g_config.brightness_pct = (uint8_t)val;
-        backlight_apply_percent(g_config.brightness_pct);
-        if (persist) {
-            config_save(g_config);
-        }
-        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_brightness\",\"value\":%d,\"persist\":%s}\n",
-                      val,
-                      persist ? "true" : "false");
-        return true;
-    }
-
-    // --- wifi_scan ---
-    if (strcmp(cmd, "wifi_scan") == 0) {
+        handle_set_orientation(doc);
+    } else if (strcmp(cmd, "set_brightness") == 0) {
+        handle_set_brightness(doc);
+    } else if (strcmp(cmd, "wifi_scan") == 0) {
         wifi_time_print_scan();
-        return true;
-    }
-
-    // --- wifi_status ---
-    if (strcmp(cmd, "wifi_status") == 0) {
+    } else if (strcmp(cmd, "wifi_status") == 0) {
         wifi_time_print_status();
-        return true;
+    } else if (strcmp(cmd, "wifi_set") == 0) {
+        handle_wifi_set(doc);
+    } else if (strcmp(cmd, "wifi_forget") == 0) {
+        handle_wifi_forget();
+    } else if (strcmp(cmd, "standby") == 0) {
+        handle_standby();
+    } else if (strcmp(cmd, "set_theme") == 0) {
+        handle_set_theme(doc);
+    } else if (strcmp(cmd, "set_language") == 0) {
+        handle_set_language(doc);
+    } else if (strcmp(cmd, "get_info") == 0) {
+        handle_get_info();
+    } else if (strcmp(cmd, "reboot") == 0) {
+        handle_reboot();
+    } else {
+        // --- unknown command ---
+        Serial.printf("{\"type\":\"error\",\"message\":\"Unknown command: %s\"}\n", cmd);
     }
-
-    // --- wifi_set ---
-    if (strcmp(cmd, "wifi_set") == 0) {
-        const char *ssid = doc["ssid"];
-        const char *password = doc["password"] | "";
-        if (ssid == nullptr || ssid[0] == '\0') {
-            Serial.println("{\"type\":\"wifi_status\",\"configured\":false,\"connected\":false,\"ssid\":\"\",\"ip\":\"\",\"rssi\":0,\"timeSynced\":false,\"error\":\"missing ssid\"}");
-            return true;
-        }
-        wifi_time_save_credentials(ssid, password);
-        wifi_time_connect_now(10000);
-        wifi_time_print_status();
-        return true;
-    }
-
-    // --- wifi_forget ---
-    if (strcmp(cmd, "wifi_forget") == 0) {
-        wifi_time_forget_credentials();
-        wifi_time_print_status();
-        return true;
-    }
-
-    // --- standby ---
-    // Sent by the Mac app during a clean quit. Cable pulls and sleep still use
-    // the normal timeout fallback.
-    if (strcmp(cmd, "standby") == 0) {
-        if (state.usage.valid && state.usage.last_fetch > 0) {
-            state.usage.last_fetch = millis() - DATA_TIMEOUT_MS - 1;
-        }
-        strlcpy(state.status, "Standby", sizeof(state.status));
-        new_data_flag = true;
-        Serial.println("{\"type\":\"ok\",\"cmd\":\"standby\"}");
-        return true;
-    }
-
-    // --- set_theme ---
-    if (strcmp(cmd, "set_theme") == 0) {
-        const char *val = doc["value"];
-        if (!val) {
-            Serial.println("{\"type\":\"error\",\"message\":\"set_theme: missing value\"}");
-            return true;
-        }
-        uint8_t new_theme;
-        if (strcmp(val, "light") == 0) {
-            new_theme = THEME_LIGHT;
-        } else if (strcmp(val, "dark") == 0) {
-            new_theme = THEME_DARK;
-        } else {
-            Serial.printf("{\"type\":\"error\",\"message\":\"set_theme: invalid value '%s'\"}\n", val);
-            return true;
-        }
-        g_config.theme = new_theme;
-        config_save(g_config);
-        ui_apply_theme(new_theme);
-        // Recreate dashboard with new colors
-        ui_dashboard_recreate();
-        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_theme\",\"value\":\"%s\"}\n", val);
-        return true;
-    }
-
-    // --- set_language ---
-    if (strcmp(cmd, "set_language") == 0) {
-        const char *val = doc["value"];
-        if (!val) {
-            Serial.println("{\"type\":\"error\",\"message\":\"set_language: missing value\"}");
-            return true;
-        }
-        uint8_t new_lang;
-        if (strcmp(val, "de") == 0) {
-            new_lang = LANG_DE;
-        } else if (strcmp(val, "en") == 0) {
-            new_lang = LANG_EN;
-        } else {
-            Serial.printf("{\"type\":\"error\",\"message\":\"set_language: invalid value '%s'\"}\n", val);
-            return true;
-        }
-        g_language = new_lang;
-        g_config.language = new_lang;
-        config_save(g_config);
-        ui_dashboard_recreate();
-        Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_language\",\"value\":\"%s\"}\n", val);
-        return true;
-    }
-
-    // --- get_info ---
-    if (strcmp(cmd, "get_info") == 0) {
-        const char *orient;
-        switch (g_config.orientation) {
-            case ORIENTATION_LANDSCAPE_LEFT:  orient = "landscape_left";  break;
-            case ORIENTATION_LANDSCAPE_RIGHT: orient = "landscape_right"; break;
-            case ORIENTATION_PORTRAIT:
-            default:                          orient = "portrait";        break;
-        }
-        const char *theme = (g_config.theme == THEME_LIGHT) ? "light" : "dark";
-        const char *lang = (g_config.language == LANG_EN) ? "en" : "de";
-        // MAC (Wi-Fi STA, lowercase-Hex mit Doppelpunkten) als Device-ID fuer
-        // Per-Device-Profile in der Mac-App (ab App v1.14.0 / FW v2.10.0).
-        uint8_t mac[6] = {0};
-        esp_read_mac(mac, ESP_MAC_WIFI_STA);
-        char mac_str[18];
-        snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-        // `display` kommt aus DISPLAY_ID (config.h), Compile-Zeit-Ableitung
-        // aus ILI9341_DRIVER / ST7789_DRIVER. Info-Only, keine FW-Logik.
-        // Seit v2.10.1.
-        Serial.printf("{\"type\":\"info\",\"version\":\"%s\",\"mac\":\"%s\","
-                      "\"display\":\"%s\","
-                      "\"orientation\":\"%s\","
-                      "\"theme\":\"%s\",\"language\":\"%s\",\"brightness\":%u,"
-                      "\"serialTransport\":\"%s\",\"maxFrameBytes\":%u,"
-                      "\"wifiConfigured\":%s,\"wifiConnected\":%s,\"timeSynced\":%s,"
-                      "\"uptime\":%lu,\"heap\":%u}\n",
-                      APP_VERSION, mac_str, DISPLAY_ID, orient, theme, lang,
-                      (unsigned)g_config.brightness_pct,
-                      SERIAL_FRAME_MAGIC,
-                      (unsigned)SERIAL_FRAME_MAX_SIZE,
-                      wifi_time_has_credentials() ? "true" : "false",
-                      wifi_time_is_connected() ? "true" : "false",
-                      wifi_time_is_synced() ? "true" : "false",
-                      (unsigned long)(millis() / 1000),
-                      (unsigned)ESP.getFreeHeap());
-        return true;
-    }
-
-    // --- reboot ---
-    if (strcmp(cmd, "reboot") == 0) {
-        Serial.println("{\"type\":\"ok\",\"cmd\":\"reboot\"}");
-        delay(200);
-        ESP.restart();
-        return true;
-    }
-
-    // --- unknown command ---
-    Serial.printf("{\"type\":\"error\",\"message\":\"Unknown command: %s\"}\n", cmd);
     return true;
 }
 
 // ============================================================
-// Helper: parse JSON and update state
+// parse_json sub-steps (B2 — pure extraction from parse_json)
 // ============================================================
-static void parse_json(const char *json_str) {
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, json_str);
-    const size_t frame_bytes = strlen(json_str);
 
-    if (err) {
-        Serial.printf("[Serial] JSON parse error: %s\n", err.c_str());
-        strlcpy(state.status, "JSON Error", sizeof(state.status));
-        strlcpy(state.usage.error, err.c_str(), sizeof(state.usage.error));
-        state.usage.valid = false;
-        return;
-    }
-
-    int frame_id = doc["frameId"] | -1;
-    int schema_version = doc["schemaVersion"] | 0;
-
-    // Check for command — if handled, skip usage-data parsing
-    if (parse_command(doc)) return;
-
+// displayTime + tzOffsetMinutes + system clock from ISO "time".
+static void parse_time_block(JsonDocument &doc) {
     // Read display time from Mac companion app
     const char *dtime = doc["displayTime"];
     if (dtime) {
@@ -475,6 +487,9 @@ static void parse_json(const char *json_str) {
 
     if (doc["tzOffsetMinutes"].is<int>()) {
         apply_timezone_offset_minutes(doc["tzOffsetMinutes"].as<int>());
+        // C3: Host has now defined the timezone — wifi_time must not overwrite
+        // TZ with its fixed NTP timezone afterwards (only sync UTC via SNTP).
+        host_tz_set = true;
     }
 
     // Set system clock from ISO "time" field (needed for countdown calculations)
@@ -486,39 +501,12 @@ static void parse_json(const char *json_str) {
             settimeofday(&tv, nullptr);
         }
     }
+}
 
-    // Navigate to data[0].usage
-    JsonObject data0 = doc["data"][0];
-    if (data0.isNull()) {
-        Serial.println("[Serial] No data[0] in JSON");
-        print_frame_error(frame_id, schema_version, "Missing data[0]");
-        strlcpy(state.status, "JSON Error", sizeof(state.status));
-        strlcpy(state.usage.error, "Missing data[0]", sizeof(state.usage.error));
-        state.usage.valid = false;
-        return;
-    }
-
-    // --- Provider label (v2.9.0+ envelope field) ---
-    // Companion-App sendet "claude", "codex" oder "antigravity" pro Frame.
-    // Fallback bleibt "claude" für alte App-Versionen ohne Feld.
-    const char *prov = data0["provider"];
-    state.provider = provider_from_string(prov);
-    strlcpy(state.provider_label, provider_label_from_id(state.provider), sizeof(state.provider_label));
-
-    JsonObject usage = data0["usage"];
-    if (usage.isNull()) {
-        Serial.println("[Serial] No usage object in data[0]");
-        print_frame_error(frame_id, schema_version, "Missing usage");
-        strlcpy(state.status, "JSON Error", sizeof(state.status));
-        strlcpy(state.usage.error, "Missing usage", sizeof(state.usage.error));
-        state.usage.valid = false;
-        return;
-    }
-
-    clear_usage_rows(state.usage);
-
+// Legacy primary/weekly aggregate fields (five_hour_* / seven_day_*).
+static void parse_usage_windows(JsonObject usage, JsonObject primary,
+                                JsonObject secondary, JsonObject tertiary) {
     // --- Primary (Session / 5h) ---
-    JsonObject primary = usage["primary"];
     if (!primary.isNull()) {
         float usedPct = primary["usedPercent"] | 0.0f;
         state.usage.five_hour_utilization = usedPct / 100.0f;
@@ -529,9 +517,6 @@ static void parse_json(const char *json_str) {
             state.usage.five_hour_reset_epoch = iso8601_to_epoch(resetsAt);
         }
     }
-
-    JsonObject secondary = usage["secondary"];
-    JsonObject tertiary = usage["tertiary"];
 
     // --- Weekly: find field with windowMinutes >= WEEKLY_WINDOW_MINUTES ---
     // Check secondary first, then tertiary
@@ -558,7 +543,12 @@ static void parse_json(const char *json_str) {
             state.usage.seven_day_reset_epoch = iso8601_to_epoch(resetsAt);
         }
     }
+}
 
+// Generic usage rows[] (v2.11.0+) with primary/secondary/tertiary fallback
+// and Antigravity 3-row backfill.
+static void parse_usage_rows(JsonObject usage, JsonObject primary,
+                             JsonObject secondary, JsonObject tertiary) {
     // --- Generic usage rows (v2.11.0+) ---
     // Preferred source: usage.rows[] from companion app.
     // Fallback: derive from primary/secondary/tertiary objects.
@@ -618,7 +608,10 @@ static void parse_json(const char *json_str) {
             }
         }
     }
+}
 
+// providerCost extra-usage block + loginMethod logging.
+static void parse_extra_usage(JsonObject usage) {
     // --- Extra usage (providerCost) ---
     JsonObject cost = usage["providerCost"];
     if (!cost.isNull()) {
@@ -640,6 +633,80 @@ static void parse_json(const char *json_str) {
     if (loginMethod) {
         Serial.printf("[Serial] Login: %s\n", loginMethod);
     }
+}
+
+// ============================================================
+// Helper: parse JSON and update state
+// ============================================================
+static void parse_json(const char *json_str) {
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, json_str);
+    const size_t frame_bytes = strlen(json_str);
+
+    if (err) {
+        Serial.printf("[Serial] JSON parse error: %s\n", err.c_str());
+        strlcpy(state.status, "JSON Error", sizeof(state.status));
+        strlcpy(state.usage.error, err.c_str(), sizeof(state.usage.error));
+        state.usage.valid = false;
+        return;
+    }
+
+    int frame_id = doc["frameId"] | -1;
+    int schema_version = doc["schemaVersion"] | 0;
+
+    // C2: Reject frames carrying a schemaVersion newer than we understand.
+    // Missing (0) or <= supported is processed as before (backwards compatible);
+    // a greater value means an incompatible future schema, so abort instead of
+    // silently parsing with wrong defaults.
+    if (schema_version > SUPPORTED_SCHEMA_VERSION) {
+        Serial.printf("[Serial] Unsupported schemaVersion %d (max %d)\n",
+                      schema_version, SUPPORTED_SCHEMA_VERSION);
+        print_frame_error(frame_id, schema_version, "unsupported schemaVersion");
+        return;
+    }
+
+    // Check for command — if handled, skip usage-data parsing
+    if (parse_command(doc)) return;
+
+    parse_time_block(doc);
+
+    // Navigate to data[0].usage
+    JsonObject data0 = doc["data"][0];
+    if (data0.isNull()) {
+        Serial.println("[Serial] No data[0] in JSON");
+        print_frame_error(frame_id, schema_version, "Missing data[0]");
+        strlcpy(state.status, "JSON Error", sizeof(state.status));
+        strlcpy(state.usage.error, "Missing data[0]", sizeof(state.usage.error));
+        state.usage.valid = false;
+        return;
+    }
+
+    // --- Provider label (v2.9.0+ envelope field) ---
+    // Companion-App sendet "claude", "codex" oder "antigravity" pro Frame.
+    // Fallback bleibt "claude" für alte App-Versionen ohne Feld.
+    const char *prov = data0["provider"];
+    state.provider = provider_from_string(prov);
+    strlcpy(state.provider_label, provider_label_from_id(state.provider), sizeof(state.provider_label));
+
+    JsonObject usage = data0["usage"];
+    if (usage.isNull()) {
+        Serial.println("[Serial] No usage object in data[0]");
+        print_frame_error(frame_id, schema_version, "Missing usage");
+        strlcpy(state.status, "JSON Error", sizeof(state.status));
+        strlcpy(state.usage.error, "Missing usage", sizeof(state.usage.error));
+        state.usage.valid = false;
+        return;
+    }
+
+    clear_usage_rows(state.usage);
+
+    JsonObject primary = usage["primary"];
+    JsonObject secondary = usage["secondary"];
+    JsonObject tertiary = usage["tertiary"];
+
+    parse_usage_windows(usage, primary, secondary, tertiary);
+    parse_usage_rows(usage, primary, secondary, tertiary);
+    parse_extra_usage(usage);
 
     // Mark data as valid
     state.usage.valid = true;
@@ -734,6 +801,21 @@ void serial_receiver_tick() {
         }
     }
 
+    // C1: Frame resync timeout. If a framed payload was announced (header
+    // "AIM1 <len> <id>") but the bytes never fully arrive, serial_receiving_frame
+    // would otherwise stay true forever and misinterpret following lines as frame
+    // bytes (deadlock). Discard the partial frame so plain-line / new-frame
+    // reception recovers. The normal success path completes inside the loop above
+    // and clears the flag before reaching here.
+    if (serial_receiving_frame &&
+        (millis() - serial_frame_started_ms) > SERIAL_FRAME_TIMEOUT_MS) {
+        Serial.println("{\"type\":\"error\",\"message\":\"frame timeout\"}");
+        serial_receiving_frame = false;
+        serial_frame_expected = 0;
+        serial_frame_received = 0;
+        serial_buf_pos = 0;
+    }
+
     // Check for data timeout
     if (state.usage.valid && state.usage.last_fetch > 0) {
         unsigned long elapsed = millis() - state.usage.last_fetch;
@@ -769,4 +851,23 @@ bool serial_has_new_data() {
         return true;
     }
     return false;
+}
+
+// ============================================================
+// C4: Deferred UI rebuild (set by parser, consumed by main loop)
+// ============================================================
+bool serial_ui_rebuild_requested() {
+    return ui_rebuild_pending;
+}
+
+void serial_ui_rebuild_clear() {
+    ui_rebuild_pending = false;
+}
+
+// ============================================================
+// C3: True once the Mac companion has set a TZ offset, so wifi_time
+// keeps the host-selected timezone and only syncs UTC via NTP.
+// ============================================================
+bool host_timezone_is_set() {
+    return host_tz_set;
 }
