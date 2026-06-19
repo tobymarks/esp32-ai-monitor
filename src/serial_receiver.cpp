@@ -5,8 +5,12 @@
  * Parses usage data and updates MonitorState.
  * Sets ESP32 system clock from the "time" field.
  *
- * Expected JSON format (one line, terminated with \n):
+ * Expected JSON format (legacy, one line, terminated with \n):
  * {"time":"2026-04-12T15:30:00Z","data":[{"source":"oauth","usage":{...},"provider":"claude"}]}
+ *
+ * Framed format (v2.12.3+):
+ * AIM1 <byteLength> <frameId>\n
+ * <JSON payload bytes>
  */
 
 #include "serial_receiver.h"
@@ -23,11 +27,14 @@
 #include <esp_mac.h>
 #include <sys/time.h>
 #include <string.h>
+#include <stdlib.h>
 
 // ============================================================
 // Constants
 // ============================================================
 static const size_t SERIAL_BUF_SIZE = 4096;
+static const size_t SERIAL_FRAME_MAX_SIZE = SERIAL_BUF_SIZE - 1;
+static const char *SERIAL_FRAME_MAGIC = "AIM1";
 static const unsigned long DATA_TIMEOUT_MS = 300000;  // 5 minutes
 static const uint8_t USAGE_ROW_MAX = 3;
 
@@ -36,6 +43,10 @@ static const uint8_t USAGE_ROW_MAX = 3;
 // ============================================================
 static char serial_buf[SERIAL_BUF_SIZE];
 static size_t serial_buf_pos = 0;
+static bool serial_discard_until_newline = false;
+static bool serial_receiving_frame = false;
+static size_t serial_frame_expected = 0;
+static size_t serial_frame_received = 0;
 
 static MonitorState state;
 static bool new_data_flag = false;
@@ -153,6 +164,39 @@ static void print_frame_error(int frame_id, int schema_version, const char *mess
                   frame_id,
                   schema_version,
                   message ? message : "unknown");
+}
+
+static bool begin_framed_payload_from_header(const char *line) {
+    const size_t magic_len = strlen(SERIAL_FRAME_MAGIC);
+    if (strncmp(line, SERIAL_FRAME_MAGIC, magic_len) != 0 ||
+        line[magic_len] != ' ') {
+        return false;
+    }
+
+    char *end = nullptr;
+    unsigned long length = strtoul(line + magic_len + 1, &end, 10);
+    while (end && *end == ' ') end++;
+
+    long header_frame_id = -1;
+    if (end && *end != '\0') {
+        char *frame_end = nullptr;
+        header_frame_id = strtol(end, &frame_end, 10);
+        if (frame_end == end) header_frame_id = -1;
+    }
+
+    if (length == 0 || length > SERIAL_FRAME_MAX_SIZE) {
+        Serial.printf("{\"type\":\"error\",\"frameId\":%ld,"
+                      "\"message\":\"Invalid frame length %lu\"}\n",
+                      header_frame_id,
+                      length);
+        return true;
+    }
+
+    serial_receiving_frame = true;
+    serial_frame_expected = (size_t)length;
+    serial_frame_received = 0;
+    serial_buf_pos = 0;
+    return true;
 }
 
 // ============================================================
@@ -364,10 +408,13 @@ static bool parse_command(JsonDocument &doc) {
                       "\"display\":\"%s\","
                       "\"orientation\":\"%s\","
                       "\"theme\":\"%s\",\"language\":\"%s\",\"brightness\":%u,"
+                      "\"serialTransport\":\"%s\",\"maxFrameBytes\":%u,"
                       "\"wifiConfigured\":%s,\"wifiConnected\":%s,\"timeSynced\":%s,"
                       "\"uptime\":%lu,\"heap\":%u}\n",
                       APP_VERSION, mac_str, DISPLAY_ID, orient, theme, lang,
                       (unsigned)g_config.brightness_pct,
+                      SERIAL_FRAME_MAGIC,
+                      (unsigned)SERIAL_FRAME_MAX_SIZE,
                       wifi_time_has_credentials() ? "true" : "false",
                       wifi_time_is_connected() ? "true" : "false",
                       wifi_time_is_synced() ? "true" : "false",
@@ -607,6 +654,10 @@ static void parse_json(const char *json_str) {
 // ============================================================
 void serial_receiver_init() {
     serial_buf_pos = 0;
+    serial_discard_until_newline = false;
+    serial_receiving_frame = false;
+    serial_frame_expected = 0;
+    serial_frame_received = 0;
     memset(&state, 0, sizeof(state));
     usage_data_clear(state.usage);
     state.is_fetching = false;
@@ -631,20 +682,44 @@ void serial_receiver_tick() {
     while (Serial.available()) {
         char c = Serial.read();
 
+        if (serial_receiving_frame) {
+            if (serial_frame_received < SERIAL_FRAME_MAX_SIZE) {
+                serial_buf[serial_frame_received++] = c;
+            }
+
+            if (serial_frame_received >= serial_frame_expected) {
+                serial_buf[serial_frame_received] = '\0';
+                parse_json(serial_buf);
+                serial_receiving_frame = false;
+                serial_frame_expected = 0;
+                serial_frame_received = 0;
+                serial_buf_pos = 0;
+            }
+            continue;
+        }
+
+        if (serial_discard_until_newline) {
+            if (c == '\n') {
+                serial_discard_until_newline = false;
+                serial_buf_pos = 0;
+            }
+            continue;
+        }
+
         if (c == '\n') {
-            // Terminate and parse
             if (serial_buf_pos > 0) {
                 serial_buf[serial_buf_pos] = '\0';
-                parse_json(serial_buf);
+                if (!begin_framed_payload_from_header(serial_buf)) {
+                    parse_json(serial_buf);
+                }
             }
             serial_buf_pos = 0;
         } else if (c != '\r') {
-            // Accumulate (guard overflow)
-            if (serial_buf_pos < SERIAL_BUF_SIZE - 1) {
+            if (serial_buf_pos < SERIAL_FRAME_MAX_SIZE) {
                 serial_buf[serial_buf_pos++] = c;
             } else {
-                // Buffer overflow — discard and reset
-                Serial.println("[Serial] Buffer overflow — discarding");
+                Serial.println("{\"type\":\"error\",\"message\":\"Serial line overflow\"}");
+                serial_discard_until_newline = true;
                 serial_buf_pos = 0;
             }
         }

@@ -1,5 +1,5 @@
 /**
- * AI Monitor v1.20.11 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.20.12 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.20.11"
+let kAppVersion = "1.20.12"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -1634,12 +1634,16 @@ class SerialPortManager {
     private let kGetInfoTimeout: TimeInterval = 5
     var onConnect: (() -> Void)?
     var deviceFirmwareVersion: String?
+    var deviceSerialTransport: String?
+    var deviceMaxFrameBytes: Int?
     private(set) var lastFrameReceipt: SerialFrameReceipt?
     private(set) var lastConfirmedFrameReceipt: SerialFrameReceipt?
 
     /// Ab v1.14.2: Lebenszyklus-Status der aktuellen Verbindung. Die UI (und
     /// alle `set_*`-Sends) muessen hier draufhoeren, nicht nur auf `isConnected`.
     private(set) var state: DeviceConnectionState = .disconnected
+    private let framedTransportName = "aim1"
+    private let framedTransportFirmwareVersion = "2.12.3"
 
     /// `true` nur, wenn eine vollstaendige `get_info`-Handshake lief und das
     /// Geraet als AI-Monitor-Firmware identifiziert wurde. Ersatz fuer
@@ -1647,6 +1651,73 @@ class SerialPortManager {
     var isReadyForCommands: Bool { state == .connected }
 
     var isConnected: Bool { fileDescriptor >= 0 }
+
+    private func compareSemanticVersion(_ a: String, _ b: String) -> ComparisonResult {
+        func parts(_ raw: String) -> [Int] {
+            var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            for prefix in ["fw-beta-v", "fw-beta-", "app-beta-v", "app-v", "v"] {
+                if cleaned.hasPrefix(prefix) {
+                    cleaned = String(cleaned.dropFirst(prefix.count))
+                    break
+                }
+            }
+            return cleaned.split(separator: ".").map { component in
+                Int(component.split(separator: "-").first ?? "") ?? 0
+            }
+        }
+
+        let aParts = parts(a)
+        let bParts = parts(b)
+        let count = max(aParts.count, bParts.count)
+        for index in 0..<count {
+            let av = index < aParts.count ? aParts[index] : 0
+            let bv = index < bParts.count ? bParts[index] : 0
+            if av > bv { return .orderedDescending }
+            if av < bv { return .orderedAscending }
+        }
+        return .orderedSame
+    }
+
+    private func supportsFramedJSONTransport() -> Bool {
+        if deviceSerialTransport == framedTransportName { return true }
+        guard let version = deviceFirmwareVersion else { return false }
+        return compareSemanticVersion(version, framedTransportFirmwareVersion) != .orderedAscending
+    }
+
+    private func encodeJSONForTransport(_ jsonString: String, frameId: Int?) -> Data? {
+        guard let payload = jsonString.data(using: .utf8) else { return nil }
+        if supportsFramedJSONTransport() {
+            if let maxFrameBytes = deviceMaxFrameBytes, payload.count > maxFrameBytes {
+                NSLog("[Serial] Payload too large for framed transport (%d > %d bytes)",
+                      payload.count, maxFrameBytes)
+                return nil
+            }
+            let header = "AIM1 \(payload.count) \(frameId ?? -1)\n"
+            guard var data = header.data(using: .utf8) else { return nil }
+            data.append(payload)
+            data.append(0x0A)
+            return data
+        }
+        return (jsonString + "\n").data(using: .utf8)
+    }
+
+    private func writeAllLocked(_ data: Data) -> Int {
+        guard fileDescriptor >= 0 else { return -1 }
+        var total = 0
+        let result = data.withUnsafeBytes { rawBuffer -> Int in
+            guard let base = rawBuffer.baseAddress else { return -1 }
+            while total < rawBuffer.count {
+                let written = Darwin.write(fileDescriptor,
+                                           base.advanced(by: total),
+                                           rawBuffer.count - total)
+                if written < 0 { return -1 }
+                if written == 0 { return total }
+                total += written
+            }
+            return total
+        }
+        return result
+    }
 
     func startScanning() {
         scanTimer = Timer.scheduledTimer(withTimeInterval: kSerialScanInterval, repeats: true) { [weak self] _ in
@@ -1761,6 +1832,10 @@ class SerialPortManager {
                         continue
                     }
                     self.deviceFirmwareVersion = version
+                    self.deviceSerialTransport = (json["serialTransport"] as? String)?
+                        .lowercased()
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.deviceMaxFrameBytes = json["maxFrameBytes"] as? Int
                     Settings.shared.installedFirmwareVersion = "v\(version)"
                     NSLog("[Serial] ESP32 firmware: v%@ (state=connected)", version)
 
@@ -1834,6 +1909,10 @@ class SerialPortManager {
                       let type = json["type"] as? String, type == "info",
                       let version = json["version"] as? String else { continue }
                 self.deviceFirmwareVersion = version
+                self.deviceSerialTransport = (json["serialTransport"] as? String)?
+                    .lowercased()
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                self.deviceMaxFrameBytes = json["maxFrameBytes"] as? Int
                 Settings.shared.installedFirmwareVersion = "v\(version)"
                 let reportedMAC = (json["mac"] as? String)?
                     .lowercased()
@@ -1859,6 +1938,9 @@ class SerialPortManager {
     func disconnect() {
         if fileDescriptor >= 0 { Darwin.close(fileDescriptor); fileDescriptor = -1 }
         connectedPort = nil
+        deviceFirmwareVersion = nil
+        deviceSerialTransport = nil
+        deviceMaxFrameBytes = nil
         lastDisconnectAt = Date()
         state = .disconnected
     }
@@ -1954,17 +2036,13 @@ class SerialPortManager {
 
     func send(data: Data) -> Bool {
         ioLock.lock()
-        let fd = fileDescriptor
-        guard fd >= 0 else {
+        guard fileDescriptor >= 0 else {
             ioLock.unlock()
             return false
         }
-        let result = data.withUnsafeBytes { rawBuffer -> Int in
-            guard let ptr = rawBuffer.baseAddress else { return -1 }
-            return Darwin.write(fd, ptr, rawBuffer.count)
-        }
+        let result = writeAllLocked(data)
         ioLock.unlock()
-        if result < 0 {
+        if result != data.count {
             NSLog("[Serial] Write failed: errno %d", errno)
             disconnect(); return false
         }
@@ -1980,23 +2058,19 @@ class SerialPortManager {
     func sendJSONAndWaitForFrameAck(_ jsonString: String,
                                     frameId: Int,
                                     timeout: TimeInterval = 0.8) -> SerialFrameReceipt? {
-        guard let data = (jsonString + "\n").data(using: .utf8) else { return nil }
+        guard let data = encodeJSONForTransport(jsonString, frameId: frameId) else { return nil }
 
         ioLock.lock()
         defer { ioLock.unlock() }
 
         guard fileDescriptor >= 0 else { return nil }
         drainInput()
-        let writeResult = data.withUnsafeBytes { rawBuffer -> Int in
-            guard let ptr = rawBuffer.baseAddress else { return -1 }
-            return Darwin.write(fileDescriptor, ptr, rawBuffer.count)
-        }
-        if writeResult < 0 {
+        let writeResult = writeAllLocked(data)
+        if writeResult != data.count {
             NSLog("[Serial] Write failed: errno %d", errno)
             DispatchQueue.main.async { self.disconnect() }
             return nil
         }
-        guard writeResult > 0 else { return nil }
 
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline && fileDescriptor >= 0 {
@@ -2071,11 +2145,8 @@ class SerialPortManager {
 
         guard fileDescriptor >= 0 else { return nil }
         drainInput()
-        let writeResult = wireData.withUnsafeBytes { rawBuffer -> Int in
-            guard let ptr = rawBuffer.baseAddress else { return -1 }
-            return Darwin.write(fileDescriptor, ptr, rawBuffer.count)
-        }
-        guard writeResult > 0 else { return nil }
+        let writeResult = writeAllLocked(wireData)
+        guard writeResult == wireData.count else { return nil }
 
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline && fileDescriptor >= 0 {
