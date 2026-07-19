@@ -791,6 +791,10 @@ void ui_dashboard_update(const MonitorState &state) {
         }
 
     } else if (strlen(state.usage.error) > 0) {
+        // v2.15.0: Hinweis (z. B. „Bitte App oeffnen") vs. echter Fehler.
+        // Beim Hinweis waere "ERR" irrefuehrend — es ist nichts kaputt, es
+        // fehlen nur Daten fuer den gerade gewaehlten Provider.
+        const char *pct_placeholder = state.usage.notice_only ? "--" : "ERR";
         if (is_antigravity_rows) {
             for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
                 const bool first_row = (i == 0);
@@ -801,14 +805,14 @@ void ui_dashboard_update(const MonitorState &state) {
                 if (!first_row) continue;
 
                 lv_label_set_text(ag_title[i], ag_default_title(i));
-                lv_label_set_text(ag_pct[i], "ERR");
+                lv_label_set_text(ag_pct[i], pct_placeholder);
                 lv_label_set_text(ag_reset[i], state.usage.error);
                 if (ag_bar[i]) lv_bar_set_value(ag_bar[i], 0, LV_ANIM_OFF);
             }
         } else {
-            lv_label_set_text(lbl_session_pct,   "ERR");
+            lv_label_set_text(lbl_session_pct,   pct_placeholder);
             lv_label_set_text(lbl_session_reset, state.usage.error);
-            lv_label_set_text(lbl_weekly_pct,    "ERR");
+            lv_label_set_text(lbl_weekly_pct,    pct_placeholder);
             lv_label_set_text(lbl_weekly_reset,  "");
             if (bar_session) lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
             if (bar_weekly)  lv_bar_set_value(bar_weekly,  0, LV_ANIM_OFF);

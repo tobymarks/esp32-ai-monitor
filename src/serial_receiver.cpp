@@ -646,6 +646,25 @@ static void parse_json(const char *json_str) {
     state.provider = provider_from_string(prov);
     strlcpy(state.provider_label, provider_label_from_id(state.provider), sizeof(state.provider_label));
 
+    // --- Hinweis-Frame (v2.15.0) ---
+    // Liefert der gewaehlte Provider keine Daten, sendet die App statt eines
+    // Usage-Frames einen Hinweis. Vorher sendete sie in dem Fall GAR NICHTS —
+    // das Display zeigte dann unbemerkt die Werte des vorher gewaehlten
+    // Providers weiter.
+    const char *notice = data0["notice"];
+    if (notice != nullptr && notice[0] != '\0') {
+        clear_usage_rows(state.usage);
+        strlcpy(state.usage.error, notice, sizeof(state.usage.error));
+        state.usage.valid = false;
+        state.usage.notice_only = true;
+        state.usage.five_hour_utilization = 0.0f;
+        state.usage.seven_day_utilization = 0.0f;
+        strlcpy(state.status, notice, sizeof(state.status));
+        print_frame_ack(frame_id, schema_version, 0, state.provider, 0);
+        Serial.printf("[Serial] Notice frame: %s\n", notice);
+        return;
+    }
+
     JsonObject usage = data0["usage"];
     if (usage.isNull()) {
         Serial.println("[Serial] No usage object in data[0]");
@@ -670,6 +689,7 @@ static void parse_json(const char *json_str) {
     state.usage.valid = true;
     state.usage.last_fetch = millis();
     state.usage.error[0] = '\0';
+    state.usage.notice_only = false;
     state.token_valid = true;
     state.is_fetching = false;
     strlcpy(state.status, "OK (USB)", sizeof(state.status));
