@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.23.0-beta.2"
+APP_VERSION="1.23.0-beta.3"
 
 # Developer ID Signing (ab v1.13.0) — optional. Wenn die Identity nicht im
 # Keychain ist (z.B. CI-Runner ohne Cert-Import), fallen wir auf Ad-hoc-Sign
@@ -40,6 +40,7 @@ swiftc \
   Sources/main.swift \
   Sources/CodexBarSource.swift \
   Sources/StatusIndicator.swift \
+  Sources/NotificationBanner.swift \
   Sources/Typography.swift \
   Sources/SettingsWindow.swift \
   Sources/SettingsWindow+Overview.swift \
@@ -56,7 +57,43 @@ swiftc \
 
 # Info.plist + Resources
 cp Resources/Info.plist "$APP/Contents/"
-cp Resources/AppIcon.icns "$APP/Contents/Resources/" 2>/dev/null || true
+
+# -----------------------------------------------------------------------------
+# App-Icon (ab v1.23.0)
+# -----------------------------------------------------------------------------
+# Resources/AppIcon.icon ist ein Icon-Composer-Dokument mit getrennten Ebenen.
+# actool rendert daraus Assets.car (das geschichtete Icon, auf das macOS 26 die
+# Liquid-Glass-Effekte anwendet) und ein AppIcon.icns als Fallback fuer aeltere
+# Systeme. Die Quell-Ebenen liegen unter Resources/IconLayers/.
+#
+# Wichtig: das frueher hier kopierte, statische Resources/AppIcon.icns wird
+# NICHT mehr ins Bundle gelegt — es bringt eine eingebackene Maske mit, die mit
+# der Systemform von macOS 26 kollidiert.
+# Ausserhalb von BUILD_DIR ablegen — der ganze BUILD_DIR wird spaeter nach
+# build/ kopiert, die Zwischendatei hat dort nichts verloren.
+ICON_PARTIAL_PLIST="$(mktemp -t aimonitor-icon).plist"
+xcrun actool "$SCRIPT_DIR/Resources/AppIcon.icon" \
+  --compile "$APP/Contents/Resources" \
+  --platform macosx \
+  --minimum-deployment-target 15.0 \
+  --app-icon AppIcon \
+  --include-all-app-icons \
+  --output-partial-info-plist "$ICON_PARTIAL_PLIST" \
+  --errors --warnings > /dev/null
+
+if [ ! -f "$APP/Contents/Resources/Assets.car" ]; then
+  echo "ERROR: actool hat kein Assets.car erzeugt — App-Icon fehlt."
+  exit 1
+fi
+
+# Die von actool gemeldeten Schluessel in die Info.plist uebernehmen.
+while IFS= read -r key; do
+  value=$(/usr/libexec/PlistBuddy -c "Print :$key" "$ICON_PARTIAL_PLIST")
+  /usr/libexec/PlistBuddy -c "Delete :$key" "$APP/Contents/Info.plist" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Add :$key string $value" "$APP/Contents/Info.plist"
+done < <(/usr/libexec/PlistBuddy -c "Print" "$ICON_PARTIAL_PLIST" \
+          | grep -oE '^ *[A-Za-z]+ = ' | tr -d ' =')
+echo "App-Icon aus AppIcon.icon kompiliert (Assets.car + AppIcon.icns)"
 # Menubar-Icons werden ab v1.8.0 nicht mehr verwendet (LSUIElement unsichtbar),
 # bleiben aber im Repo für den Fall, dass wir die Entscheidung revidieren.
 cp Resources/MenuBarIconTemplate.png "$APP/Contents/Resources/" 2>/dev/null || true

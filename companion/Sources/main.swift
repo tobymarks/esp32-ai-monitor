@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.23.0-beta.2"
+let kAppVersion = "1.23.0-beta.3"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -3339,14 +3339,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: "Erneut flashen")
         alert.addButton(withTitle: "Andere Variante")
         alert.addButton(withTitle: "Schließen")
-        let response = alert.runModal()
-        switch response {
-        case .alertFirstButtonReturn:
-            performFlash(port: port, variant: variant)
-        case .alertSecondButtonReturn:
-            performFlash(port: port, variant: oppositeDisplayVariant(variant))
-        default:
-            break
+        present(alert) { [weak self] response in
+            guard let self = self else { return }
+            switch response {
+            case .alertFirstButtonReturn:
+                self.performFlash(port: port, variant: variant)
+            case .alertSecondButtonReturn:
+                self.performFlash(port: port, variant: self.oppositeDisplayVariant(variant))
+            default:
+                break
+            }
         }
     }
 
@@ -3373,21 +3375,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         shownFirmwareUpdateNoticeKeys.insert(noticeKey)
-        settingsController?.show()
 
-        let alert = NSAlert()
-        alert.messageText = "Firmware-Update verfügbar"
-        alert.informativeText = """
-        \(deviceName) läuft mit \(installedVersion).
-        Verfügbar ist \(latestVersion).
-
-        Du kannst das Display direkt jetzt aktualisieren.
-        """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Firmware flashen")
-        alert.addButton(withTitle: "Später")
-        if alert.runModal() == .alertFirstButtonReturn {
-            runFirmwareFlash()
+        // Vorher: settingsController.show() + app-modaler NSAlert — der Dialog
+        // holte sich unaufgefordert den Fokus und blockierte alles andere.
+        // Jetzt ein Banner im Fenster: sichtbar, aber ohne Unterbrechung. Es
+        // bleibt stehen, bis der Nutzer handelt oder es schliesst.
+        settingsController?.showBanner(
+            state: .info,
+            title: "Firmware-Update verfügbar",
+            detail: "\(deviceName) läuft mit \(installedVersion), verfügbar ist \(latestVersion).",
+            actionTitle: "Firmware flashen"
+        ) { [weak self] in
+            self?.runFirmwareFlash()
         }
     }
 
@@ -3437,12 +3436,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: hasZip ? S().download : S().openInBrowser)
         alert.addButton(withTitle: S().later)
         alert.addButton(withTitle: S().skipVersion)
-        let response = alert.runModal()
-        switch response {
-        case .alertFirstButtonReturn: downloadAppUpdate()
-        case .alertThirdButtonReturn:
-            if let tag = appMgr.latestRelease?.tag_name { Settings.shared.skippedAppVersion = tag }
-        default: break
+        present(alert) { [weak self] response in
+            switch response {
+            case .alertFirstButtonReturn:
+                self?.downloadAppUpdate()
+            case .alertThirdButtonReturn:
+                if let tag = appMgr.latestRelease?.tag_name { Settings.shared.skippedAppVersion = tag }
+            default: break
+            }
         }
     }
 
@@ -3461,7 +3462,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: S().install)
                 alert.addButton(withTitle: S().later)
-                if alert.runModal() == .alertFirstButtonReturn {
+                self?.present(alert) { response in
+                    guard response == .alertFirstButtonReturn else { return }
                     Settings.shared.pendingFirmwareCheckAfterAppUpdate = true
                     appMgr.performAutoUpdate(extractedAppPath: extractedPathOrError) { _, errorMessage in
                         DispatchQueue.main.async {
@@ -3479,7 +3481,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.informativeText = info
         a.alertStyle = style
         a.addButton(withTitle: "OK")
-        a.runModal()
+        present(a)
+    }
+
+    /// Zeigt einen Alert als Sheet am Einstellungsfenster statt app-modal.
+    ///
+    /// `runModal()` blockiert die gesamte App; ein Sheet haengt am Fenster, zu
+    /// dem es gehoert, und laesst den Rest weiterlaufen. Nur wenn kein Fenster
+    /// sichtbar ist (z. B. Fehler beim Start), bleibt der modale Weg — sonst
+    /// waere der Hinweis unsichtbar.
+    private func present(_ alert: NSAlert,
+                         completion: ((NSApplication.ModalResponse) -> Void)? = nil) {
+        if let window = settingsController?.window, window.isVisible {
+            alert.beginSheetModal(for: window) { response in completion?(response) }
+        } else {
+            completion?(alert.runModal())
+        }
     }
 }
 

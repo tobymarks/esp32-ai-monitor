@@ -35,6 +35,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // Header
     var providerSegmented: NSSegmentedControl!
     var contentContainer: NSView!
+    var banner: NotificationBanner!
     var sectionViews: [NSView] = []
     var appSettingsToggle: NSButton!
     var updateChannelPopup: NSPopUpButton!
@@ -222,6 +223,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         buildUI()
     }
 
+    /// Nicht-modaler Hinweis im Fenster. Holt das Fenster bewusst NICHT nach
+    /// vorn — der Hinweis bleibt stehen, bis der Nutzer das Fenster oeffnet.
+    func showBanner(state: StatusIndicator.State,
+                    title: String,
+                    detail: String,
+                    actionTitle: String? = nil,
+                    action: (() -> Void)? = nil) {
+        banner?.show(state: state, title: title, detail: detail,
+                     actionTitle: actionTitle, action: action)
+    }
+
     // Von AppDelegate aufgerufen
     func show() {
         window?.makeKeyAndOrderFront(nil)
@@ -262,7 +274,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         contentContainer = NSView()
         buildSectionPages(in: contentContainer)
 
-        [header, headerDivider, contentContainer, footerDivider, footer].forEach {
+        // Banner + Seiteninhalt in einem vertikalen Stack: NSStackView nimmt
+        // ausgeblendete Elemente aus dem Layout, das Banner belegt im
+        // Normalfall also keinen Platz.
+        banner = NotificationBanner()
+        banner.isHidden = true
+        let contentStack = NSStackView(views: [banner, contentContainer])
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 12
+        contentStack.setHuggingPriority(.defaultLow, for: .vertical)
+
+        [header, headerDivider, contentStack, footerDivider, footer].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview($0)
         }
@@ -282,14 +305,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             headerDivider.topAnchor.constraint(equalTo: header.bottomAnchor),
             headerDivider.heightAnchor.constraint(equalToConstant: 1),
 
-            contentContainer.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
-            contentContainer.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
-            contentContainer.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 16),
-            // Fest zwischen Navigation und Footer spannen. Der Container gibt
-            // damit die verfuegbare Hoehe vor; die Scroll-Views der Seiten
-            // fuellen ihn komplett aus und scrollen intern, falls der
-            // Seiteninhalt laenger ist.
-            contentContainer.bottomAnchor.constraint(equalTo: footerDivider.topAnchor, constant: -16),
+            contentStack.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
+            contentStack.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
+            contentStack.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 16),
+
+            banner.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor),
+            banner.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
+            contentContainer.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
+            // Fest zwischen Kopfbereich und Footer spannen. Der Stack gibt damit
+            // die verfuegbare Hoehe vor; die Scroll-Views der Seiten fuellen den
+            // Rest aus und scrollen intern, falls der Seiteninhalt laenger ist.
+            // Ist das Banner sichtbar, schrumpft der Seitenbereich entsprechend.
+            contentStack.bottomAnchor.constraint(equalTo: footerDivider.topAnchor, constant: -16),
 
             // Footer
             footerDivider.leadingAnchor.constraint(equalTo: leftGuide),
