@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.22.0"
+let kAppVersion = "1.23.0-beta.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -3115,7 +3115,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsController?.show()
     }
 
-    // ---- Unsichtbares Shortcut-Menue (nur fuer ⌘Q / ⌘W — kein UI) ----
+    @objc private func showAboutFromMenu() {
+        settingsController?.showAbout()
+    }
+
+    @objc private func showSectionFromMenu(_ sender: NSMenuItem) {
+        guard let section = SettingsWindowController.SettingsSection(rawValue: sender.tag) else { return }
+        settingsController?.show()
+        settingsController?.showSection(section)
+    }
+
+    // ---- App-Menue (sichtbar, sobald das Einstellungsfenster aktiv ist) ----
 
     private func installShortcutMenu() {
         let mainMenu = NSMenu()
@@ -3124,12 +3134,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu(title: "AI Monitor")
 
+        // HIG: „Display the About menu item first. Include a separator after
+        // the About menu item so that it appears by itself in a group."
+        let aboutItem = NSMenuItem(title: "Über AI Monitor",
+                                   action: #selector(showAboutFromMenu),
+                                   keyEquivalent: "")
+        aboutItem.target = self
+        appMenu.addItem(aboutItem)
+        appMenu.addItem(.separator())
+
+        // HIG: Einstellungen gehoeren ins App-Menue, Shortcut ⌘,
+        let settingsItem = NSMenuItem(title: "Einstellungen …",
+                                      action: #selector(openSettingsFromMenu),
+                                      keyEquivalent: ",")
+        settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(.separator())
+
         let quitItem = NSMenuItem(title: "AI Monitor beenden",
                                   action: #selector(NSApplication.terminate(_:)),
                                   keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
         appMenu.addItem(quitItem)
         appMenuItem.submenu = appMenu
+
+        // HIG: „For apps with tab-style navigation, consider adding each tab as
+        // a menu item in the View menu [...] consider assigning key bindings to
+        // each tab." Unter .accessory rendert macOS das Menue zwar nicht, liest
+        // aber die Key-Equivalents — ⌘1 bis ⌘5 funktionieren also.
+        let viewMenuItem = NSMenuItem()
+        mainMenu.addItem(viewMenuItem)
+        let viewMenu = NSMenu(title: "Darstellung")
+        for section in SettingsWindowController.SettingsSection.allCases {
+            let item = NSMenuItem(title: section.title,
+                                  action: #selector(showSectionFromMenu(_:)),
+                                  keyEquivalent: String(section.rawValue + 1))
+            item.keyEquivalentModifierMask = [.command]
+            item.tag = section.rawValue
+            item.target = self
+            viewMenu.addItem(item)
+        }
+        viewMenuItem.submenu = viewMenu
 
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)

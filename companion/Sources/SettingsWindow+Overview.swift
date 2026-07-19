@@ -18,12 +18,10 @@ extension SettingsWindowController {
         heading.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(heading)
 
-        setupStatusDot = NSTextField(labelWithString: "\u{25CF}")
-        setupStatusDot.font = NSFont.systemFont(ofSize: 16)
-        setupStatusDot.textColor = .secondaryLabelColor
+        setupStatusDot = StatusIndicator(state: .inactive)
 
         setupStatusLabel = NSTextField(labelWithString: "Setup wird geprüft …")
-        setupStatusLabel.font = NSFont.systemFont(ofSize: 16, weight: .semibold)
+        setupStatusLabel.font = NSFont.appFont(.title3, weight: .semibold)
 
         let setupStatusRow = NSStackView(views: [setupStatusDot, setupStatusLabel])
         setupStatusRow.orientation = .horizontal
@@ -32,7 +30,7 @@ extension SettingsWindowController {
         container.addSubview(setupStatusRow)
 
         setupDetailLabel = NSTextField(labelWithString: "")
-        setupDetailLabel.font = NSFont.systemFont(ofSize: 11)
+        setupDetailLabel.font = NSFont.appFont(.subheadline)
         setupDetailLabel.textColor = .secondaryLabelColor
         setupDetailLabel.lineBreakMode = .byWordWrapping
         setupDetailLabel.maximumNumberOfLines = 2
@@ -50,13 +48,13 @@ extension SettingsWindowController {
         appSettingsToggle = NSButton(checkboxWithTitle: "Menüleisten-Schnellmenü aktivieren",
                                      target: self,
                                      action: #selector(menuBarQuickMenuToggled))
-        appSettingsToggle.font = NSFont.systemFont(ofSize: 13)
+        appSettingsToggle.font = NSFont.appFont(.body)
         appSettingsToggle.toolTip = "Zeigt Provider-Auswahl und Status direkt in der macOS-Menüleiste."
         appSettingsToggle.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(appSettingsToggle)
 
         let helper = NSTextField(labelWithString: "Zeigt ein NSStatusItem mit Provider-Auswahl und Einstellungen.")
-        helper.font = NSFont.systemFont(ofSize: 11)
+        helper.font = NSFont.appFont(.subheadline)
         helper.textColor = .secondaryLabelColor
         helper.lineBreakMode = .byWordWrapping
         helper.maximumNumberOfLines = 2
@@ -77,7 +75,9 @@ extension SettingsWindowController {
             setupDetailLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             setupDetailLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             setupDetailLabel.topAnchor.constraint(equalTo: setupStatusRow.bottomAnchor, constant: 4),
-            setupDetailLabel.widthAnchor.constraint(equalToConstant: 620),
+            // Kein festes widthAnchor: leading+trailing oben definieren die
+            // Breite bereits, eine zusaetzliche Fixbreite widerspricht dem und
+            // verhindert, dass der Text beim Resize mitwaechst.
 
             appSettingsToggle.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             appSettingsToggle.topAnchor.constraint(equalTo: setupDetailLabel.bottomAnchor, constant: 16),
@@ -109,12 +109,12 @@ extension SettingsWindowController {
         let heading = makeSectionHeading("Nächster Schritt")
 
         nextStepLabel = NSTextField(labelWithString: "Setup wird geprüft …")
-        nextStepLabel.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        nextStepLabel.font = NSFont.appFont(.title3, weight: .semibold)
         nextStepLabel.lineBreakMode = .byWordWrapping
         nextStepLabel.maximumNumberOfLines = 2
 
         nextStepDetailLabel = NSTextField(wrappingLabelWithString: "")
-        nextStepDetailLabel.font = NSFont.systemFont(ofSize: 12)
+        nextStepDetailLabel.font = NSFont.appFont(.callout)
         nextStepDetailLabel.textColor = .secondaryLabelColor
         nextStepDetailLabel.maximumNumberOfLines = 3
 
@@ -169,26 +169,24 @@ extension SettingsWindowController {
     }
 
     private func buildHealthRow(title: String,
-                                dot: inout NSTextField!,
+                                dot: inout StatusIndicator!,
                                 label: inout NSTextField!,
                                 detail: inout NSTextField!,
                                 tooltip: String) -> NSView {
-        dot = NSTextField(labelWithString: "\u{25CB}")
-        dot.font = NSFont.systemFont(ofSize: 12)
-        dot.textColor = .secondaryLabelColor
+        dot = StatusIndicator(state: .inactive)
 
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        titleLabel.font = NSFont.appFont(.callout, weight: .medium)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.widthAnchor.constraint(equalToConstant: 82).isActive = true
 
         label = NSTextField(labelWithString: "—")
-        label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        label.font = NSFont.appFont(.callout, weight: .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
         label.widthAnchor.constraint(equalToConstant: 112).isActive = true
 
         detail = NSTextField(labelWithString: "")
-        detail.font = NSFont.systemFont(ofSize: 11)
+        detail.font = NSFont.appFont(.subheadline)
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingTail
         detail.translatesAutoresizingMaskIntoConstraints = false
@@ -205,26 +203,24 @@ extension SettingsWindowController {
     func buildCodexBarBox() -> NSView {
         let heading = makeSectionHeading("CodexBar-Datenquelle")
 
-        codexBarStatusDot = NSTextField(labelWithString: "\u{25CF}")
-        codexBarStatusDot.font = NSFont.systemFont(ofSize: 13)
-        codexBarStatusDot.textColor = .secondaryLabelColor
+        codexBarStatusDot = StatusIndicator(state: .inactive)
 
         codexBarStatusLabel = NSTextField(labelWithString: "…")
-        codexBarStatusLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        codexBarStatusLabel.font = NSFont.appFont(.body, weight: .medium)
 
         let statusRow = NSStackView(views: [codexBarStatusDot, codexBarStatusLabel])
         statusRow.orientation = .horizontal
         statusRow.spacing = 6
 
         codexBarValuesLabel = NSTextField(labelWithString: "Session: — · Weekly: —")
-        codexBarValuesLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        codexBarValuesLabel.font = NSFont.appMonospacedDigit(.body)
 
         codexBarResetSessionLabel = NSTextField(labelWithString: "")
-        codexBarResetSessionLabel.font = NSFont.systemFont(ofSize: 11)
+        codexBarResetSessionLabel.font = NSFont.appFont(.subheadline)
         codexBarResetSessionLabel.textColor = .secondaryLabelColor
 
         codexBarResetWeeklyLabel = NSTextField(labelWithString: "")
-        codexBarResetWeeklyLabel.font = NSFont.systemFont(ofSize: 11)
+        codexBarResetWeeklyLabel.font = NSFont.appFont(.subheadline)
         codexBarResetWeeklyLabel.textColor = .secondaryLabelColor
 
         codexBarReloadButton = NSButton(title: "Jetzt neu laden", target: self, action: #selector(reloadCodexBar))
@@ -257,24 +253,24 @@ extension SettingsWindowController {
         let app = AppUpdateManager.shared
         if app.latestRelease == nil {
             setHealth(dot: healthAppDot, label: healthAppLabel, detail: healthAppDetailLabel,
-                      status: "Nicht geprüft", detailText: "Update-Check starten", color: .secondaryLabelColor)
+                      status: "Nicht geprüft", detailText: "Update-Check starten", state: .inactive)
         } else if app.hasUpdate {
             setHealth(dot: healthAppDot, label: healthAppLabel, detail: healthAppDetailLabel,
-                      status: "Update bereit", detailText: app.latestVersionDisplay, color: .systemBlue)
+                      status: "Update bereit", detailText: app.latestVersionDisplay, state: .info)
         } else {
             setHealth(dot: healthAppDot, label: healthAppLabel, detail: healthAppDetailLabel,
-                      status: "Aktuell", detailText: "v\(kAppVersion)", color: .systemGreen)
+                      status: "Aktuell", detailText: "v\(kAppVersion)", state: .ok)
         }
 
         let provider = CodexBarProvider.normalized(monitor.codexBar.provider).displayLabel
         if monitor.codexBar.status.isOK {
             setHealth(dot: healthCodexDot, label: healthCodexLabel, detail: healthCodexDetailLabel,
-                      status: "OK", detailText: "\(provider)-Daten aktuell", color: .systemGreen)
+                      status: "OK", detailText: "\(provider)-Daten aktuell", state: .ok)
         } else {
             setHealth(dot: healthCodexDot, label: healthCodexLabel, detail: healthCodexDetailLabel,
                       status: "Prüfen", detailText: setupDetailForCodexStatus(monitor.codexBar.status,
                                                                               provider: monitor.codexBar.provider),
-                      color: .systemOrange)
+                      state: .attention)
         }
 
         let serial = monitor.serialPort
@@ -282,16 +278,16 @@ extension SettingsWindowController {
         case .connected:
             let device = DeviceRegistry.shared.currentProfile()?.friendlyName ?? "ESP32"
             setHealth(dot: healthUSBDot, label: healthUSBLabel, detail: healthUSBDetailLabel,
-                      status: "Verbunden", detailText: device, color: .systemGreen)
+                      status: "Verbunden", detailText: device, state: .ok)
         case .foreignFirmware:
             setHealth(dot: healthUSBDot, label: healthUSBLabel, detail: healthUSBDetailLabel,
-                      status: "Port offen", detailText: "Firmware installieren", color: .systemOrange)
+                      status: "Port offen", detailText: "Firmware installieren", state: .attention)
         case .probing:
             setHealth(dot: healthUSBDot, label: healthUSBLabel, detail: healthUSBDetailLabel,
-                      status: "Handshake", detailText: "Gerät wird geprüft", color: .systemYellow)
+                      status: "Handshake", detailText: "Gerät wird geprüft", state: .pending)
         case .disconnected:
             setHealth(dot: healthUSBDot, label: healthUSBLabel, detail: healthUSBDetailLabel,
-                      status: "Fehlt", detailText: "Kabel oder Port prüfen", color: .secondaryLabelColor)
+                      status: "Fehlt", detailText: "Kabel oder Port prüfen", state: .inactive)
         }
 
         updateWiFiHealth(serialState: serial.state)
@@ -302,13 +298,13 @@ extension SettingsWindowController {
     private func updateWiFiHealth(serialState: DeviceConnectionState) {
         guard serialState == .connected else {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
-                      status: "Wartet", detailText: "Erst USB verbinden", color: .secondaryLabelColor)
+                      status: "Wartet", detailText: "Erst USB verbinden", state: .inactive)
             return
         }
 
         guard let json = lastWiFiStatusJSON else {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
-                      status: "Unbekannt", detailText: "Status wird geladen", color: .secondaryLabelColor)
+                      status: "Unbekannt", detailText: "Status wird geladen", state: .inactive)
             return
         }
 
@@ -320,16 +316,16 @@ extension SettingsWindowController {
 
         if connected && timeSynced {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
-                      status: "OK", detailText: "\(ssid), \(rssi) dBm", color: .systemGreen)
+                      status: "OK", detailText: "\(ssid), \(rssi) dBm", state: .ok)
         } else if connected {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
-                      status: "Wartet", detailText: "\(ssid), Zeit noch nicht synchron", color: .systemYellow)
+                      status: "Wartet", detailText: "\(ssid), Zeit noch nicht synchron", state: .pending)
         } else if configured {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
-                      status: "Getrennt", detailText: "\(ssid) gespeichert", color: .systemOrange)
+                      status: "Getrennt", detailText: "\(ssid) gespeichert", state: .attention)
         } else {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
-                      status: "Optional", detailText: "Kein WLAN gespeichert", color: .secondaryLabelColor)
+                      status: "Optional", detailText: "Kein WLAN gespeichert", state: .inactive)
         }
     }
 
@@ -337,25 +333,25 @@ extension SettingsWindowController {
         let fw = FirmwareManager.shared
         if serialState == .foreignFirmware {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Fehlt", detailText: "AI-Monitor-Firmware flashen", color: .systemRed)
+                      status: "Fehlt", detailText: "AI-Monitor-Firmware flashen", state: .error)
         } else if fw.isFlashing {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Flash läuft", detailText: fw.flashProgress, color: .systemBlue)
+                      status: "Flash läuft", detailText: fw.flashProgress, state: .info)
         } else if fw.latestRelease == nil {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Nicht geprüft", detailText: "Release-Daten laden", color: .secondaryLabelColor)
+                      status: "Nicht geprüft", detailText: "Release-Daten laden", state: .inactive)
         } else if !fw.hasExpectedReleaseAssets {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Prüfen", detailText: "Release unvollständig", color: .systemOrange)
+                      status: "Prüfen", detailText: "Release unvollständig", state: .attention)
         } else if fw.hasUpdate {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Update bereit", detailText: fw.latestVersionDisplay, color: .systemBlue)
+                      status: "Update bereit", detailText: fw.latestVersionDisplay, state: .info)
         } else if serialState == .connected {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Aktuell", detailText: fw.installedVersionDisplay, color: .systemGreen)
+                      status: "Aktuell", detailText: fw.installedVersionDisplay, state: .ok)
         } else {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Wartet", detailText: "ESP32 verbinden", color: .secondaryLabelColor)
+                      status: "Wartet", detailText: "ESP32 verbinden", state: .inactive)
         }
     }
 
@@ -423,16 +419,15 @@ extension SettingsWindowController {
         }
     }
 
-    private func setHealth(dot: NSTextField?,
+    private func setHealth(dot: StatusIndicator?,
                            label: NSTextField?,
                            detail: NSTextField?,
                            status: String,
                            detailText: String,
-                           color: NSColor) {
-        dot?.stringValue = "\u{25CF}"
-        dot?.textColor = color
+                           state: StatusIndicator.State) {
+        dot?.state = state
         label?.stringValue = status
-        label?.textColor = color
+        label?.textColor = state.tint
         detail?.stringValue = detailText
         detail?.toolTip = detailText
     }
@@ -466,8 +461,7 @@ extension SettingsWindowController {
         setupCopyButton.isEnabled = true
 
         if ready {
-            setupStatusDot.stringValue = "\u{25CF}"
-            setupStatusDot.textColor = .systemGreen
+            setupStatusDot.state = .ok
             setupStatusLabel.stringValue = "Alles bereit"
             setupStatusLabel.textColor = .labelColor
             let provider = CodexBarProvider.normalized(monitor.codexBar.provider).displayLabel
@@ -479,16 +473,14 @@ extension SettingsWindowController {
 
         switch serialState {
         case .connected:
-            setupStatusDot.stringValue = "\u{25CF}"
-            setupStatusDot.textColor = .systemOrange
+            setupStatusDot.state = .attention
             setupStatusLabel.stringValue = "CodexBar prüfen"
             setupStatusLabel.textColor = .systemOrange
             setupDetailLabel.stringValue = setupDetailForCodexStatus(monitor.codexBar.status,
                                                                      provider: monitor.codexBar.provider)
             setupDetailLabel.textColor = .secondaryLabelColor
         case .foreignFirmware:
-            setupStatusDot.stringValue = "\u{25CF}"
-            setupStatusDot.textColor = .systemRed
+            setupStatusDot.state = .error
             setupStatusLabel.stringValue = "Firmware fehlt"
             setupStatusLabel.textColor = .systemRed
             var detail = "Der USB-Port ist offen, aber das Gerät antwortet nicht als AI-Monitor."
@@ -496,8 +488,7 @@ extension SettingsWindowController {
             setupDetailLabel.stringValue = detail
             setupDetailLabel.textColor = .secondaryLabelColor
         case .probing:
-            setupStatusDot.stringValue = "\u{25CF}"
-            setupStatusDot.textColor = .systemYellow
+            setupStatusDot.state = .pending
             setupStatusLabel.stringValue = "ESP32-Handshake läuft"
             setupStatusLabel.textColor = .labelColor
             var detail = "Die App prüft gerade, ob auf dem verbundenen Gerät AI-Monitor läuft."
@@ -505,8 +496,7 @@ extension SettingsWindowController {
             setupDetailLabel.stringValue = detail
             setupDetailLabel.textColor = .secondaryLabelColor
         case .disconnected:
-            setupStatusDot.stringValue = "\u{25CB}"
-            setupStatusDot.textColor = codexOK ? .secondaryLabelColor : .systemOrange
+            setupStatusDot.state = codexOK ? .inactive : .attention
             setupStatusLabel.stringValue = codexOK ? "ESP32 verbinden" : "Setup unvollständig"
             setupStatusLabel.textColor = codexOK ? .secondaryLabelColor : .systemOrange
             if codexOK {

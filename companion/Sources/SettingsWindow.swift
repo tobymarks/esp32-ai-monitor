@@ -1,11 +1,15 @@
 /**
  * SettingsWindow.swift — Einziges sichtbares UI der App (LSUIElement=YES).
  *
- * Ab v1.11.0: Querformat-Layout, 960×560, nicht resizable. Zwei-Spalten-Split
- * statt langer vertikaler Liste. Header mit Provider-Umschalter rechts.
+ * Ab v1.11.0: Querformat-Layout, Zwei-Spalten-Split statt langer vertikaler
+ * Liste. Header mit Provider-Umschalter rechts.
  *
  * Ab v1.20.9: Footer bleibt bewusst schlank. Updates liegen nur noch im
- * Updates-Tab; „Über AI Monitor" bleibt unten sichtbar.
+ * Updates-Tab.
+ *
+ * Ab v1.23.0: Fenster ist resizable (Startgroesse 960×760, Minimum 720×520),
+ * jede Seite liegt in einer eigenen NSScrollView. „Über AI Monitor" ist im
+ * Footer jetzt ein SF-Symbol-Button (zusaetzlich im App-Menue).
  *
  * Ab v1.21.0: Die fünf Settings-Tabs sind in eigene Extension-Dateien
  * ausgelagert (SettingsWindow+Overview/Display/Connection/Updates/Diagnostics).
@@ -30,12 +34,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Header
     var providerSegmented: NSSegmentedControl!
-    var sectionSegmented: NSSegmentedControl!
     var contentContainer: NSView!
     var sectionViews: [NSView] = []
     var appSettingsToggle: NSButton!
     var updateChannelPopup: NSPopUpButton!
-    var setupStatusDot: NSTextField!
+    var setupStatusDot: StatusIndicator!
     var setupStatusLabel: NSTextField!
     var setupDetailLabel: NSTextField!
     var nextStepLabel: NSTextField!
@@ -44,19 +47,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var nextStepSecondaryButton: NSButton!
     var nextStepPrimaryAction: OverviewAction = .none
     var nextStepSecondaryAction: OverviewAction = .none
-    var healthAppDot: NSTextField!
+    var healthAppDot: StatusIndicator!
     var healthAppLabel: NSTextField!
     var healthAppDetailLabel: NSTextField!
-    var healthCodexDot: NSTextField!
+    var healthCodexDot: StatusIndicator!
     var healthCodexLabel: NSTextField!
     var healthCodexDetailLabel: NSTextField!
-    var healthUSBDot: NSTextField!
+    var healthUSBDot: StatusIndicator!
     var healthUSBLabel: NSTextField!
     var healthUSBDetailLabel: NSTextField!
-    var healthWiFiDot: NSTextField!
+    var healthWiFiDot: StatusIndicator!
     var healthWiFiLabel: NSTextField!
     var healthWiFiDetailLabel: NSTextField!
-    var healthFirmwareDot: NSTextField!
+    var healthFirmwareDot: StatusIndicator!
     var healthFirmwareLabel: NSTextField!
     var healthFirmwareDetailLabel: NSTextField!
     var setupTestButton: NSButton!
@@ -64,7 +67,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var setupCopyButton: NSButton!
 
     // Linke Spalte — CodexBar
-    var codexBarStatusDot: NSTextField!
+    var codexBarStatusDot: StatusIndicator!
     var codexBarStatusLabel: NSTextField!
     var codexBarValuesLabel: NSTextField!
     var codexBarResetSessionLabel: NSTextField!
@@ -72,13 +75,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var codexBarReloadButton: NSButton!
 
     // Linke Spalte — Port
-    var portStatusDot: NSTextField!
+    var portStatusDot: StatusIndicator!
     var portStatusLabel: NSTextField!
     var portPopup: NSPopUpButton!
     var portRefreshButton: NSButton!
 
     // Linke Spalte — Display-WiFi
-    var wifiStatusDot: NSTextField!
+    var wifiStatusDot: StatusIndicator!
     var wifiStatusLabel: NSTextField!
     var wifiNetworkPopup: NSPopUpButton!
     var wifiPasswordField: NSSecureTextField!
@@ -154,6 +157,30 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             case .diagnostics: return "Diagnose"
             }
         }
+
+        /// SF Symbol fuer das Toolbar-Item. HIG: „Find icons to represent
+        /// common actions" — Symbole sind systemweit wiedererkennbar und
+        /// skalieren mit den Systemeinstellungen.
+        var symbolName: String {
+            switch self {
+            case .overview: return "gauge.with.dots.needle.33percent"
+            case .display: return "display"
+            case .connection: return "cable.connector"
+            case .updates: return "arrow.down.circle"
+            case .diagnostics: return "stethoscope"
+            }
+        }
+
+        var toolbarIdentifier: NSToolbarItem.Identifier {
+            NSToolbarItem.Identifier("de.aimonitor.section.\(rawValue)")
+        }
+
+        init?(toolbarIdentifier: NSToolbarItem.Identifier) {
+            guard let match = SettingsSection.allCases.first(where: {
+                $0.toolbarIdentifier == toolbarIdentifier
+            }) else { return nil }
+            self = match
+        }
     }
 
     enum OverviewAction {
@@ -171,18 +198,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     convenience init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 760),
-            styleMask: [.titled, .closable, .miniaturizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "AI Monitor"
         window.isReleasedWhenClosed = false
         window.center()
-        // Fixe Groesse — kein Resize. Höhe 760 (vorher 660): der Health-Check
-        // ist jetzt eine eigene voll-breite Sektion im vertikalen Fluss statt
-        // einer zweiten Spalte, das braucht mehr Höhe.
-        window.minSize = NSSize(width: 960, height: 760)
-        window.maxSize = NSSize(width: 960, height: 760)
+        // HIG „Designing for macOS": „Let people resize, hide, show, and move
+        // your windows to fit their work style and device configuration."
+        // 960x760 ist nur noch die Startgroesse; nach unten begrenzt die
+        // Mindestgroesse, nach oben nichts. Die Seiteninhalte liegen jeweils in
+        // einer eigenen NSScrollView, deshalb ist Schrumpfen unkritisch.
+        window.minSize = NSSize(width: 720, height: 520)
+        // Vom Nutzer gewaehlte Groesse/Position ueber Sitzungen hinweg merken.
+        window.setFrameAutosaveName("SettingsWindow")
+        // Tab-Reihenfolge von AppKit aus der Geometrie berechnen lassen. Vorher
+        // gab es weder eine nextKeyView-Kette noch einen Initialfokus — mit
+        // „Full Keyboard Access" war das Fenster praktisch nicht bedienbar.
+        window.autorecalculatesKeyViewLoop = true
         self.init(window: window)
         window.delegate = self
         buildUI()
@@ -219,15 +253,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildUI() {
         guard let content = window?.contentView else { return }
 
+        installToolbar()
+
         let header = buildHeader()
         let headerDivider = makeHorizontalDivider()
-        let navigation = buildSectionNavigation()
         let footerDivider = makeHorizontalDivider()
         let footer = buildFooter()
         contentContainer = NSView()
         buildSectionPages(in: contentContainer)
 
-        [header, headerDivider, navigation, contentContainer, footerDivider, footer].forEach {
+        [header, headerDivider, contentContainer, footerDivider, footer].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview($0)
         }
@@ -240,25 +275,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             header.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
             header.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
             header.topAnchor.constraint(equalTo: content.topAnchor, constant: 0),
-            header.heightAnchor.constraint(equalToConstant: 48),
+            header.heightAnchor.constraint(equalToConstant: 44),
 
             headerDivider.leadingAnchor.constraint(equalTo: leftGuide),
             headerDivider.trailingAnchor.constraint(equalTo: rightGuide),
             headerDivider.topAnchor.constraint(equalTo: header.bottomAnchor),
             headerDivider.heightAnchor.constraint(equalToConstant: 1),
 
-            navigation.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
-            navigation.trailingAnchor.constraint(lessThanOrEqualTo: rightGuide, constant: -20),
-            navigation.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 12),
-
             contentContainer.leadingAnchor.constraint(equalTo: leftGuide, constant: 20),
             contentContainer.trailingAnchor.constraint(equalTo: rightGuide, constant: -20),
-            contentContainer.topAnchor.constraint(equalTo: navigation.bottomAnchor, constant: 16),
-            // Fest zwischen Navigation und Footer spannen (vorher lessThanOrEqual):
-            // ohne festen unteren Anker ist die Container-Hoehe mehrdeutig — die
-            // Seiten darin pinnen nur top, also kann Auto-Layout die Hoehe auf 0
-            // minimieren, wodurch die Seiteninhalte ueber den Container hinaus
-            // ragen und Tab-Leiste/Footer ueberlappen (nicht-deterministisch).
+            contentContainer.topAnchor.constraint(equalTo: headerDivider.bottomAnchor, constant: 16),
+            // Fest zwischen Navigation und Footer spannen. Der Container gibt
+            // damit die verfuegbare Hoehe vor; die Scroll-Views der Seiten
+            // fuellen ihn komplett aus und scrollen intern, falls der
+            // Seiteninhalt laenger ist.
             contentContainer.bottomAnchor.constraint(equalTo: footerDivider.topAnchor, constant: -16),
 
             // Footer
@@ -273,17 +303,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             footer.heightAnchor.constraint(equalToConstant: 28),
         ])
         showSection(.overview)
+        window?.initialFirstResponder = providerSegmented
     }
 
     // MARK: - Header
 
+    /// Kopfzeile mit dem Provider-Umschalter.
+    ///
+    /// Vorher standen hier zwei optisch identische NSSegmentedControls
+    /// untereinander — oben die Datenquelle, darunter die Navigation — mit
+    /// voellig verschiedener Bedeutung. Die Navigation ist jetzt eine
+    /// NSToolbar im Titelbereich; der verbliebene Umschalter bekommt eine
+    /// Beschriftung, damit klar ist, was er tut.
     private func buildHeader() -> NSView {
         let container = NSView()
 
-        let title = NSTextField(labelWithString: "AI Monitor")
-        title.font = NSFont.systemFont(ofSize: 20, weight: .bold)
-        title.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(title)
+        let caption = NSTextField(labelWithString: "Datenquelle")
+        caption.font = NSFont.appFont(.subheadline)
+        caption.textColor = .secondaryLabelColor
+        caption.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(caption)
 
         providerSegmented = NSSegmentedControl(labels: CodexBarProvider.allCases.map(\.displayLabel),
                                                trackingMode: .selectOne,
@@ -294,41 +333,42 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         providerSegmented.selectedSegment = CodexBarProvider
             .normalized(Settings.shared.selectedProvider)
             .segmentIndex
+        providerSegmented.setAccessibilityLabel("Datenquelle für das Display")
         providerSegmented.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(providerSegmented)
 
         NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            title.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            caption.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            caption.centerYAnchor.constraint(equalTo: container.centerYAnchor),
 
-            providerSegmented.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            providerSegmented.leadingAnchor.constraint(equalTo: caption.trailingAnchor, constant: 10),
+            providerSegmented.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
             providerSegmented.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
         return container
     }
 
-    private func buildSectionNavigation() -> NSView {
-        let container = NSView()
+    // MARK: - Toolbar-Navigation
 
-        sectionSegmented = NSSegmentedControl(labels: SettingsSection.allCases.map(\.title),
-                                              trackingMode: .selectOne,
-                                              target: self,
-                                              action: #selector(sectionChosen))
-        sectionSegmented.segmentStyle = .rounded
-        sectionSegmented.selectedSegment = SettingsSection.overview.rawValue
-        sectionSegmented.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(sectionSegmented)
+    private func installToolbar() {
+        let toolbar = NSToolbar(identifier: "de.aimonitor.settings.toolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconAndLabel
+        toolbar.allowsUserCustomization = false
+        toolbar.selectedItemIdentifier = SettingsSection.overview.toolbarIdentifier
+        window?.toolbar = toolbar
+        // .preference ist der Systemstil fuer Einstellungsfenster: zentrierte
+        // Items mit Symbol und Label direkt unter dem Fenstertitel.
+        window?.toolbarStyle = .preference
+    }
 
-        NSLayoutConstraint.activate([
-            sectionSegmented.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            sectionSegmented.topAnchor.constraint(equalTo: container.topAnchor),
-            sectionSegmented.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        return container
+    @objc private func toolbarSectionChosen(_ sender: NSToolbarItem) {
+        guard let section = SettingsSection(toolbarIdentifier: sender.itemIdentifier) else { return }
+        showSection(section)
     }
 
     private func buildSectionPages(in container: NSView) {
-        sectionViews = [
+        let pages: [NSView] = [
             buildOverviewPage(),
             buildDisplayPage(),
             buildConnectionPage(),
@@ -336,14 +376,39 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             buildDiagnosticsPage()
         ]
 
+        // Jede Seite bekommt eine eigene NSScrollView. Damit ist die Fensterhoehe
+        // nicht mehr an den laengsten Seiteninhalt gekoppelt — Voraussetzung
+        // dafuer, dass das Fenster ueberhaupt schrumpfen darf.
+        sectionViews = pages.map { page in
+            let scroll = NSScrollView()
+            scroll.hasVerticalScroller = true
+            scroll.hasHorizontalScroller = false
+            scroll.autohidesScrollers = true
+            scroll.drawsBackground = false
+            // NSClipView ist per Default nicht geflippt — ohne das hier klebt
+            // kuerzerer Seiteninhalt am unteren statt am oberen Rand.
+            scroll.contentView = FlippedClipView()
+            scroll.translatesAutoresizingMaskIntoConstraints = false
+
+            page.translatesAutoresizingMaskIntoConstraints = false
+            scroll.documentView = page
+
+            let clip = scroll.contentView
+            NSLayoutConstraint.activate([
+                page.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+                page.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
+                page.topAnchor.constraint(equalTo: clip.topAnchor),
+            ])
+            return scroll
+        }
+
         for view in sectionViews {
-            view.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(view)
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
                 view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
                 view.topAnchor.constraint(equalTo: container.topAnchor),
-                view.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor),
+                view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             ])
         }
     }
@@ -352,13 +417,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         for (index, view) in sectionViews.enumerated() {
             view.isHidden = index != section.rawValue
         }
-        sectionSegmented?.selectedSegment = section.rawValue
-    }
-
-    @objc private func sectionChosen() {
-        let index = sectionSegmented.selectedSegment
-        guard let section = SettingsSection(rawValue: index) else { return }
-        showSection(section)
+        window?.toolbar?.selectedItemIdentifier = section.toolbarIdentifier
     }
 
     // MARK: - Footer
@@ -367,12 +426,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let container = NSView()
 
         footerVersionLabel = NSTextField(labelWithString: "AI Monitor v\(kAppVersion)")
-        footerVersionLabel.font = NSFont.systemFont(ofSize: 11)
+        footerVersionLabel.font = NSFont.appFont(.subheadline)
         footerVersionLabel.textColor = .tertiaryLabelColor
         footerVersionLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(footerVersionLabel)
 
-        footerAboutButton = makeLinkButton("Über AI Monitor", action: #selector(showAbout))
+        // „Über AI Monitor" steht zwar zusaetzlich im App-Menue, aber unter
+        // .accessory/LSUIElement rendert macOS keine Menueleiste — der Eintrag
+        // dort liefert nur das Key-Equivalent. Der sichtbare Pfad muss also im
+        // Fenster bleiben. Statt des frueheren handgebauten Pseudo-Links jetzt
+        // ein Standard-Symbolbutton.
+        footerAboutButton = NSButton()
+        footerAboutButton.isBordered = false
+        footerAboutButton.image = NSImage(systemSymbolName: "info.circle",
+                                          accessibilityDescription: "Über AI Monitor")
+        footerAboutButton.imagePosition = .imageOnly
+        footerAboutButton.contentTintColor = .secondaryLabelColor
+        footerAboutButton.target = self
+        footerAboutButton.action = #selector(showAbout)
+        footerAboutButton.toolTip = "Über AI Monitor"
+        footerAboutButton.setAccessibilityLabel("Über AI Monitor")
+        footerAboutButton.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(footerAboutButton)
 
         NSLayoutConstraint.activate([
@@ -383,23 +457,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             footerAboutButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
         return container
-    }
-
-    private func makeLinkButton(_ title: String, action: Selector) -> NSButton {
-        let b = NSButton(title: title, target: self, action: action)
-        b.isBordered = false
-        b.bezelStyle = .inline
-        b.contentTintColor = .secondaryLabelColor
-        b.font = NSFont.systemFont(ofSize: 11)
-        b.translatesAutoresizingMaskIntoConstraints = false
-        let ps = NSMutableParagraphStyle()
-        ps.alignment = .right
-        b.attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.secondaryLabelColor,
-            .paragraphStyle: ps,
-        ])
-        return b
     }
 
     // MARK: - Linke Spalte
@@ -433,7 +490,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func makeSectionHeading(_ text: String) -> NSTextField {
         let l = NSTextField(labelWithString: text)
-        l.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        l.font = NSFont.appFont(.headline)
         return l
     }
 
@@ -452,10 +509,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func twoColumnRow(_ labelText: String, _ control: NSView) -> NSView {
         let label = NSTextField(labelWithString: labelText)
-        label.font = NSFont.systemFont(ofSize: 13)
+        label.font = NSFont.appFont(.body)
         label.alignment = .left
         label.translatesAutoresizingMaskIntoConstraints = false
         label.widthAnchor.constraint(equalToConstant: 100).isActive = true
+
+        // Die visuelle Zuordnung „Label links, Control rechts" existiert fuer
+        // VoiceOver nicht — ohne Verknuepfung liest es nur den Wert des
+        // Controls vor („Deutsch") ohne zu sagen, wozu er gehoert. Beides
+        // setzen: das Label als beschriftendes Element und zusaetzlich als
+        // Text, falls das Control keine Titel-Beziehung unterstuetzt.
+        if control.accessibilityLabel() == nil {
+            control.setAccessibilityLabel(labelText)
+        }
+        control.setAccessibilityTitleUIElement(label)
 
         let row = NSStackView(views: [label, control])
         row.orientation = .horizontal
@@ -493,12 +560,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let entry = src.lastEntry
         codexBarStatusLabel.stringValue = src.status.shortLabel
         if src.status.isOK {
-            codexBarStatusDot.stringValue = "\u{25CF}"
-            codexBarStatusDot.textColor = .systemGreen
+            codexBarStatusDot.state = .ok
             codexBarStatusLabel.textColor = .labelColor
         } else {
-            codexBarStatusDot.stringValue = "\u{25CF}"
-            codexBarStatusDot.textColor = .systemOrange
+            codexBarStatusDot.state = .attention
             codexBarStatusLabel.textColor = .systemOrange
         }
 
@@ -553,29 +618,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             let short = (p as NSString).lastPathComponent
             switch sp.state {
             case .connected:
-                portStatusDot.stringValue = "\u{25CF}"
-                portStatusDot.textColor = .systemGreen
+                portStatusDot.state = .ok
                 portStatusLabel.stringValue = "verbunden (\(short))"
                 portStatusLabel.textColor = .labelColor
             case .foreignFirmware:
-                portStatusDot.stringValue = "\u{25CF}"
-                portStatusDot.textColor = .systemOrange
+                portStatusDot.state = .attention
                 portStatusLabel.stringValue = "Port offen, fremde Firmware (\(short))"
                 portStatusLabel.textColor = .systemOrange
             case .probing:
-                portStatusDot.stringValue = "\u{25CF}"
-                portStatusDot.textColor = .systemYellow
+                portStatusDot.state = .pending
                 portStatusLabel.stringValue = "Handshake … (\(short))"
                 portStatusLabel.textColor = .secondaryLabelColor
             case .disconnected:
-                portStatusDot.stringValue = "\u{25CB}"
-                portStatusDot.textColor = .secondaryLabelColor
+                portStatusDot.state = .inactive
                 portStatusLabel.stringValue = "nicht verbunden"
                 portStatusLabel.textColor = .secondaryLabelColor
             }
         } else {
-            portStatusDot.stringValue = "\u{25CB}"
-            portStatusDot.textColor = .secondaryLabelColor
+            portStatusDot.state = .inactive
             portStatusLabel.stringValue = "nicht verbunden"
             portStatusLabel.textColor = .secondaryLabelColor
         }
@@ -832,7 +892,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         update()
     }
 
-    @objc fileprivate func showAbout() {
+    /// Wird vom App-Menue (AppDelegate) aufgerufen — daher nicht fileprivate.
+    @objc func showAbout() {
         let alert = NSAlert()
         alert.messageText = "AI Monitor v\(kAppVersion)"
         alert.informativeText = """
@@ -852,9 +913,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         alert.runModal()
     }
 
-    @objc fileprivate func quitApp() {
-        NSApplication.shared.terminate(nil)
-    }
 }
 
 // ============================================================
@@ -892,7 +950,7 @@ final class TimeZoneTableSource: NSObject, NSTableViewDataSource, NSTableViewDel
             cell.identifier = identifier
             let tf = NSTextField(labelWithString: "")
             tf.translatesAutoresizingMaskIntoConstraints = false
-            tf.font = NSFont.systemFont(ofSize: 12)
+            tf.font = NSFont.appFont(.callout)
             cell.addSubview(tf)
             cell.textField = tf
             NSLayoutConstraint.activate([
@@ -978,36 +1036,36 @@ final class FlashDialogController: NSWindowController {
         guard let content = window?.contentView else { return }
 
         let title = NSTextField(labelWithString: S().flashDialogTitle)
-        title.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        title.font = NSFont.appFont(.title3, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(title)
 
         let infoLabel = NSTextField(labelWithString: infoText)
-        infoLabel.font = NSFont.systemFont(ofSize: 12)
+        infoLabel.font = NSFont.appFont(.callout)
         infoLabel.textColor = .secondaryLabelColor
         infoLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(infoLabel)
 
         let preflightTitle = NSTextField(labelWithString: "Preflight-Check")
-        preflightTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        preflightTitle.font = NSFont.appFont(.callout, weight: .medium)
         preflightTitle.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(preflightTitle)
 
         let preflightText = NSTextField(wrappingLabelWithString: preflightItems.joined(separator: "\n"))
-        preflightText.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        preflightText.font = NSFont.appMonospacedDigit(.subheadline)
         preflightText.textColor = canStart ? .secondaryLabelColor : .systemOrange
         preflightText.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(preflightText)
 
         let warningLabel = NSTextField(wrappingLabelWithString: warning ?? "")
-        warningLabel.font = NSFont.systemFont(ofSize: 11)
+        warningLabel.font = NSFont.appFont(.subheadline)
         warningLabel.textColor = .systemOrange
         warningLabel.isHidden = (warning == nil)
         warningLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(warningLabel)
 
         let groupLabel = NSTextField(labelWithString: S().flashDialogBoardVariant)
-        groupLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        groupLabel.font = NSFont.appFont(.callout, weight: .medium)
         groupLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(groupLabel)
 
@@ -1029,7 +1087,7 @@ final class FlashDialogController: NSWindowController {
         }
 
         let hint = NSTextField(wrappingLabelWithString: S().flashDialogVariantHint)
-        hint.font = NSFont.systemFont(ofSize: 11)
+        hint.font = NSFont.appFont(.subheadline)
         hint.textColor = .tertiaryLabelColor
         hint.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(hint)
@@ -1113,5 +1171,61 @@ final class FlashDialogController: NSWindowController {
         NSApp.stopModal()
         completion?(nil)
         completion = nil
+    }
+}
+
+// ============================================================
+// MARK: - Flipped Clip View
+// ============================================================
+
+/// NSClipView mit `isFlipped == true`.
+///
+/// Ohne das liegt der Ursprung einer NSScrollView unten links: ist der
+/// Seiteninhalt kuerzer als die sichtbare Flaeche, klebt er am unteren Rand
+/// statt oben zu beginnen. Betrifft alle fuenf Seiten des Einstellungsfensters,
+/// sobald es groesser gezogen wird als der Inhalt.
+final class FlippedClipView: NSClipView {
+    override var isFlipped: Bool { true }
+}
+
+// ============================================================
+// MARK: - Toolbar-Delegate
+// ============================================================
+
+extension SettingsWindowController: NSToolbarDelegate {
+
+    private var sectionIdentifiers: [NSToolbarItem.Identifier] {
+        SettingsSection.allCases.map(\.toolbarIdentifier)
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        sectionIdentifiers
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        sectionIdentifiers
+    }
+
+    /// Nur selektierbare Items bekommen im .preference-Stil die
+    /// Auswahl-Hervorhebung.
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        sectionIdentifiers
+    }
+
+    func toolbar(_ toolbar: NSToolbar,
+                 itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        guard let section = SettingsSection(toolbarIdentifier: itemIdentifier) else { return nil }
+
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.label = section.title
+        item.paletteLabel = section.title
+        item.image = NSImage(systemSymbolName: section.symbolName,
+                             accessibilityDescription: section.title)
+        // HIG: „Provide an accessibility label for every icon."
+        item.toolTip = section.title
+        item.target = self
+        item.action = #selector(toolbarSectionChosen(_:))
+        return item
     }
 }

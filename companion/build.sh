@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.22.0"
+APP_VERSION="1.23.0-beta.1"
 
 # Developer ID Signing (ab v1.13.0) — optional. Wenn die Identity nicht im
 # Keychain ist (z.B. CI-Runner ohne Cert-Import), fallen wir auf Ad-hoc-Sign
@@ -19,7 +19,6 @@ APP_VERSION="1.22.0"
 SIGN_IDENTITY_DEFAULT="Developer ID Application: Tobias Marks (7V4K87652E)"
 SIGN_IDENTITY="${SIGN_IDENTITY:-$SIGN_IDENTITY_DEFAULT}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-AC_NOTARY}"
-ENTITLEMENTS_FILE="$SCRIPT_DIR/Resources/AIMonitor.entitlements"
 
 # Prüfe, ob die Developer-ID-Identity im Keychain ist.
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
@@ -40,6 +39,8 @@ mkdir -p "$APP/Contents/Resources"
 swiftc \
   Sources/main.swift \
   Sources/CodexBarSource.swift \
+  Sources/StatusIndicator.swift \
+  Sources/Typography.swift \
   Sources/SettingsWindow.swift \
   Sources/SettingsWindow+Overview.swift \
   Sources/SettingsWindow+Display.swift \
@@ -49,7 +50,7 @@ swiftc \
   -framework Cocoa \
   -framework Security \
   -framework ServiceManagement \
-  -target arm64-apple-macosx13.0 \
+  -target arm64-apple-macosx15.0 \
   -O \
   -o "$APP/Contents/MacOS/AIMonitor"
 
@@ -117,22 +118,13 @@ if [ "$HAS_DEVELOPER_ID" = "1" ]; then
   fi
 
   # Main app binary + Bundle. Mit --options runtime = Hardened Runtime.
-  # Wenn Entitlements-Datei existiert, wird sie referenziert (aktuell NICHT
-  # nötig — USB-Serial via open() auf /dev/cu.*, CodexBar liest aus User
-  # Library, esptool läuft als separater Python-Prozess mit eigener Signatur).
-  if [ -f "$ENTITLEMENTS_FILE" ]; then
-    codesign --force --timestamp --options runtime \
-      --entitlements "$ENTITLEMENTS_FILE" \
-      --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/AIMonitor"
-    codesign --force --timestamp --options runtime \
-      --entitlements "$ENTITLEMENTS_FILE" \
-      --sign "$SIGN_IDENTITY" "$APP"
-  else
-    codesign --force --timestamp --options runtime \
-      --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/AIMonitor"
-    codesign --force --timestamp --options runtime \
-      --sign "$SIGN_IDENTITY" "$APP"
-  fi
+  # Ohne Entitlements — werden nicht gebraucht: USB-Serial laeuft via open()
+  # auf /dev/cu.*, CodexBar wird aus der User Library gelesen, und esptool
+  # laeuft als separater Python-Prozess mit eigener Signatur.
+  codesign --force --timestamp --options runtime \
+    --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/AIMonitor"
+  codesign --force --timestamp --options runtime \
+    --sign "$SIGN_IDENTITY" "$APP"
 
   # Sanity-Check
   codesign --verify --deep --strict --verbose=2 "$APP"

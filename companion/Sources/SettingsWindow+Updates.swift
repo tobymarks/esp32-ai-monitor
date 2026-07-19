@@ -33,7 +33,7 @@ extension SettingsWindowController {
         let channelRow = twoColumnRow("Update-Kanal", updateChannelPopup)
 
         let channelHelper = NSTextField(labelWithString: "Stable nutzt veröffentlichte Releases. Beta zeigt zusätzlich Vorabversionen für App und Firmware.")
-        channelHelper.font = NSFont.systemFont(ofSize: 11)
+        channelHelper.font = NSFont.appFont(.subheadline)
         channelHelper.textColor = .secondaryLabelColor
         channelHelper.lineBreakMode = .byWordWrapping
         channelHelper.maximumNumberOfLines = 2
@@ -55,14 +55,14 @@ extension SettingsWindowController {
         let heading = makeSectionHeading("Firmware")
 
         fwVersionLabel = NSTextField(labelWithString: "Installiert: —")
-        fwVersionLabel.font = NSFont.systemFont(ofSize: 13)
+        fwVersionLabel.font = NSFont.appFont(.body)
 
         fwVariantLabel = NSTextField(labelWithString: "Variante: —")
-        fwVariantLabel.font = NSFont.systemFont(ofSize: 12)
+        fwVariantLabel.font = NSFont.appFont(.callout)
         fwVariantLabel.textColor = .secondaryLabelColor
 
         fwUpdateLabel = NSTextField(labelWithString: "")
-        fwUpdateLabel.font = NSFont.systemFont(ofSize: 12)
+        fwUpdateLabel.font = NSFont.appFont(.callout)
         fwUpdateLabel.textColor = .secondaryLabelColor
 
         fwFlashButton = NSButton(title: "Firmware flashen …", target: self, action: #selector(flashFirmware))
@@ -79,7 +79,7 @@ extension SettingsWindowController {
         fwProgressBar.widthAnchor.constraint(equalToConstant: 360).isActive = true
 
         fwProgressLabel = NSTextField(labelWithString: "")
-        fwProgressLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        fwProgressLabel.font = NSFont.appMonospacedDigit(.subheadline)
         fwProgressLabel.textColor = .secondaryLabelColor
         fwProgressLabel.isHidden = true
 

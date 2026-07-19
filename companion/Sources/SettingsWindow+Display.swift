@@ -18,7 +18,7 @@ extension SettingsWindowController {
     func buildDisplayBox() -> NSView {
         let heading = makeSectionHeading("Display einrichten")
         let intro = NSTextField(wrappingLabelWithString: "Stelle das verbundene Display in drei Schritten ein: Gerät erkennen, Darstellung wählen, Ergebnis prüfen.")
-        intro.font = NSFont.systemFont(ofSize: 12)
+        intro.font = NSFont.appFont(.callout)
         intro.textColor = .secondaryLabelColor
 
         // Geräte-Zeile (ab v1.14.0)
@@ -86,7 +86,7 @@ extension SettingsWindowController {
         brightnessSlider.translatesAutoresizingMaskIntoConstraints = false
         brightnessSlider.widthAnchor.constraint(equalToConstant: 240).isActive = true
         brightnessValueLabel = NSTextField(labelWithString: "\(Settings.shared.lastKnownBrightness) %")
-        brightnessValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        brightnessValueLabel.font = NSFont.appMonospacedDigit(.callout)
         brightnessValueLabel.textColor = .secondaryLabelColor
         brightnessValueLabel.translatesAutoresizingMaskIntoConstraints = false
         brightnessValueLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
@@ -97,7 +97,7 @@ extension SettingsWindowController {
         let brightRow = twoColumnRow("Helligkeit", brightControls)
 
         lastUpdateLabel = NSTextField(labelWithString: "Letztes Update an ESP32: —")
-        lastUpdateLabel.font = NSFont.systemFont(ofSize: 11)
+        lastUpdateLabel.font = NSFont.appFont(.subheadline)
         lastUpdateLabel.textColor = .secondaryLabelColor
 
         let deviceStep = buildDisplaySetupStep(
@@ -132,7 +132,7 @@ extension SettingsWindowController {
         displayTestButton = testButton
 
         let testHelper = NSTextField(wrappingLabelWithString: "Sende nach Änderungen ein Testbild. Wenn es falsch gedreht ist, ändere die Ausrichtung und teste erneut.")
-        testHelper.font = NSFont.systemFont(ofSize: 11)
+        testHelper.font = NSFont.appFont(.subheadline)
         testHelper.textColor = .secondaryLabelColor
 
         let testStep = buildDisplaySetupStep(
@@ -153,19 +153,21 @@ extension SettingsWindowController {
                                        title: String,
                                        detail: String,
                                        views: [NSView]) -> NSView {
-        let numberLabel = NSTextField(labelWithString: number)
-        numberLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        let numberLabel = AccentBadgeLabel(labelWithString: number)
+        numberLabel.font = NSFont.appMonospacedDigit(.callout, weight: .semibold)
         numberLabel.alignment = .center
-        numberLabel.textColor = .white
+        // Nicht .white: bei hellen System-Akzentfarben (Gelb, Grün) waere der
+        // Kontrast zu gering. .alternateSelectedControlTextColor ist die
+        // semantische Vordergrundfarbe fuer Akzent-Hintergruende.
+        numberLabel.textColor = .alternateSelectedControlTextColor
         numberLabel.wantsLayer = true
-        numberLabel.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
         numberLabel.layer?.cornerRadius = 9
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
         numberLabel.widthAnchor.constraint(equalToConstant: 18).isActive = true
         numberLabel.heightAnchor.constraint(equalToConstant: 18).isActive = true
 
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = NSFont.appFont(.headline)
 
         let header = NSStackView(views: [numberLabel, titleLabel])
         header.orientation = .horizontal
@@ -173,7 +175,7 @@ extension SettingsWindowController {
         header.spacing = 8
 
         let detailLabel = NSTextField(wrappingLabelWithString: detail)
-        detailLabel.font = NSFont.systemFont(ofSize: 11)
+        detailLabel.font = NSFont.appFont(.subheadline)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
         detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 620).isActive = true
@@ -196,7 +198,7 @@ extension SettingsWindowController {
     private func buildDeviceRow() -> NSView {
         // --- Display-Container ---
         deviceNameLabel = NSTextField(labelWithString: "—")
-        deviceNameLabel.font = NSFont.systemFont(ofSize: 13)
+        deviceNameLabel.font = NSFont.appFont(.body)
         deviceNameLabel.lineBreakMode = .byTruncatingTail
         deviceNameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         deviceNameLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -204,12 +206,18 @@ extension SettingsWindowController {
         deviceEditButton = NSButton()
         deviceEditButton.bezelStyle = .regularSquare
         deviceEditButton.isBordered = false
-        deviceEditButton.title = "✏️"
+        // Vorher das Emoji „✏️" als Button-Titel. Emoji skalieren nicht mit den
+        // Systemeinstellungen, faerben sich nicht mit dem Control-Tint und
+        // werden von VoiceOver als „Bleistift" statt als Aktion vorgelesen.
+        deviceEditButton.image = NSImage(systemSymbolName: "pencil",
+                                         accessibilityDescription: "Name ändern")
+        deviceEditButton.imagePosition = .imageOnly
+        deviceEditButton.contentTintColor = .secondaryLabelColor
         deviceEditButton.target = self
         deviceEditButton.action = #selector(beginDeviceNameEdit)
         deviceEditButton.setButtonType(.momentaryPushIn)
-        deviceEditButton.font = NSFont.systemFont(ofSize: 13)
         deviceEditButton.toolTip = "Name ändern"
+        deviceEditButton.setAccessibilityLabel("Gerätename ändern")
         deviceEditButton.translatesAutoresizingMaskIntoConstraints = false
         deviceEditButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
@@ -222,7 +230,7 @@ extension SettingsWindowController {
         // --- Edit-Container (initial versteckt) ---
         deviceEditField = NSTextField()
         deviceEditField.placeholderString = "Gerätename"
-        deviceEditField.font = NSFont.systemFont(ofSize: 13)
+        deviceEditField.font = NSFont.appFont(.body)
         deviceEditField.translatesAutoresizingMaskIntoConstraints = false
         deviceEditField.widthAnchor.constraint(equalToConstant: 180).isActive = true
         deviceEditField.target = self
@@ -244,7 +252,7 @@ extension SettingsWindowController {
         deviceEditContainer.isHidden = true
 
         deviceEditHintLabel = NSTextField(labelWithString: "")
-        deviceEditHintLabel.font = NSFont.systemFont(ofSize: 11)
+        deviceEditHintLabel.font = NSFont.appFont(.subheadline)
         deviceEditHintLabel.textColor = .systemRed
         deviceEditHintLabel.isHidden = true
 
@@ -567,8 +575,12 @@ extension SettingsWindowController {
 
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 220))
         scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
+        // .bezelBorder ist der gravierte Rahmen aus der 10.x-Aera. Moderne
+        // Listen stehen rahmenlos; die Abgrenzung uebernimmt der .inset-Stil
+        // der Tabelle.
+        scroll.borderType = .noBorder
         let tableView = NSTableView(frame: scroll.bounds)
+        tableView.style = .inset
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("tz"))
         column.title = "IANA"
         column.width = 340
@@ -630,6 +642,55 @@ extension SettingsWindowController {
             guard let self = self else { return }
             let finalPct = Int(self.brightnessSlider.doubleValue.rounded())
             self.monitor?.sendBrightnessToESP32(finalPct, persist: true)
+        }
+    }
+}
+
+// ============================================================
+// MARK: - Accent Badge
+// ============================================================
+
+/// Runder Akzent-Badge fuer die Schritt-Nummerierung der Display-Einrichtung.
+///
+/// `layer.backgroundColor` ist ein CGColor und damit — anders als NSColor —
+/// nicht appearance-aware: einmal aufgeloest bleibt der Wert fix. Ohne
+/// Nachfaerben behaelt der Badge beim Wechsel Hell/Dunkel oder beim Aendern
+/// der System-Akzentfarbe die alte Farbe. Diese Subklasse faerbt bei beiden
+/// Ereignissen nach.
+final class AccentBadgeLabel: NSTextField {
+
+    private var systemColorObserver: NSObjectProtocol?
+
+    deinit {
+        if let systemColorObserver {
+            NotificationCenter.default.removeObserver(systemColorObserver)
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyAccentBackground()
+
+        // Akzentfarben-Wechsel loest KEIN viewDidChangeEffectiveAppearance aus,
+        // sondern nur diese Notification.
+        guard window != nil, systemColorObserver == nil else { return }
+        systemColorObserver = NotificationCenter.default.addObserver(
+            forName: NSColor.systemColorsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyAccentBackground()
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAccentBackground()
+    }
+
+    private func applyAccentBackground() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlAccentColor.cgColor
         }
     }
 }
