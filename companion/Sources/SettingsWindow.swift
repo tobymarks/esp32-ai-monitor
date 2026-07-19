@@ -626,15 +626,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             codexBarValuesLabel.stringValue = "Session: — · Weekly: —"
             let msg: String
             switch src.status {
-            case .accessNotConfigured:
-                msg = "CodexBar-Zugriff noch nicht eingerichtet."
-            case .missing:
+            case .cliMissing:
+                msg = "CodexBar-CLI nicht gefunden („brew install codexbar“)."
+            case .providerUnavailable(let m):
                 let providerLabel = CodexBarProvider.normalized(src.provider).displayLabel
-                msg = "Keine \(providerLabel)-Daten in CodexBar gefunden."
+                msg = "\(providerLabel) liefert keine Daten: \(m)"
+            case .cliFailed(let m):
+                msg = "Abruf fehlgeschlagen: \(m)"
             case .stale(let age):
                 msg = "Daten sind \(age/60) Minuten alt."
-            case .wrongVersion(let f, let e):
-                msg = "Schema-Version unerwartet: \(f), erwartet \(e)."
             case .parseError(let m):
                 msg = "Parse-Fehler: \(m)"
             default:
@@ -835,13 +835,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         requestWiFiStatus()
 
         if codexBarReloadButton != nil {
-            if case .accessNotConfigured = src.status {
-                codexBarReloadButton.title = "Zugriff einrichten …"
-                codexBarReloadButton.toolTip = "Wählt die widget-snapshot.json aus CodexBar einmalig aus."
-            } else {
-                codexBarReloadButton.title = "Jetzt neu laden"
-                codexBarReloadButton.toolTip = "Liest die aktuellen CodexBar-Daten erneut ein."
-            }
+            codexBarReloadButton.title = "Jetzt neu laden"
+            codexBarReloadButton.toolTip = "Fragt die Daten über das CodexBar-CLI erneut ab."
         }
 
         // Footer-Version (falls kAppVersion sich in einem Hot-Reload mal aendert)

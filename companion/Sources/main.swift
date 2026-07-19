@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.23.0-beta.3"
+let kAppVersion = "1.24.0-beta.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -2289,9 +2289,9 @@ class UsageMonitor {
         // und damit sendUsageToESP32 bereits ausgelöst hat), ist das hier
         // redundant aber harmlos — garantiert aber den Resend falls onChange
         // noch nicht drin war (z. B. während das Settings-Fenster updatet).
-        if codexBar.status.isOK {
-            sendUsageToESP32()
-        }
+        // Auch ohne Daten senden: sendUsageToESP32() schickt dann einen
+        // Hinweis-Frame. Vorher blieb hier das Bild des alten Providers stehen.
+        sendUsageToESP32()
     }
 
     func start() {
@@ -2299,11 +2299,10 @@ class UsageMonitor {
         codexBar.onChange = { [weak self] in
             guard let self = self else { return }
             self.onUpdate?()
-            // Nur wenn OK: an ESP32 senden. Stale/Missing/WrongVersion -> nix senden,
-            // ESP32 friert letzten Wert ein (Timeout im Display handled die Firmware).
-            if self.codexBar.status.isOK {
-                self.sendUsageToESP32()
-            }
+            // Immer senden — bei fehlenden Daten geht ein Hinweis-Frame raus
+            // ("Bitte App oeffnen"). Frueher wurde hier nichts gesendet und das
+            // Display zeigte weiter die Werte des vorherigen Providers.
+            self.sendUsageToESP32()
         }
 
         // Serial: bei Connect Theme/Language/Orientation + aktuellen Usage pushen.
@@ -2323,9 +2322,7 @@ class UsageMonitor {
             self.sendLanguageToESP32()
             self.sendOrientationToESP32()
             self.sendBrightnessToESP32(Settings.shared.lastKnownBrightness)
-            if self.codexBar.status.isOK {
-                self.sendUsageToESP32()
-            }
+            self.sendUsageToESP32()
             if self.pendingDiagnosticAfterNextConnect && self.serialPort.state == .connected {
                 self.pendingDiagnosticAfterNextConnect = false
                 self.serialLinkDetail = "Testframe nach Firmware-Update wird gesendet"
@@ -2344,9 +2341,7 @@ class UsageMonitor {
         // Heartbeat: Display-Uhr aktuell halten, auch wenn CodexBar nicht neu schreibt
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: kSerialHeartbeatInterval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if self.codexBar.status.isOK {
-                self.sendUsageToESP32()
-            }
+            self.sendUsageToESP32()
         }
     }
 
@@ -2699,13 +2694,19 @@ class UsageMonitor {
     /// ESP32 gesendet — ohne auf den nächsten Heartbeat zu warten. Verwendet
     /// von allen set_*-Commands und beim Serial-Connect, um Delay zu minimieren.
     fileprivate func sendLastUsageSnapshotIfAvailable() {
-        guard codexBar.status.isOK, codexBar.lastEntry != nil else { return }
         sendUsageToESP32()
     }
 
     fileprivate func sendUsageToESP32() {
         guard serialPort.isReadyForCommands else { return }
-        guard let entry = codexBar.lastEntry else { return }
+        // Kein Eintrag heisst NICHT „nichts tun". Vorher kehrte die Funktion
+        // hier einfach zurueck — das Display zeigte dann weiter die Werte des
+        // zuvor gewaehlten Providers, obwohl der neue gar keine Daten liefert.
+        // Stattdessen geht ein Hinweis-Frame raus.
+        guard let entry = codexBar.lastEntry else {
+            sendNoticeToESP32()
+            return
+        }
 
         // Provider aus der CodexBar-Source (normalisiert), nicht direkt aus
         // Settings — das hält Envelope und tatsächlich gelesene Daten konsistent.
@@ -2735,6 +2736,69 @@ class UsageMonitor {
                     NSLog("[Serial] Sent usage frame #%d (%d bytes) provider=%@ s=%d%% w=%d%% t=%d%% rows=%d",
                           frameId, jsonData.count, built.activeProvider,
                           built.primaryPercent, built.secondaryPercent, built.tertiaryPercent, built.rowCount)
+                }
+            }
+        }
+    }
+
+    /// Sendet einen Hinweis-Frame, wenn fuer den aktiven Provider keine Daten
+    /// vorliegen (z. B. Antigravity-IDE nicht gestartet, CLI fehlt).
+    ///
+    /// Das Envelope traegt dieselbe Struktur wie ein Usage-Frame, aber mit
+    /// leeren Zeilen und einem `notice`-Text. Firmware ab v2.15.0 rendert den
+    /// Text; aeltere Firmware ignoriert das unbekannte Feld und zeigt durch die
+    /// leeren Zeilen zumindest keine falschen Zahlen mehr.
+    fileprivate func sendNoticeToESP32() {
+        guard serialPort.isReadyForCommands else { return }
+        // Laeuft gerade ein Abruf ohne vorhandene Daten, ist nichts kaputt —
+        // dann „Lädt …" statt einer Fehlermeldung. Ohne diesen Zweig bliebe in
+        // den 1–4 s des CLI-Aufrufs das Bild des vorherigen Providers stehen.
+        let notice: String
+        if let statusNotice = codexBar.status.displayNotice {
+            notice = statusNotice
+        } else if codexBar.isLoadingWithoutData {
+            notice = CodexBarStatus.loadingNotice
+        } else {
+            return
+        }
+
+        let provider = CodexBarProvider.normalized(codexBar.provider)
+        let frameId = allocateFrameId()
+        let now = Date()
+        let nowISO = Self.frameISOFormatter.string(from: now)
+        let timeFmt = Self.frameTimeFormatter
+        timeFmt.timeZone = Settings.shared.effectiveTimeZone()
+
+        let envelope: [String: Any] = [
+            "schemaVersion": Self.serialSchemaVersion,
+            "frameId": frameId,
+            "sentAt": nowISO,
+            "time": nowISO,
+            "displayTime": timeFmt.string(from: now),
+            "tzOffsetMinutes": Settings.shared.effectiveTimeZone().secondsFromGMT(for: now) / 60,
+            "data": [
+                [
+                    "source": "codexbar",
+                    "provider": provider.rawValue,
+                    "notice": notice,
+                    "usage": [
+                        "rows": [] as [[String: Any]],
+                        "loginMethod": provider.loginLabel
+                    ]
+                ]
+            ]
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: envelope),
+              let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+
+        serialSendQueue.async { [weak self] in
+            guard let self = self else { return }
+            let receipt = self.serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
+            DispatchQueue.main.async {
+                if self.registerFrameReceipt(receipt, source: "notice") {
+                    NSLog("[Serial] Sent notice frame #%d provider=%@ notice=%@",
+                          frameId, provider.rawValue, notice)
                 }
             }
         }
@@ -2821,21 +2885,38 @@ class UsageMonitor {
         }
 
         if provider.usesModelRows {
-            let antigravityIds = ["primary", "secondary", "tertiary"]
-            for idx in 0..<3 {
-                let id = antigravityIds[idx]
-                let w = (idx < windows.count) ? windows[idx] : nil
-                let used = Int((w?.usedPercent ?? 0).rounded())
-                let row = rowsById[id]
-                let displayPercent = toDisplayPercentFromRow(windowUsed: used, rowPercentLeft: row?.percentLeft)
+            // Ab v1.24.0 kommen die Modell-Kontingente aus `extraRateWindows`
+            // des CodexBar-CLI (z. B. „Gemini 5-hour", „Claude/GPT weekly") —
+            // inklusive der Titel. Die frueheren festen Titel (Claude / Gemini
+            // Pro / Gemini Flash) passten nicht mehr zu dem, was geliefert wird.
+            if let extras = entry.extraWindows, !extras.isEmpty {
+                for extra in extras.prefix(3) {
+                    let used = Int(extra.window.usedPercent.rounded())
+                    rowsPayload.append([
+                        "id": extra.id,
+                        "title": extra.title,
+                        "usedPercent": toDisplayPercentFromUsed(used),
+                        "resetsAt": extra.window.resetsAt ?? "",
+                        "windowMinutes": extra.window.windowMinutes ?? 0
+                    ])
+                }
+            } else {
+                let antigravityIds = ["primary", "secondary", "tertiary"]
+                for idx in 0..<3 {
+                    let id = antigravityIds[idx]
+                    let w = (idx < windows.count) ? windows[idx] : nil
+                    let used = Int((w?.usedPercent ?? 0).rounded())
+                    let row = rowsById[id]
+                    let displayPercent = toDisplayPercentFromRow(windowUsed: used, rowPercentLeft: row?.percentLeft)
 
-                rowsPayload.append([
-                    "id": id,
-                    "title": defaultRowTitle(idx),
-                    "usedPercent": displayPercent,
-                    "resetsAt": w?.resetsAt ?? "",
-                    "windowMinutes": w?.windowMinutes ?? 0
-                ])
+                    rowsPayload.append([
+                        "id": id,
+                        "title": defaultRowTitle(idx),
+                        "usedPercent": displayPercent,
+                        "resetsAt": w?.resetsAt ?? "",
+                        "windowMinutes": w?.windowMinutes ?? 0
+                    ])
+                }
             }
         } else {
             if let rows = entry.usageRows, !rows.isEmpty {

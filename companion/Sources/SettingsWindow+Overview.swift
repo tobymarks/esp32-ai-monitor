@@ -513,19 +513,18 @@ extension SettingsWindowController {
         switch status {
         case .ok:
             return "\(providerLabel)-Daten sind aktuell."
-        case .accessNotConfigured:
-            return "CodexBar-Zugriff ist noch nicht eingerichtet. Wähle einmalig die widget-snapshot.json aus."
-        case .missing:
-            return "Keine \(providerLabel)-Daten gefunden. CodexBar öffnen und Provider aktivieren."
+        case .cliMissing:
+            return "Das CodexBar-CLI wurde nicht gefunden. Installiere es mit „brew install codexbar“."
+        case .providerUnavailable(let message):
+            return "\(providerLabel) liefert keine Daten: \(message)"
+        case .cliFailed(let message):
+            return "Abruf über das CodexBar-CLI fehlgeschlagen: \(message)"
         case .stale(let age):
-            if age == Int.max { return "CodexBar-Snapshot hat keinen gültigen Zeitstempel." }
-            return "CodexBar-Daten sind \(age / 60) Minuten alt."
-        case .wrongVersion(let found, let expected):
-            return "CodexBar-Schema \(found), erwartet \(expected). CodexBar/AI Monitor aktualisieren."
+            return "\(providerLabel)-Daten sind \(age / 60) Minuten alt."
         case .parseError(let message):
-            return "CodexBar-Snapshot konnte nicht gelesen werden: \(message)"
+            return "Antwort des CodexBar-CLI konnte nicht gelesen werden: \(message)"
         case .notYet:
-            return "CodexBar-Daten werden geladen …"
+            return "\(providerLabel)-Daten werden geladen …"
         }
     }
 
@@ -566,47 +565,12 @@ extension SettingsWindowController {
     }
 
     @objc private func reloadCodexBar() {
-        // Erst neu laden. Liefert die aktuelle Quelle keine frischen Daten
-        // (nicht eingerichtet, stale, missing, Parse-Fehler), direkt den
-        // Auswahl-Dialog öffnen — deckt auch den Fall ab, dass ein alter
-        // Bookmark auf eine inzwischen verschobene/veraltete Datei zeigt.
-        let status = monitor?.codexBar.loadOnce()
+        // Ab v1.24.0 laeuft der Abruf ueber das CodexBar-CLI und ist
+        // asynchron — die UI aktualisiert sich ueber onChange, sobald das
+        // Ergebnis da ist. Der frühere Auswahl-Dialog für die
+        // widget-snapshot.json entfaellt ersatzlos.
+        monitor?.codexBar.loadOnce()
         update()
-        if status?.isOK != true {
-            configureCodexBarAccess()
-        }
     }
 
-    private func configureCodexBarAccess() {
-        let panel = NSOpenPanel()
-        panel.title = "CodexBar-Datenquelle wählen"
-        panel.message = "Wähle die Datei widget-snapshot.json aus dem CodexBar-Ordner aus."
-        panel.prompt = "Auswählen"
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.json]
-        // Direkt im aktuellen CodexBar-Container starten, damit die Datei mit
-        // einem Klick wählbar ist (Pfad-Vorgabe, kein App-Zugriff -> kein Prompt).
-        panel.directoryURL = URL(fileURLWithPath: CodexBarSource.suggestedSnapshotDirectory())
-        panel.nameFieldStringValue = "widget-snapshot.json"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let bookmark = try url.bookmarkData(options: [.withSecurityScope],
-                                                includingResourceValuesForKeys: nil,
-                                                relativeTo: nil)
-            Settings.shared.codexBarSnapshotBookmarkData = bookmark
-            Settings.shared.codexBarSnapshotPath = url.path
-            monitor?.codexBar.loadOnce()
-            update()
-        } catch {
-            let alert = NSAlert()
-            alert.messageText = "CodexBar-Zugriff fehlgeschlagen"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-        }
-    }
 }
