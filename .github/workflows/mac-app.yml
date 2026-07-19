@@ -26,7 +26,13 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-26 statt macos-14 (ab App 1.23.0): der alte Runner brachte Xcode
+    # 15.4 mit und baute damit gegen SDK 14.5. Das neue Systemaussehen
+    # (Liquid Glass) greift laut Apple nur, wenn gegen das aktuelle SDK
+    # gelinkt wird — die Releases sahen deshalb anders aus als lokale Builds.
+    # Ausserdem versteht erst das actool ab Xcode 26 das .icon-Format des
+    # App-Icons.
+    runs-on: macos-26
     # Exponiert als env, damit Schritte per `if: env.MACOS_CERT_P12_BASE64 != ''`
     # erkennen, ob Signing-Secrets hinterlegt sind. Fehlen sie, baut build.sh
     # ad-hoc (kein Bruch) — der Developer-ID-Pfad greift erst nach Secret-Setup.
@@ -58,11 +64,31 @@ jobs:
           [ "$fail" = 0 ] && echo "Version OK: $TAG"
           exit $fail
 
+      - name: Select newest Xcode
+        run: |
+          set -euo pipefail
+          echo "Installierte Xcode-Versionen:"
+          ls -d /Applications/Xcode*.app || true
+          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$LATEST/Contents/Developer"
+          echo "Ausgewaehlt: $LATEST"
+
       - name: Show environment
         run: |
+          set -euo pipefail
           sw_vers
           xcodebuild -version
           swift --version
+          SDK=$(xcrun --show-sdk-version)
+          echo "macOS SDK: $SDK"
+          # Harte Schranke: ohne SDK 26 baut die CI ein anderes Produkt als der
+          # lokale Build — Standard-Controls bekommen das neue Systemaussehen
+          # nicht, und actool kann das .icon-App-Icon nicht kompilieren. Das
+          # soll auffallen und nicht still durchgehen.
+          if [ "${SDK%%.*}" -lt 26 ]; then
+            echo "::error::macOS-SDK $SDK ist zu alt. Liquid Glass und das .icon-App-Icon brauchen SDK 26 (Xcode 26)."
+            exit 1
+          fi
 
       - name: Install PlatformIO (fuer esptool-Bundle in AI Monitor.app)
         run: |
