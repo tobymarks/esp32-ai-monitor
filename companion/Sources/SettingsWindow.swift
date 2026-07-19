@@ -384,10 +384,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             scroll.hasVerticalScroller = true
             scroll.hasHorizontalScroller = false
             scroll.autohidesScrollers = true
-            scroll.drawsBackground = false
             // NSClipView ist per Default nicht geflippt — ohne das hier klebt
             // kuerzerer Seiteninhalt am unteren statt am oberen Rand.
             scroll.contentView = FlippedClipView()
+            // Reihenfolge ist wichtig: die frisch gesetzte ClipView bringt ihren
+            // eigenen Default mit (undurchsichtig, controlBackgroundColor). Wird
+            // drawsBackground vorher am ScrollView gesetzt, malt die ClipView
+            // trotzdem weiss — das ergab den hellen Kasten zwischen Kopf- und
+            // Fusszeile. Deshalb erst contentView setzen, dann beide auf
+            // transparent, damit durchgehend die Fensterfarbe traegt.
+            scroll.drawsBackground = false
+            scroll.backgroundColor = .clear
+            scroll.contentView.drawsBackground = false
+            scroll.borderType = .noBorder
             scroll.translatesAutoresizingMaskIntoConstraints = false
 
             page.translatesAutoresizingMaskIntoConstraints = false
