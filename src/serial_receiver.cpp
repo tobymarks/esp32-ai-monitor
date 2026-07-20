@@ -651,6 +651,11 @@ static void parse_json(const char *json_str) {
     // Usage-Frames einen Hinweis. Vorher sendete sie in dem Fall GAR NICHTS —
     // das Display zeigte dann unbemerkt die Werte des vorher gewaehlten
     // Providers weiter.
+    // v2.15.0-beta.3: `fetching` meldet einen laufenden Abruf auf dem Mac.
+    // Das Dashboard zeigt dafuer schon immer ein Refresh-Symbol im Kopf, es
+    // wurde im seriellen Pfad nur nie gesetzt.
+    state.is_fetching = data0["fetching"].as<bool>();
+
     const char *notice = data0["notice"];
     if (notice != nullptr && notice[0] != '\0') {
         clear_usage_rows(state.usage);
@@ -691,7 +696,6 @@ static void parse_json(const char *json_str) {
     state.usage.error[0] = '\0';
     state.usage.notice_only = false;
     state.token_valid = true;
-    state.is_fetching = false;
     strlcpy(state.status, "OK (USB)", sizeof(state.status));
     new_data_flag = true;
 
@@ -714,7 +718,6 @@ void serial_receiver_init() {
     serial_frame_received = 0;
     memset(&state, 0, sizeof(state));
     usage_data_clear(state.usage);
-    state.is_fetching = false;
     state.token_valid = false;
 
     // Default timezone until the Mac companion sends its selected offset.

@@ -658,10 +658,19 @@ void ui_dashboard_update(const MonitorState &state) {
 
     const bool has_recent_data = serial_has_recent_data();
     const bool clock_is_set = time(nullptr) > CLOCK_VALID_EPOCH;
-    const bool should_show_standby = !has_recent_data && (state.usage.valid || clock_is_set);
+    // Ein Hinweis-Frame setzt usage.valid = false, damit keine Balken gerendert
+    // werden. serial_has_recent_data() liefert dann aber ebenfalls false — ohne
+    // die notice_only-Ausnahme legte sich die Standby-Uhr vollflaechig ueber den
+    // Hinweis, und der Nutzer sah beim Provider-Wechsel nur die grosse Uhr.
+    const bool should_show_standby = !has_recent_data
+                                  && !state.usage.notice_only
+                                  && (state.usage.valid || clock_is_set);
 
-    // Hide splash overlay once we receive the first valid data
-    if (!first_data_received && state.usage.valid && splash_overlay != nullptr) {
+    // Hide splash overlay once we receive the first valid data — oder einen
+    // Hinweis. Sonst bliebe der Splash haengen, wenn der beim Start gewaehlte
+    // Provider gar keine Daten liefert.
+    if (!first_data_received && (state.usage.valid || state.usage.notice_only)
+        && splash_overlay != nullptr) {
         first_data_received = true;
         lv_obj_delete(splash_overlay);
         splash_overlay = nullptr;
