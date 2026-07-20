@@ -40,7 +40,7 @@ jobs:
       MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Die App-Version steht an drei manuell gepflegten Stellen. Bei einem
       # app-v* / app-beta-v*-Tag muessen alle drei zum Tag passen, sonst meldet
@@ -162,14 +162,14 @@ jobs:
         run: ls -lah build/
 
       - name: Upload ZIP artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AIMonitor-zip
           path: companion/build/AIMonitor.zip
           if-no-files-found: error
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AIMonitor-dmg
           path: companion/build/AIMonitor.dmg
