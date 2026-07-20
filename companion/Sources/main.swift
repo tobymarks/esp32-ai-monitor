@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.24.0-beta.3"
+let kAppVersion = "1.24.0-beta.4"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -874,15 +874,82 @@ enum SemVer {
         }
     }
 
+    /// Prerelease-Teil hinter dem ersten „-" der Versionsnummer, z. B.
+    /// „beta.3" aus „2.15.0-beta.3". Leer, wenn es ein finales Release ist.
+    static func prerelease(_ raw: String) -> String {
+        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for prefix in ["fw-beta-v", "fw-beta-", "app-beta-v", "app-v", "v"] {
+            if cleaned.hasPrefix(prefix) {
+                cleaned = String(cleaned.dropFirst(prefix.count))
+                break
+            }
+        }
+        guard let dashIndex = cleaned.firstIndex(of: "-") else { return "" }
+        return String(cleaned[cleaned.index(after: dashIndex)...])
+    }
+
+    /// Vollstaendiger Versionsvergleich inklusive Prerelease.
+    ///
+    /// `parts()` wirft den Prerelease-Teil weg — ohne die Behandlung hier waeren
+    /// 2.15.0-beta.1 und 2.15.0-beta.3 gleichwertig, und Beta-Tester bekaemen
+    /// innerhalb einer Serie nie ein Update.
+    ///
+    /// Regeln nach SemVer:
+    ///  - Zuerst die numerischen Stellen (2.15.0).
+    ///  - Bei Gleichstand gilt: ein finales Release ist NEUER als jedes
+    ///    Prerelease derselben Version (2.15.0 > 2.15.0-beta.3).
+    ///  - Zwei Prereleases werden feldweise verglichen, rein numerische Felder
+    ///    numerisch (beta.10 > beta.9), sonst lexikalisch.
+    /// Nur die numerischen Stellen, ohne Prerelease.
+    ///
+    /// Nicht `parts()` verwenden: das splittet zuerst an „." und liest dann je
+    /// Feld die Zahl vor dem „-". Aus „2.15.0-beta.3" wird dadurch [2,15,0,3] —
+    /// die 3 aus „beta.3" rutscht als vierte Stelle durch, und das Prerelease
+    /// gilt faelschlich als neuer als das finale 2.15.0.
+    static func coreParts(_ raw: String) -> [Int] {
+        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for prefix in ["fw-beta-v", "fw-beta-", "app-beta-v", "app-v", "v"] {
+            if cleaned.hasPrefix(prefix) {
+                cleaned = String(cleaned.dropFirst(prefix.count))
+                break
+            }
+        }
+        if let dashIndex = cleaned.firstIndex(of: "-") {
+            cleaned = String(cleaned[..<dashIndex])
+        }
+        return cleaned.split(separator: ".").map { Int($0) ?? 0 }
+    }
+
     static func compare(_ a: String, _ b: String) -> ComparisonResult {
-        let aParts = parts(a)
-        let bParts = parts(b)
+        let aParts = coreParts(a)
+        let bParts = coreParts(b)
         let count = max(aParts.count, bParts.count)
         for i in 0..<count {
             let av = i < aParts.count ? aParts[i] : 0
             let bv = i < bParts.count ? bParts[i] : 0
             if av > bv { return .orderedDescending }
             if av < bv { return .orderedAscending }
+        }
+
+        let aPre = prerelease(a)
+        let bPre = prerelease(b)
+        if aPre == bPre { return .orderedSame }
+        if aPre.isEmpty { return .orderedDescending }   // final > prerelease
+        if bPre.isEmpty { return .orderedAscending }
+
+        let aFields = aPre.split(separator: ".").map(String.init)
+        let bFields = bPre.split(separator: ".").map(String.init)
+        for i in 0..<max(aFields.count, bFields.count) {
+            // Fehlendes Feld ist kleiner: beta < beta.1
+            guard i < aFields.count else { return .orderedAscending }
+            guard i < bFields.count else { return .orderedDescending }
+            let af = aFields[i]
+            let bf = bFields[i]
+            if af == bf { continue }
+            if let an = Int(af), let bn = Int(bf) {
+                return an < bn ? .orderedAscending : .orderedDescending
+            }
+            return af < bf ? .orderedAscending : .orderedDescending
         }
         return .orderedSame
     }
@@ -964,7 +1031,10 @@ class AppUpdateManager {
 
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
-        return release.tag_name != currentAppReleaseTag
+        // Nur echte Updates anbieten, nicht jede Abweichung. Vorher `!=`: wer
+        // eine Beta installiert hatte und in den Stable-Kanal wechselte, bekam
+        // ein Downgrade als "Update" angeboten.
+        return SemVer.compare(currentAppReleaseTag, release.tag_name) == .orderedAscending
     }
 
     var latestVersionDisplay: String {
@@ -1566,7 +1636,10 @@ class FirmwareManager {
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
         guard let installed = Settings.shared.installedFirmwareVersion else { return true }
-        return firmwareVersionTag(from: release.tag_name) != firmwareVersionTag(from: installed)
+        // Siehe AppUpdateManager.hasUpdate: `!=` bot Downgrades als Updates an.
+        // Ein Downgrade setzt zusaetzlich die Geraete-Einstellungen zurueck.
+        return compareFirmwareVersions(firmwareVersionTag(from: installed),
+                                       firmwareVersionTag(from: release.tag_name)) == .orderedAscending
     }
 
     var installedVersionDisplay: String { Settings.shared.installedFirmwareVersion ?? "unbekannt" }
@@ -2266,6 +2339,8 @@ class UsageMonitor {
     private let serialSendQueue = DispatchQueue(label: "de.aimonitor.serial-send")
     var onOutdatedFirmwareDetected: ((_ deviceName: String, _ installedVersion: String, _ latestVersion: String) -> Void)?
     private var heartbeatTimer: Timer?
+    /// Ausstehender, gebuendelter Usage-/Notice-Frame (siehe scheduleUsageSend).
+    private var pendingUsageSend: DispatchWorkItem?
     private var nextFrameId = 1
     private var pendingDiagnosticAfterNextConnect = false
     private(set) var serialConsecutiveUnconfirmedFrames = 0
@@ -2291,7 +2366,7 @@ class UsageMonitor {
         // noch nicht drin war (z. B. während das Settings-Fenster updatet).
         // Auch ohne Daten senden: sendUsageToESP32() schickt dann einen
         // Hinweis-Frame. Vorher blieb hier das Bild des alten Providers stehen.
-        sendUsageToESP32()
+        scheduleUsageSend()
     }
 
     func start() {
@@ -2300,9 +2375,14 @@ class UsageMonitor {
             guard let self = self else { return }
             self.onUpdate?()
             // Immer senden — bei fehlenden Daten geht ein Hinweis-Frame raus
-            // ("Bitte App oeffnen"). Frueher wurde hier nichts gesendet und das
+            // ("Bitte App starten"). Frueher wurde hier nichts gesendet und das
             // Display zeigte weiter die Werte des vorherigen Providers.
-            self.sendUsageToESP32()
+            //
+            // Gebuendelt: ein Provider-Wechsel loest mehrere Zustandswechsel
+            // kurz hintereinander aus (Wechsel -> Abruf startet -> Ergebnis).
+            // Ohne Buendelung gingen dafuer 3–4 Frames raus, von denen nur der
+            // letzte zaehlt.
+            self.scheduleUsageSend()
         }
 
         // Serial: bei Connect Theme/Language/Orientation + aktuellen Usage pushen.
@@ -2694,7 +2774,28 @@ class UsageMonitor {
     /// ESP32 gesendet — ohne auf den nächsten Heartbeat zu warten. Verwendet
     /// von allen set_*-Commands und beim Serial-Connect, um Delay zu minimieren.
     fileprivate func sendLastUsageSnapshotIfAvailable() {
-        sendUsageToESP32()
+        // Gebuendelt: beim Verbinden feuern set_theme/language/orientation/
+        // brightness kurz hintereinander und riefen das hier jeweils direkt auf
+        // — das ergab vier identische Frames.
+        scheduleUsageSend()
+    }
+
+    /// Buendelt schnell aufeinanderfolgende Zustandswechsel zu einem Frame.
+    ///
+    /// 120 ms sind kurz genug, dass der Lade-Hinweis beim Provider-Wechsel
+    /// weiterhin praktisch sofort erscheint, fassen aber die Kette
+    /// „Wechsel -> Abruf laeuft -> Ergebnis" zusammen, wenn sie schneller
+    /// durchlaeuft. Ein 3-Sekunden-Abruf wird dadurch NICHT verschluckt — der
+    /// Lade-Hinweis geht raus und das Ergebnis spaeter als eigener Frame.
+    private func scheduleUsageSend() {
+        pendingUsageSend?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.pendingUsageSend = nil
+            self.sendUsageToESP32()
+        }
+        pendingUsageSend = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: item)
     }
 
     fileprivate func sendUsageToESP32() {
