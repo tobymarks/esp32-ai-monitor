@@ -61,6 +61,12 @@ struct UsageData {
     bool          valid;             // true if data was fetched successfully
     unsigned long last_fetch;        // millis() of last successful fetch
     char          error[64];         // Error message if !valid
+
+    // v2.15.0: Hinweis statt Fehler. Die Companion-App sendet ein `notice`-Feld,
+    // wenn der gewaehlte Provider keine Daten liefert (z. B. Antigravity-IDE
+    // nicht gestartet). Der Text landet in `error`, aber die Anzeige soll dann
+    // nicht nach Defekt aussehen ("ERR"), sondern nach Hinweis.
+    bool          notice_only;
 };
 
 // Overall monitor state
@@ -119,6 +125,7 @@ inline void usage_data_clear(UsageData &d) {
     }
 
     d.valid      = false;
+    d.notice_only = false;
     d.last_fetch = 0;
     d.error[0]   = '\0';
 }

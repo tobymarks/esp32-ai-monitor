@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.22.0"
+let kAppVersion = "1.24.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -874,15 +874,82 @@ enum SemVer {
         }
     }
 
+    /// Prerelease-Teil hinter dem ersten „-" der Versionsnummer, z. B.
+    /// „beta.3" aus „2.15.0-beta.3". Leer, wenn es ein finales Release ist.
+    static func prerelease(_ raw: String) -> String {
+        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for prefix in ["fw-beta-v", "fw-beta-", "app-beta-v", "app-v", "v"] {
+            if cleaned.hasPrefix(prefix) {
+                cleaned = String(cleaned.dropFirst(prefix.count))
+                break
+            }
+        }
+        guard let dashIndex = cleaned.firstIndex(of: "-") else { return "" }
+        return String(cleaned[cleaned.index(after: dashIndex)...])
+    }
+
+    /// Vollstaendiger Versionsvergleich inklusive Prerelease.
+    ///
+    /// `parts()` wirft den Prerelease-Teil weg — ohne die Behandlung hier waeren
+    /// 2.15.0-beta.1 und 2.15.0-beta.3 gleichwertig, und Beta-Tester bekaemen
+    /// innerhalb einer Serie nie ein Update.
+    ///
+    /// Regeln nach SemVer:
+    ///  - Zuerst die numerischen Stellen (2.15.0).
+    ///  - Bei Gleichstand gilt: ein finales Release ist NEUER als jedes
+    ///    Prerelease derselben Version (2.15.0 > 2.15.0-beta.3).
+    ///  - Zwei Prereleases werden feldweise verglichen, rein numerische Felder
+    ///    numerisch (beta.10 > beta.9), sonst lexikalisch.
+    /// Nur die numerischen Stellen, ohne Prerelease.
+    ///
+    /// Nicht `parts()` verwenden: das splittet zuerst an „." und liest dann je
+    /// Feld die Zahl vor dem „-". Aus „2.15.0-beta.3" wird dadurch [2,15,0,3] —
+    /// die 3 aus „beta.3" rutscht als vierte Stelle durch, und das Prerelease
+    /// gilt faelschlich als neuer als das finale 2.15.0.
+    static func coreParts(_ raw: String) -> [Int] {
+        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for prefix in ["fw-beta-v", "fw-beta-", "app-beta-v", "app-v", "v"] {
+            if cleaned.hasPrefix(prefix) {
+                cleaned = String(cleaned.dropFirst(prefix.count))
+                break
+            }
+        }
+        if let dashIndex = cleaned.firstIndex(of: "-") {
+            cleaned = String(cleaned[..<dashIndex])
+        }
+        return cleaned.split(separator: ".").map { Int($0) ?? 0 }
+    }
+
     static func compare(_ a: String, _ b: String) -> ComparisonResult {
-        let aParts = parts(a)
-        let bParts = parts(b)
+        let aParts = coreParts(a)
+        let bParts = coreParts(b)
         let count = max(aParts.count, bParts.count)
         for i in 0..<count {
             let av = i < aParts.count ? aParts[i] : 0
             let bv = i < bParts.count ? bParts[i] : 0
             if av > bv { return .orderedDescending }
             if av < bv { return .orderedAscending }
+        }
+
+        let aPre = prerelease(a)
+        let bPre = prerelease(b)
+        if aPre == bPre { return .orderedSame }
+        if aPre.isEmpty { return .orderedDescending }   // final > prerelease
+        if bPre.isEmpty { return .orderedAscending }
+
+        let aFields = aPre.split(separator: ".").map(String.init)
+        let bFields = bPre.split(separator: ".").map(String.init)
+        for i in 0..<max(aFields.count, bFields.count) {
+            // Fehlendes Feld ist kleiner: beta < beta.1
+            guard i < aFields.count else { return .orderedAscending }
+            guard i < bFields.count else { return .orderedDescending }
+            let af = aFields[i]
+            let bf = bFields[i]
+            if af == bf { continue }
+            if let an = Int(af), let bn = Int(bf) {
+                return an < bn ? .orderedAscending : .orderedDescending
+            }
+            return af < bf ? .orderedAscending : .orderedDescending
         }
         return .orderedSame
     }
@@ -964,7 +1031,10 @@ class AppUpdateManager {
 
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
-        return release.tag_name != currentAppReleaseTag
+        // Nur echte Updates anbieten, nicht jede Abweichung. Vorher `!=`: wer
+        // eine Beta installiert hatte und in den Stable-Kanal wechselte, bekam
+        // ein Downgrade als "Update" angeboten.
+        return SemVer.compare(currentAppReleaseTag, release.tag_name) == .orderedAscending
     }
 
     var latestVersionDisplay: String {
@@ -1566,7 +1636,10 @@ class FirmwareManager {
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
         guard let installed = Settings.shared.installedFirmwareVersion else { return true }
-        return firmwareVersionTag(from: release.tag_name) != firmwareVersionTag(from: installed)
+        // Siehe AppUpdateManager.hasUpdate: `!=` bot Downgrades als Updates an.
+        // Ein Downgrade setzt zusaetzlich die Geraete-Einstellungen zurueck.
+        return compareFirmwareVersions(firmwareVersionTag(from: installed),
+                                       firmwareVersionTag(from: release.tag_name)) == .orderedAscending
     }
 
     var installedVersionDisplay: String { Settings.shared.installedFirmwareVersion ?? "unbekannt" }
@@ -2266,6 +2339,8 @@ class UsageMonitor {
     private let serialSendQueue = DispatchQueue(label: "de.aimonitor.serial-send")
     var onOutdatedFirmwareDetected: ((_ deviceName: String, _ installedVersion: String, _ latestVersion: String) -> Void)?
     private var heartbeatTimer: Timer?
+    /// Ausstehender, gebuendelter Usage-/Notice-Frame (siehe scheduleUsageSend).
+    private var pendingUsageSend: DispatchWorkItem?
     private var nextFrameId = 1
     private var pendingDiagnosticAfterNextConnect = false
     private(set) var serialConsecutiveUnconfirmedFrames = 0
@@ -2289,9 +2364,9 @@ class UsageMonitor {
         // und damit sendUsageToESP32 bereits ausgelöst hat), ist das hier
         // redundant aber harmlos — garantiert aber den Resend falls onChange
         // noch nicht drin war (z. B. während das Settings-Fenster updatet).
-        if codexBar.status.isOK {
-            sendUsageToESP32()
-        }
+        // Auch ohne Daten senden: sendUsageToESP32() schickt dann einen
+        // Hinweis-Frame. Vorher blieb hier das Bild des alten Providers stehen.
+        scheduleUsageSend()
     }
 
     func start() {
@@ -2299,11 +2374,15 @@ class UsageMonitor {
         codexBar.onChange = { [weak self] in
             guard let self = self else { return }
             self.onUpdate?()
-            // Nur wenn OK: an ESP32 senden. Stale/Missing/WrongVersion -> nix senden,
-            // ESP32 friert letzten Wert ein (Timeout im Display handled die Firmware).
-            if self.codexBar.status.isOK {
-                self.sendUsageToESP32()
-            }
+            // Immer senden — bei fehlenden Daten geht ein Hinweis-Frame raus
+            // ("Bitte App starten"). Frueher wurde hier nichts gesendet und das
+            // Display zeigte weiter die Werte des vorherigen Providers.
+            //
+            // Gebuendelt: ein Provider-Wechsel loest mehrere Zustandswechsel
+            // kurz hintereinander aus (Wechsel -> Abruf startet -> Ergebnis).
+            // Ohne Buendelung gingen dafuer 3–4 Frames raus, von denen nur der
+            // letzte zaehlt.
+            self.scheduleUsageSend()
         }
 
         // Serial: bei Connect Theme/Language/Orientation + aktuellen Usage pushen.
@@ -2323,9 +2402,7 @@ class UsageMonitor {
             self.sendLanguageToESP32()
             self.sendOrientationToESP32()
             self.sendBrightnessToESP32(Settings.shared.lastKnownBrightness)
-            if self.codexBar.status.isOK {
-                self.sendUsageToESP32()
-            }
+            self.sendUsageToESP32()
             if self.pendingDiagnosticAfterNextConnect && self.serialPort.state == .connected {
                 self.pendingDiagnosticAfterNextConnect = false
                 self.serialLinkDetail = "Testframe nach Firmware-Update wird gesendet"
@@ -2344,9 +2421,7 @@ class UsageMonitor {
         // Heartbeat: Display-Uhr aktuell halten, auch wenn CodexBar nicht neu schreibt
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: kSerialHeartbeatInterval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if self.codexBar.status.isOK {
-                self.sendUsageToESP32()
-            }
+            self.sendUsageToESP32()
         }
     }
 
@@ -2699,13 +2774,40 @@ class UsageMonitor {
     /// ESP32 gesendet — ohne auf den nächsten Heartbeat zu warten. Verwendet
     /// von allen set_*-Commands und beim Serial-Connect, um Delay zu minimieren.
     fileprivate func sendLastUsageSnapshotIfAvailable() {
-        guard codexBar.status.isOK, codexBar.lastEntry != nil else { return }
-        sendUsageToESP32()
+        // Gebuendelt: beim Verbinden feuern set_theme/language/orientation/
+        // brightness kurz hintereinander und riefen das hier jeweils direkt auf
+        // — das ergab vier identische Frames.
+        scheduleUsageSend()
+    }
+
+    /// Buendelt schnell aufeinanderfolgende Zustandswechsel zu einem Frame.
+    ///
+    /// 120 ms sind kurz genug, dass der Lade-Hinweis beim Provider-Wechsel
+    /// weiterhin praktisch sofort erscheint, fassen aber die Kette
+    /// „Wechsel -> Abruf laeuft -> Ergebnis" zusammen, wenn sie schneller
+    /// durchlaeuft. Ein 3-Sekunden-Abruf wird dadurch NICHT verschluckt — der
+    /// Lade-Hinweis geht raus und das Ergebnis spaeter als eigener Frame.
+    private func scheduleUsageSend() {
+        pendingUsageSend?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.pendingUsageSend = nil
+            self.sendUsageToESP32()
+        }
+        pendingUsageSend = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: item)
     }
 
     fileprivate func sendUsageToESP32() {
         guard serialPort.isReadyForCommands else { return }
-        guard let entry = codexBar.lastEntry else { return }
+        // Kein Eintrag heisst NICHT „nichts tun". Vorher kehrte die Funktion
+        // hier einfach zurueck — das Display zeigte dann weiter die Werte des
+        // zuvor gewaehlten Providers, obwohl der neue gar keine Daten liefert.
+        // Stattdessen geht ein Hinweis-Frame raus.
+        guard let entry = codexBar.lastEntry else {
+            sendNoticeToESP32()
+            return
+        }
 
         // Provider aus der CodexBar-Source (normalisiert), nicht direkt aus
         // Settings — das hält Envelope und tatsächlich gelesene Daten konsistent.
@@ -2740,6 +2842,97 @@ class UsageMonitor {
         }
     }
 
+    /// Macht Text fuer das ESP32-Display darstellbar.
+    ///
+    /// Die Firmware nutzt die eingebauten LVGL-Montserrat-Fonts. Die enthalten
+    /// nur ASCII — Umlaute und typografische Zeichen wie „…" erscheinen als
+    /// leere Kaestchen. Genau deshalb kommt in localization.cpp der Firmware
+    /// kein einziger Umlaut vor. Damit das nicht bei jedem neuen Text erneut
+    /// auffaellt, wird hier zentral transliteriert statt sich auf Disziplin zu
+    /// verlassen.
+    static func displaySafeText(_ text: String) -> String {
+        var out = text
+        let map: [(String, String)] = [
+            ("ä", "ae"), ("ö", "oe"), ("ü", "ue"),
+            ("Ä", "Ae"), ("Ö", "Oe"), ("Ü", "Ue"),
+            ("ß", "ss"),
+            ("…", "..."), ("–", "-"), ("—", "-"),
+            ("„", "\""), ("“", "\""), ("”", "\""), ("‚", "'"), ("‘", "'"), ("’", "'"),
+            ("·", "-"), ("→", "->"),
+        ]
+        for (from, to) in map {
+            out = out.replacingOccurrences(of: from, with: to)
+        }
+        // Alles, was danach noch ausserhalb von druckbarem ASCII liegt, fliegt
+        // raus — lieber ein fehlendes Zeichen als ein Kaestchen.
+        return String(out.unicodeScalars.filter { $0.value >= 0x20 && $0.value < 0x7F })
+    }
+
+    /// Sendet einen Hinweis-Frame, wenn fuer den aktiven Provider keine Daten
+    /// vorliegen (z. B. Antigravity-IDE nicht gestartet, CLI fehlt).
+    ///
+    /// Das Envelope traegt dieselbe Struktur wie ein Usage-Frame, aber mit
+    /// leeren Zeilen und einem `notice`-Text. Firmware ab v2.15.0 rendert den
+    /// Text; aeltere Firmware ignoriert das unbekannte Feld und zeigt durch die
+    /// leeren Zeilen zumindest keine falschen Zahlen mehr.
+    fileprivate func sendNoticeToESP32() {
+        guard serialPort.isReadyForCommands else { return }
+        // Laeuft gerade ein Abruf ohne vorhandene Daten, ist nichts kaputt —
+        // dann „Lädt …" statt einer Fehlermeldung. Ohne diesen Zweig bliebe in
+        // den 1–4 s des CLI-Aufrufs das Bild des vorherigen Providers stehen.
+        let rawNotice: String
+        if let statusNotice = codexBar.status.displayNotice {
+            rawNotice = statusNotice
+        } else if codexBar.isLoadingWithoutData {
+            rawNotice = CodexBarStatus.loadingNotice
+        } else {
+            return
+        }
+        let notice = Self.displaySafeText(rawNotice)
+
+        let provider = CodexBarProvider.normalized(codexBar.provider)
+        let frameId = allocateFrameId()
+        let now = Date()
+        let nowISO = Self.frameISOFormatter.string(from: now)
+        let timeFmt = Self.frameTimeFormatter
+        timeFmt.timeZone = Settings.shared.effectiveTimeZone()
+
+        let envelope: [String: Any] = [
+            "schemaVersion": Self.serialSchemaVersion,
+            "frameId": frameId,
+            "sentAt": nowISO,
+            "time": nowISO,
+            "displayTime": timeFmt.string(from: now),
+            "tzOffsetMinutes": Settings.shared.effectiveTimeZone().secondsFromGMT(for: now) / 60,
+            "data": [
+                [
+                    "source": "codexbar",
+                    "provider": provider.rawValue,
+                    "notice": notice,
+                    "fetching": codexBar.isFetching,
+                    "usage": [
+                        "rows": [] as [[String: Any]],
+                        "loginMethod": provider.loginLabel
+                    ]
+                ]
+            ]
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: envelope),
+              let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+
+        serialSendQueue.async { [weak self] in
+            guard let self = self else { return }
+            let receipt = self.serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
+            DispatchQueue.main.async {
+                if self.registerFrameReceipt(receipt, source: "notice") {
+                    NSLog("[Serial] Sent notice frame #%d provider=%@ notice=%@",
+                          frameId, provider.rawValue, notice)
+                }
+            }
+        }
+    }
+
     /// Ergebnis von `buildUsageEnvelope`: das fertige Wire-Dictionary plus die
     /// Kennzahlen, die `sendUsageToESP32` nur fuer sein Log braucht.
     private struct BuiltUsageEnvelope {
@@ -2756,6 +2949,7 @@ class UsageMonitor {
     /// erzeugt wurde (Wire-kompatibel).
     private func buildUsageEnvelope(entry: CodexBarEntry, provider: CodexBarProvider, frameId: Int) -> BuiltUsageEnvelope {
         let activeProvider = provider.rawValue
+        let fetching = codexBar.isFetching
         let loginMethodLabel = provider.loginLabel
 
         let percentMode = Settings.shared.usagePercentDisplayMode
@@ -2821,21 +3015,38 @@ class UsageMonitor {
         }
 
         if provider.usesModelRows {
-            let antigravityIds = ["primary", "secondary", "tertiary"]
-            for idx in 0..<3 {
-                let id = antigravityIds[idx]
-                let w = (idx < windows.count) ? windows[idx] : nil
-                let used = Int((w?.usedPercent ?? 0).rounded())
-                let row = rowsById[id]
-                let displayPercent = toDisplayPercentFromRow(windowUsed: used, rowPercentLeft: row?.percentLeft)
+            // Ab v1.24.0 kommen die Modell-Kontingente aus `extraRateWindows`
+            // des CodexBar-CLI (z. B. „Gemini 5-hour", „Claude/GPT weekly") —
+            // inklusive der Titel. Die frueheren festen Titel (Claude / Gemini
+            // Pro / Gemini Flash) passten nicht mehr zu dem, was geliefert wird.
+            if let extras = entry.extraWindows, !extras.isEmpty {
+                for extra in extras.prefix(3) {
+                    let used = Int(extra.window.usedPercent.rounded())
+                    rowsPayload.append([
+                        "id": extra.id,
+                        "title": extra.title,
+                        "usedPercent": toDisplayPercentFromUsed(used),
+                        "resetsAt": extra.window.resetsAt ?? "",
+                        "windowMinutes": extra.window.windowMinutes ?? 0
+                    ])
+                }
+            } else {
+                let antigravityIds = ["primary", "secondary", "tertiary"]
+                for idx in 0..<3 {
+                    let id = antigravityIds[idx]
+                    let w = (idx < windows.count) ? windows[idx] : nil
+                    let used = Int((w?.usedPercent ?? 0).rounded())
+                    let row = rowsById[id]
+                    let displayPercent = toDisplayPercentFromRow(windowUsed: used, rowPercentLeft: row?.percentLeft)
 
-                rowsPayload.append([
-                    "id": id,
-                    "title": defaultRowTitle(idx),
-                    "usedPercent": displayPercent,
-                    "resetsAt": w?.resetsAt ?? "",
-                    "windowMinutes": w?.windowMinutes ?? 0
-                ])
+                    rowsPayload.append([
+                        "id": id,
+                        "title": defaultRowTitle(idx),
+                        "usedPercent": displayPercent,
+                        "resetsAt": w?.resetsAt ?? "",
+                        "windowMinutes": w?.windowMinutes ?? 0
+                    ])
+                }
             }
         } else {
             if let rows = entry.usageRows, !rows.isEmpty {
@@ -2888,6 +3099,10 @@ class UsageMonitor {
                 [
                     "source": "codexbar",
                     "provider": activeProvider,
+                    // Laeuft parallel ein Abruf? Dann zeigt das Display sein
+                    // Refresh-Symbol im Kopf — wichtig, wenn hier gerade noch
+                    // zwischengespeicherte Werte stehen.
+                    "fetching": fetching,
                     "usage": [
                         "primary": [
                             "usedPercent": primaryPercent,
@@ -3115,7 +3330,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsController?.show()
     }
 
-    // ---- Unsichtbares Shortcut-Menue (nur fuer ⌘Q / ⌘W — kein UI) ----
+    @objc private func showAboutFromMenu() {
+        settingsController?.showAbout()
+    }
+
+    @objc private func showSectionFromMenu(_ sender: NSMenuItem) {
+        guard let section = SettingsWindowController.SettingsSection(rawValue: sender.tag) else { return }
+        settingsController?.show()
+        settingsController?.showSection(section)
+    }
+
+    // ---- App-Menue (sichtbar, sobald das Einstellungsfenster aktiv ist) ----
 
     private func installShortcutMenu() {
         let mainMenu = NSMenu()
@@ -3124,12 +3349,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu(title: "AI Monitor")
 
+        // HIG: „Display the About menu item first. Include a separator after
+        // the About menu item so that it appears by itself in a group."
+        let aboutItem = NSMenuItem(title: "Über AI Monitor",
+                                   action: #selector(showAboutFromMenu),
+                                   keyEquivalent: "")
+        aboutItem.target = self
+        appMenu.addItem(aboutItem)
+        appMenu.addItem(.separator())
+
+        // HIG: Einstellungen gehoeren ins App-Menue, Shortcut ⌘,
+        let settingsItem = NSMenuItem(title: "Einstellungen …",
+                                      action: #selector(openSettingsFromMenu),
+                                      keyEquivalent: ",")
+        settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(.separator())
+
         let quitItem = NSMenuItem(title: "AI Monitor beenden",
                                   action: #selector(NSApplication.terminate(_:)),
                                   keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
         appMenu.addItem(quitItem)
         appMenuItem.submenu = appMenu
+
+        // HIG: „For apps with tab-style navigation, consider adding each tab as
+        // a menu item in the View menu [...] consider assigning key bindings to
+        // each tab." Unter .accessory rendert macOS das Menue zwar nicht, liest
+        // aber die Key-Equivalents — ⌘1 bis ⌘5 funktionieren also.
+        let viewMenuItem = NSMenuItem()
+        mainMenu.addItem(viewMenuItem)
+        let viewMenu = NSMenu(title: "Darstellung")
+        for section in SettingsWindowController.SettingsSection.allCases {
+            let item = NSMenuItem(title: section.title,
+                                  action: #selector(showSectionFromMenu(_:)),
+                                  keyEquivalent: String(section.rawValue + 1))
+            item.keyEquivalentModifierMask = [.command]
+            item.tag = section.rawValue
+            item.target = self
+            viewMenu.addItem(item)
+        }
+        viewMenuItem.submenu = viewMenu
 
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
@@ -3293,14 +3554,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: "Erneut flashen")
         alert.addButton(withTitle: "Andere Variante")
         alert.addButton(withTitle: "Schließen")
-        let response = alert.runModal()
-        switch response {
-        case .alertFirstButtonReturn:
-            performFlash(port: port, variant: variant)
-        case .alertSecondButtonReturn:
-            performFlash(port: port, variant: oppositeDisplayVariant(variant))
-        default:
-            break
+        present(alert) { [weak self] response in
+            guard let self = self else { return }
+            switch response {
+            case .alertFirstButtonReturn:
+                self.performFlash(port: port, variant: variant)
+            case .alertSecondButtonReturn:
+                self.performFlash(port: port, variant: self.oppositeDisplayVariant(variant))
+            default:
+                break
+            }
         }
     }
 
@@ -3327,21 +3590,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         shownFirmwareUpdateNoticeKeys.insert(noticeKey)
-        settingsController?.show()
 
-        let alert = NSAlert()
-        alert.messageText = "Firmware-Update verfügbar"
-        alert.informativeText = """
-        \(deviceName) läuft mit \(installedVersion).
-        Verfügbar ist \(latestVersion).
-
-        Du kannst das Display direkt jetzt aktualisieren.
-        """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Firmware flashen")
-        alert.addButton(withTitle: "Später")
-        if alert.runModal() == .alertFirstButtonReturn {
-            runFirmwareFlash()
+        // Vorher: settingsController.show() + app-modaler NSAlert — der Dialog
+        // holte sich unaufgefordert den Fokus und blockierte alles andere.
+        // Jetzt ein Banner im Fenster: sichtbar, aber ohne Unterbrechung. Es
+        // bleibt stehen, bis der Nutzer handelt oder es schliesst.
+        settingsController?.showBanner(
+            state: .info,
+            title: "Firmware-Update verfügbar",
+            detail: "\(deviceName) läuft mit \(installedVersion), verfügbar ist \(latestVersion).",
+            actionTitle: "Firmware flashen"
+        ) { [weak self] in
+            self?.runFirmwareFlash()
         }
     }
 
@@ -3391,12 +3651,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: hasZip ? S().download : S().openInBrowser)
         alert.addButton(withTitle: S().later)
         alert.addButton(withTitle: S().skipVersion)
-        let response = alert.runModal()
-        switch response {
-        case .alertFirstButtonReturn: downloadAppUpdate()
-        case .alertThirdButtonReturn:
-            if let tag = appMgr.latestRelease?.tag_name { Settings.shared.skippedAppVersion = tag }
-        default: break
+        present(alert) { [weak self] response in
+            switch response {
+            case .alertFirstButtonReturn:
+                self?.downloadAppUpdate()
+            case .alertThirdButtonReturn:
+                if let tag = appMgr.latestRelease?.tag_name { Settings.shared.skippedAppVersion = tag }
+            default: break
+            }
         }
     }
 
@@ -3415,7 +3677,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: S().install)
                 alert.addButton(withTitle: S().later)
-                if alert.runModal() == .alertFirstButtonReturn {
+                self?.present(alert) { response in
+                    guard response == .alertFirstButtonReturn else { return }
                     Settings.shared.pendingFirmwareCheckAfterAppUpdate = true
                     appMgr.performAutoUpdate(extractedAppPath: extractedPathOrError) { _, errorMessage in
                         DispatchQueue.main.async {
@@ -3433,7 +3696,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.informativeText = info
         a.alertStyle = style
         a.addButton(withTitle: "OK")
-        a.runModal()
+        present(a)
+    }
+
+    /// Zeigt einen Alert als Sheet am Einstellungsfenster statt app-modal.
+    ///
+    /// `runModal()` blockiert die gesamte App; ein Sheet haengt am Fenster, zu
+    /// dem es gehoert, und laesst den Rest weiterlaufen. Nur wenn kein Fenster
+    /// sichtbar ist (z. B. Fehler beim Start), bleibt der modale Weg — sonst
+    /// waere der Hinweis unsichtbar.
+    private func present(_ alert: NSAlert,
+                         completion: ((NSApplication.ModalResponse) -> Void)? = nil) {
+        if let window = settingsController?.window, window.isVisible {
+            alert.beginSheetModal(for: window) { response in completion?(response) }
+        } else {
+            completion?(alert.runModal())
+        }
     }
 }
 

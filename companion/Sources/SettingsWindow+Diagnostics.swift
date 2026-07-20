@@ -26,7 +26,7 @@ extension SettingsWindowController {
         actions.spacing = 8
 
         let helper = NSTextField(wrappingLabelWithString: "Technische Funktionen für Fehlersuche, Support und Setup-Kontrolle.")
-        helper.font = NSFont.systemFont(ofSize: 12)
+        helper.font = NSFont.appFont(.callout)
         helper.textColor = .secondaryLabelColor
 
         let stack = NSStackView(views: [heading, helper, actions])

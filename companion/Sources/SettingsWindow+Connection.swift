@@ -24,12 +24,10 @@ extension SettingsWindowController {
     func buildPortBox() -> NSView {
         let heading = makeSectionHeading("USB-Verbindung zum ESP32")
 
-        portStatusDot = NSTextField(labelWithString: "\u{25CB}")
-        portStatusDot.font = NSFont.systemFont(ofSize: 13)
-        portStatusDot.textColor = .secondaryLabelColor
+        portStatusDot = StatusIndicator(state: .inactive)
 
         portStatusLabel = NSTextField(labelWithString: "nicht verbunden")
-        portStatusLabel.font = NSFont.systemFont(ofSize: 13)
+        portStatusLabel.font = NSFont.appFont(.body)
 
         let statusRow = NSStackView(views: [portStatusDot, portStatusLabel])
         statusRow.orientation = .horizontal
@@ -61,12 +59,10 @@ extension SettingsWindowController {
     func buildWiFiBox() -> NSView {
         let heading = makeSectionHeading("Display-WiFi")
 
-        wifiStatusDot = NSTextField(labelWithString: "\u{25CB}")
-        wifiStatusDot.font = NSFont.systemFont(ofSize: 13)
-        wifiStatusDot.textColor = .secondaryLabelColor
+        wifiStatusDot = StatusIndicator(state: .inactive)
 
         wifiStatusLabel = NSTextField(labelWithString: "Status unbekannt")
-        wifiStatusLabel.font = NSFont.systemFont(ofSize: 13)
+        wifiStatusLabel.font = NSFont.appFont(.body)
         wifiStatusLabel.lineBreakMode = .byTruncatingTail
         wifiStatusLabel.translatesAutoresizingMaskIntoConstraints = false
         wifiStatusLabel.widthAnchor.constraint(equalToConstant: 360).isActive = true
@@ -125,8 +121,7 @@ extension SettingsWindowController {
         controls.forEach { $0?.isEnabled = ready }
         if !ready {
             lastWiFiStatusJSON = nil
-            wifiStatusDot?.stringValue = "\u{25CB}"
-            wifiStatusDot?.textColor = .secondaryLabelColor
+            wifiStatusDot?.state = .inactive
             wifiStatusLabel?.stringValue = "ESP32 verbinden, um WiFi einzurichten"
             wifiStatusLabel?.textColor = .secondaryLabelColor
         }
@@ -136,8 +131,7 @@ extension SettingsWindowController {
         guard wifiStatusLabel != nil else { return }
         lastWiFiStatusJSON = json
         guard let json = json else {
-            wifiStatusDot.stringValue = "\u{25CF}"
-            wifiStatusDot.textColor = .systemOrange
+            wifiStatusDot.state = .attention
             wifiStatusLabel.stringValue = "Keine Antwort vom Display"
             wifiStatusLabel.textColor = .systemOrange
             updateOverviewGuidance()
@@ -152,19 +146,16 @@ extension SettingsWindowController {
         let rssi = json["rssi"] as? Int ?? 0
 
         if connected {
-            wifiStatusDot.stringValue = "\u{25CF}"
-            wifiStatusDot.textColor = timeSynced ? .systemGreen : .systemYellow
+            wifiStatusDot.state = timeSynced ? .ok : .pending
             wifiStatusLabel.textColor = .labelColor
             let syncText = timeSynced ? "Zeit synchron" : "warte auf Zeit"
             wifiStatusLabel.stringValue = "\(ssid) · \(ip) · \(rssi) dBm · \(syncText)"
         } else if configured {
-            wifiStatusDot.stringValue = "\u{25CF}"
-            wifiStatusDot.textColor = .systemOrange
+            wifiStatusDot.state = .attention
             wifiStatusLabel.textColor = .systemOrange
             wifiStatusLabel.stringValue = ssid.isEmpty ? "Gespeichert, nicht verbunden" : "\(ssid) gespeichert, nicht verbunden"
         } else {
-            wifiStatusDot.stringValue = "\u{25CB}"
-            wifiStatusDot.textColor = .secondaryLabelColor
+            wifiStatusDot.state = .inactive
             wifiStatusLabel.textColor = .secondaryLabelColor
             wifiStatusLabel.stringValue = "Kein WiFi gespeichert"
         }

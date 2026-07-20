@@ -1,31 +1,34 @@
 /**
- * CodexBarSource.swift — Liest AI-Provider-Usage-Daten aus der lokalen CodexBar-App.
+ * CodexBarSource.swift — Liest AI-Provider-Usage-Daten über das CodexBar-CLI.
  *
- * Ab v1.10.0 provider-parametrisiert: unterstützt Claude, Codex und Antigravity. Der
- * aktive Provider wird über `provider` im Init/setProvider gesetzt (UserDefaults
- * „selectedProvider"). Das Schema ist strukturell identisch zwischen den Providern
- * im widget-snapshot.json (primary/secondary mit usedPercent/resetsAt/
- * windowMinutes). In der history/-Ablage können Provider abweichen: Daten liegen teils unter
- * `accounts[<key>]` statt `unscoped[]` — für den Schema-Versions-Check reicht
- * uns aber das `version`-Feld der entsprechenden History-Datei.
+ * Ab v1.24.0 nicht mehr über die Datei
+ * `~/Library/Group Containers/…com.steipete.codexbar/widget-snapshot.json`,
+ * sondern über `codexbar usage --provider <p> --json`.
  *
- * Datenquelle (beide Provider):
- *  ~/Library/Group Containers/<container>.com.steipete.codexbar/widget-snapshot.json
- *  → entries[] mit `provider`-Feld („claude" / „codex" / „antigravity")
- *  (ab CodexBar 0.22 kann der Container Team-ID-präfixiert sein, z.B.
- *   Y5PE65HELJ.com.steipete.codexbar)
+ * Warum der Wechsel:
+ *  - Die Datei setzt voraus, dass die CodexBar-*App* läuft — zwei Menüleisten-
+ *    Tools für denselben Zweck. Das CLI läuft eigenständig (verifiziert bei
+ *    beendeter App).
+ *  - Die Datei enthält nur die in CodexBar aktivierten Provider. Antigravity
+ *    fehlte dort komplett, das CLI liefert es (schnellster Provider, ~0,8 s,
+ *    weil lokaler Language-Server statt Netzwerk).
+ *  - Der Security-Scoped-Bookmark auf einen fremden App-Container entfällt
+ *    ersatzlos — damit auch der TCC-Prompt „Daten aus anderen Apps".
  *
- * Schema-Check:
- *  ~/Library/Application Support/com.steipete.codexbar/history/{claude,codex,antigravity}.json
- *  → `version`-Feld (aktuell 1).
+ * Datenquelle:
+ *  `codexbar usage --provider {claude|codex|antigravity} --json`
+ *  → `[{ provider, source, usage: { primary, secondary, tertiary,
+ *        updatedAt, loginMethod, extraRateWindows[] } }]`
+ *  Fehlerfall: `[{ error: { code, message, kind }, provider, source }]`, Exit 1.
  *
  * Design:
- *  - Pull-Strategie: alle 30 s laden. Zusätzlich über DispatchSource-FileMonitor
- *    reagieren, wenn CodexBar schreibt (sub-sekündliche Latenz).
- *  - Stale-Check: wenn `updatedAt` (bzw. `generatedAt`) > 15 min alt -> Fehler,
- *    ESP32 bekommt nichts Neues, UI zeigt „stale" im Settings-Fenster.
- *  - Schema-Check: wenn history-Datei `version` != kExpectedHistoryVersion ->
- *    Fehler „wrong version".
+ *  - Poll alle 3 min statt 30 s. Die Abfragen kosten echte Zeit (Claude ~1–2 s,
+ *    Codex ~3,5 s) und laufen gegen Endpunkte, die drosseln (429). Für Fenster
+ *    von 5 h bzw. 7 Tagen ist Sekundenaktualität ohnehin sinnlos.
+ *  - Der Prozess läuft auf einer Hintergrund-Queue mit Timeout; State-Updates
+ *    kehren auf den Main-Thread zurück.
+ *  - Stale-Check über `usage.updatedAt` wie bisher.
+ *  - Kein FileWatcher mehr (nichts zu beobachten).
  */
 
 import Foundation
@@ -106,28 +109,27 @@ enum CodexBarProvider: String, CaseIterable {
     }
 }
 
+
 // MARK: - Status-Enum
 
 enum CodexBarStatus: Equatable {
     case ok
-    case accessNotConfigured    // User hat noch keine CodexBar-Snapshot-Datei ausgewaehlt
+    case notYet                          // Initialzustand vor dem ersten Lauf
+    case cliMissing                      // codexbar-Binary nicht gefunden
+    case providerUnavailable(String)     // CLI erreichbar, Provider liefert nicht
+    case cliFailed(String)               // Aufruf fehlgeschlagen / Timeout
     case stale(ageSeconds: Int)
-    case missing                // Datei existiert nicht (CodexBar nicht installiert / nie gelaufen)
-    case wrongVersion(found: Int, expected: Int)
     case parseError(String)
-    case notYet                 // Initialzustand vor dem ersten Laden
 
     var shortLabel: String {
         switch self {
         case .ok: return "OK"
-        case .accessNotConfigured: return "Zugriff einrichten"
-        case .stale(let ageSec):
-            let m = ageSec / 60
-            return "stale (\(m)m alt)"
-        case .missing: return "missing"
-        case .wrongVersion(let f, let e): return "wrong version (\(f) != \(e))"
-        case .parseError: return "parse error"
         case .notYet: return "…"
+        case .cliMissing: return "CLI fehlt"
+        case .providerUnavailable: return "Provider offline"
+        case .cliFailed: return "Abruf fehlgeschlagen"
+        case .stale(let ageSec): return "stale (\(ageSec / 60)m alt)"
+        case .parseError: return "parse error"
         }
     }
 
@@ -135,9 +137,31 @@ enum CodexBarStatus: Equatable {
         if case .ok = self { return true }
         return false
     }
+
+    /// Kurztext für das Display, wenn keine Daten vorliegen.
+    ///
+    /// WICHTIG: nur ASCII. Die LVGL-Montserrat-Fonts der Firmware enthalten
+    /// keine Umlaute und kein „…“ — solche Zeichen erscheinen als Kästchen.
+    /// Deshalb enthält auch localization.cpp durchgehend keine Umlaute.
+    /// `sendNoticeToESP32` säubert zusätzlich, das hier ist die erste Instanz.
+    var displayNotice: String? {
+        switch self {
+        case .ok: return nil
+        case .notYet: return nil
+        case .cliMissing: return "CodexBar-CLI fehlt"
+        case .providerUnavailable: return "Bitte App starten"
+        case .cliFailed: return "Abruf fehlgeschlagen"
+        case .stale: return "Daten veraltet"
+        case .parseError: return "Datenfehler"
+        }
+    }
+
+    /// Hinweis waehrend eines laufenden Abrufs. Getrennt von `displayNotice`,
+    /// weil hier nichts falsch ist — es dauert nur einen Moment.
+    static let loadingNotice = "Lade Provider ..."
 }
 
-// MARK: - Datenmodelle (widget-snapshot.json)
+// MARK: - Datenmodelle
 
 struct CodexBarWindow: Codable {
     let usedPercent: Double
@@ -146,330 +170,376 @@ struct CodexBarWindow: Codable {
     let windowMinutes: Int?
 }
 
-struct CodexBarUsageRow: Codable {
+struct CodexBarUsageRow {
     let id: String?
     let title: String?
     let percentLeft: Double?
 }
 
-struct CodexBarEntry: Codable {
+/// Zusatzfenster aus `extraRateWindows` — bei Antigravity die eigentlichen
+/// Modell-Kontingente (Gemini 5h/weekly, Claude/GPT 5h/weekly).
+struct CodexBarExtraWindow {
+    let id: String
+    let title: String
+    let window: CodexBarWindow
+}
+
+struct CodexBarEntry {
     let provider: String?
     let updatedAt: String?
     let primary: CodexBarWindow?
     let secondary: CodexBarWindow?
     let tertiary: CodexBarWindow?
     let usageRows: [CodexBarUsageRow]?
+    let extraWindows: [CodexBarExtraWindow]?
 }
 
-struct CodexBarSnapshot: Codable {
-    let generatedAt: String?
-    let enabledProviders: [String]?
-    let entries: [CodexBarEntry]?
+// MARK: - CLI-Antwortformat
+
+private struct CLIExtraWindow: Codable {
+    let id: String?
+    let title: String?
+    let window: CodexBarWindow?
 }
 
-struct CodexBarHistoryHeader: Codable {
-    let version: Int?
+private struct CLIUsage: Codable {
+    let primary: CodexBarWindow?
+    let secondary: CodexBarWindow?
+    let tertiary: CodexBarWindow?
+    let updatedAt: String?
+    let extraRateWindows: [CLIExtraWindow]?
+}
+
+private struct CLIError: Codable {
+    let code: Int?
+    let message: String?
+    let kind: String?
+}
+
+private struct CLIResult: Codable {
+    let provider: String?
+    let source: String?
+    let usage: CLIUsage?
+    let error: CLIError?
 }
 
 // MARK: - Source
 
 final class CodexBarSource {
 
-    /// Erwartete Schema-Version der history/{provider}.json. Wenn CodexBar auf 2
-    /// wechselt, hier ebenfalls anpassen — bis dahin: Fehlermeldung im Settings-
-    /// Fenster.
-    static let kExpectedHistoryVersion = 1
+    /// Poll-Intervall. Bewusst gross: die CLI-Abfragen dauern real 1–4 s und
+    /// laufen gegen drosselnde Endpunkte (429). Fenster von 5 h / 7 Tagen
+    /// brauchen keine Sekundenaktualitaet.
+    static let kPollInterval: TimeInterval = 180
 
-    /// Stale-Schwelle — > 15 min Alter heisst: App sendet nichts Neues mehr.
+    /// Stale-Schwelle — aelter als das heisst: nichts Neues mehr senden.
     static let kStaleThresholdSeconds: TimeInterval = 15 * 60
 
-    /// Poll-Intervall fürs zyklische Neueinlesen.
-    static let kPollInterval: TimeInterval = 30
+    /// Timeout je CLI-Aufruf. Codex braucht regulaer ~3,5 s; 30 s ist grosszuegig
+    /// genug fuer einen langsamen Netzwerkpfad und faengt Haenger trotzdem ab.
+    static let kCLITimeout: TimeInterval = 30
 
-    // Pfade
-    static let groupContainersRootPath = NSString("~/Library/Group Containers").expandingTildeInPath
-    static let legacyWidgetSnapshotPath = NSString("~/Library/Group Containers/group.com.steipete.codexbar/widget-snapshot.json").expandingTildeInPath
-    static let historyDirectoryPath = NSString("~/Library/Application Support/com.steipete.codexbar/history").expandingTildeInPath
+    /// Suchpfade fuer das Binary.
+    ///
+    /// Wichtig: Das CLI ist KEIN eigenstaendiges Homebrew-Formula, sondern liegt
+    /// im App-Bundle (`CodexBar.app/Contents/Helpers/CodexBarCLI`, ~32 MB); das
+    /// Cask legt in /opt/homebrew/bin nur einen Symlink dorthin. Deshalb steht
+    /// der direkte Bundle-Pfad mit in der Liste — dann funktioniert es auch bei
+    /// Nutzern ohne Homebrew, die die App per DMG installiert haben.
+    static let cliSearchPaths = [
+        "/opt/homebrew/bin/codexbar",
+        "/usr/local/bin/codexbar",
+        "/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI",
+        NSString("~/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI").expandingTildeInPath,
+        "/usr/bin/codexbar",
+    ]
 
-    /// Aktiver Provider („claude" | „codex" | „antigravity"). Darf zur Laufzeit über
-    /// `setProvider(_:)` gewechselt werden — anschliessend `loadOnce()` aufrufen
-    /// (macht `setProvider` automatisch).
     private(set) var provider: String
-
-    // State
     private(set) var status: CodexBarStatus = .notYet
     private(set) var lastEntry: CodexBarEntry?
     private(set) var lastLoadedAt: Date?
     private(set) var lastSnapshotGeneratedAt: Date?
+    /// Quelle, die das CLI benutzt hat („web", „oauth", „app", …) — nur Anzeige.
+    private(set) var lastSource: String?
 
-    /// Wird aufgerufen, sobald neue Daten geladen wurden (status + lastEntry aktualisiert).
     var onChange: (() -> Void)?
 
     private var pollTimer: Timer?
-    private var fileWatcher: DispatchSourceFileSystemObject?
-    private var watchedFD: Int32 = -1
-    private var watchedSnapshotPath: String?
-    private var securityScopedSnapshotURL: URL?
-    private var isAccessingSecurityScopedSnapshot = false
+    private let runQueue = DispatchQueue(label: "de.aimonitor.codexbar-cli")
+    private var isRunning = false
 
-    deinit {
-        stop()
-        stopSecurityScopedSnapshotAccess()
-    }
+    /// Waehrend eines laufenden Abrufs kam eine neue Anforderung (Provider-
+    /// Wechsel oder Poll). Ohne dieses Merkmal ging sie verloren: `loadOnce()`
+    /// stieg am `isRunning`-Guard aus, und das Ergebnis des laufenden Abrufs
+    /// wurde anschliessend verworfen, weil der Provider inzwischen ein anderer
+    /// war — die Anzeige blieb dann bis zum naechsten Poll auf „Lade Provider".
+    private var pendingReload = false
 
-    // MARK: - Init / Lifecycle
+    /// Letzter erfolgreicher Stand je Provider — fuer den sofortigen Wechsel,
+    /// bevor der neue Abruf durch ist.
+    private var cachedEntries: [String: (entry: CodexBarEntry, fetchedAt: Date)] = [:]
+
+    /// `true`, solange fuer den aktiven Provider noch nie Daten vorlagen und ein
+    /// Abruf laeuft — dann zeigt das Display den Lade-Hinweis statt fremder Werte.
+    var isLoadingWithoutData: Bool { isRunning && lastEntry == nil }
+
+    /// `true`, solange ein Abruf laeuft. Geht als `fetching` mit ins Envelope:
+    /// das Display zeigt dann ein Refresh-Symbol im Kopf. Wichtig bei mehreren
+    /// Geraeten — nach einem Wechsel sind die angezeigten Werte womoeglich vom
+    /// vorherigen Abruf, und der Nutzer soll sehen, dass gerade nachgeladen wird.
+    var isFetching: Bool { isRunning }
+
+    deinit { stop() }
 
     init(provider: String = CodexBarProvider.defaultProvider.rawValue) {
         self.provider = Self.normalizeProvider(provider)
     }
 
-    /// Provider zur Laufzeit wechseln. Triggert ein sofortiges Re-Load, damit
-    /// der nächste `onChange`-Tick schon den neuen Provider liefert.
-    func setProvider(_ newProvider: String) {
-        let norm = Self.normalizeProvider(newProvider)
-        if norm == provider { return }
-        provider = norm
-        NSLog("[CodexBar] Provider switched to '%@'", norm)
-        loadOnce()
-    }
-
-    private static func normalizeProvider(_ raw: String) -> String {
-        return CodexBarProvider.normalized(raw).rawValue
-    }
-
-    /// Pfad der History-Datei für den aktiven Provider (Schema-Version).
-    private func historyFilePath() -> String {
-        return (Self.historyDirectoryPath as NSString).appendingPathComponent("\(provider).json")
-    }
+    // MARK: - Lifecycle
 
     func start() {
         loadOnce()
-        schedulePoll()
-        startFileWatch()
-    }
-
-    func stop() {
-        pollTimer?.invalidate()
-        pollTimer = nil
-        stopFileWatch()
-    }
-
-    // MARK: - Pull
-
-    @discardableResult
-    func loadOnce() -> CodexBarStatus {
-        lastLoadedAt = Date()
-
-        // Ohne gewählten Bookmark kein Zugriff (siehe resolveWidgetSnapshotPath):
-        // dann fordert das UI zur einmaligen Auswahl der widget-snapshot.json auf.
-        guard Settings.shared.codexBarSnapshotBookmarkData != nil else {
-            status = .accessNotConfigured
-            lastEntry = nil
-            notify()
-            return status
-        }
-
-        guard let snapshotPath = resolveWidgetSnapshotPath(),
-              let data = FileManager.default.contents(atPath: snapshotPath) else {
-            status = .missing
-            lastEntry = nil
-            NSLog("[CodexBar] widget-snapshot.json not found via bookmark")
-            notify()
-            return status
-        }
-        if watchedSnapshotPath != snapshotPath {
-            startFileWatch()
-        }
-
-        let snapshot: CodexBarSnapshot
-        do {
-            snapshot = try JSONDecoder().decode(CodexBarSnapshot.self, from: data)
-        } catch {
-            status = .parseError(error.localizedDescription)
-            NSLog("[CodexBar] Parse error: %@", error.localizedDescription)
-            notify()
-            return status
-        }
-
-        // generatedAt -> Date (für stale-check)
-        let genDate = snapshot.generatedAt.flatMap { parseISO8601($0) }
-        lastSnapshotGeneratedAt = genDate
-
-        // Entry für aktiven Provider suchen
-        let providerEntry = snapshot.entries?.first(where: { ($0.provider ?? "").lowercased() == provider })
-        if providerEntry == nil {
-            // Provider nicht im Snapshot — explizit missing (CodexBar schreibt ihn
-            // erst, wenn der Provider dort aktiv ist).
-            lastEntry = nil
-            status = .missing
-            NSLog("[CodexBar] No entry for provider '%@' in snapshot", provider)
-            notify()
-            return status
-        }
-        lastEntry = providerEntry
-
-        // Alter bestimmen — bevorzugt updatedAt des Entries, sonst generatedAt
-        let ageRef: Date? = {
-            if let s = providerEntry?.updatedAt, let d = parseISO8601(s) { return d }
-            return genDate
-        }()
-
-        if let ref = ageRef {
-            let age = Date().timeIntervalSince(ref)
-            if age > Self.kStaleThresholdSeconds {
-                status = .stale(ageSeconds: Int(age))
-                NSLog("[CodexBar] Stale snapshot (%@): %.0f min old", provider, age / 60)
-                notify()
-                return status
-            }
-        } else {
-            // Kein Zeitstempel - behandeln wir defensiv als stale, damit wir nicht blindlings senden.
-            status = .stale(ageSeconds: Int.max)
-            NSLog("[CodexBar] Snapshot has no updatedAt/generatedAt — treating as stale")
-            notify()
-            return status
-        }
-
-        status = .ok
-        notify()
-        return status
-    }
-
-    // MARK: - Poll-Timer
-
-    private func schedulePoll() {
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: Self.kPollInterval, repeats: true) { [weak self] _ in
             self?.loadOnce()
         }
     }
 
-    // MARK: - FileSystem-Watch
+    func stop() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
 
-    private func startFileWatch() {
-        stopFileWatch()
+    func setProvider(_ newProvider: String) {
+        let norm = Self.normalizeProvider(newProvider)
+        if norm == provider { return }
+        provider = norm
+        NSLog("[CodexBar] Provider switched to '%@'", norm)
 
-        guard let path = resolveWidgetSnapshotPath() else {
-            // Datei existiert nicht — wir probieren beim nächsten Poll erneut.
-            return
+        // Ein CLI-Abruf dauert 1–4 s. Ohne Zwischenspeicher waere das Display in
+        // dieser Zeit entweder leer oder — schlimmer — zeigte weiter die Werte
+        // des vorherigen Providers. Deshalb: zuletzt bekannten Stand dieses
+        // Providers sofort anzeigen, sofern er nicht veraltet ist, und im
+        // Hintergrund aktualisieren.
+        if let cached = cachedEntries[norm],
+           Date().timeIntervalSince(cached.fetchedAt) <= Self.kStaleThresholdSeconds {
+            lastEntry = cached.entry
+            status = .ok
+        } else {
+            lastEntry = nil
+            status = .notYet
         }
-        let fd = open(path, O_EVTONLY)
-        if fd < 0 {
-            // Datei existiert nicht — wir probieren beim nächsten Poll erneut.
-            return
-        }
-        watchedFD = fd
-        watchedSnapshotPath = path
+        loadOnce()
+        notify()
+    }
 
-        let src = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd,
-            eventMask: [.write, .extend, .rename, .delete],
-            queue: .main
-        )
-        src.setEventHandler { [weak self] in
+    private static func normalizeProvider(_ raw: String) -> String {
+        CodexBarProvider.normalized(raw).rawValue
+    }
+
+    // MARK: - CLI-Pfad
+
+    /// Findet das codexbar-Binary; nil, wenn nicht installiert.
+    static func resolveCLIPath() -> String? {
+        let fm = FileManager.default
+        for path in cliSearchPaths where fm.isExecutableFile(atPath: path) {
+            return path
+        }
+        // GUI-Apps erben den Login-PATH nicht zuverlaessig — deshalb erst die
+        // festen Pfade oben, PATH nur als Ergaenzung.
+        if let env = ProcessInfo.processInfo.environment["PATH"] {
+            for dir in env.split(separator: ":") {
+                let candidate = (String(dir) as NSString).appendingPathComponent("codexbar")
+                if fm.isExecutableFile(atPath: candidate) { return candidate }
+            }
+        }
+        return nil
+    }
+
+    static var isCLIAvailable: Bool { resolveCLIPath() != nil }
+
+    // MARK: - Abruf
+
+    @discardableResult
+    func loadOnce() -> CodexBarStatus {
+        // Ueberlappende Laeufe vermeiden: ein Codex-Abruf kann mehrere Sekunden
+        // dauern, der Timer darf nicht danebenschiessen. Die Anforderung wird
+        // aber gemerkt und direkt nach dem laufenden Abruf nachgeholt.
+        guard !isRunning else {
+            pendingReload = true
+            return status
+        }
+
+        guard let cliPath = Self.resolveCLIPath() else {
+            apply(status: .cliMissing, entry: nil, source: nil)
+            return status
+        }
+
+        isRunning = true
+        pendingReload = false
+        let requestedProvider = provider
+        lastLoadedAt = Date()
+        // Sofort melden, dass ein Abruf laeuft — daraus entsteht ein Frame mit
+        // `fetching: true`, und das Display zeigt sein Refresh-Symbol.
+        notify()
+
+        runQueue.async { [weak self] in
             guard let self = self else { return }
-            // Wenn die Datei ersetzt wurde (rename/delete), Watch neu anlegen.
-            let data = src.data
-            if data.contains(.delete) || data.contains(.rename) {
-                self.stopFileWatch()
-                // Kurz verzoegert neu aufsetzen, CodexBar schreibt meist per rename-swap.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    self.loadOnce()
-                    self.startFileWatch()
+            let outcome = Self.runCLI(path: cliPath, provider: requestedProvider)
+
+            DispatchQueue.main.async {
+                self.isRunning = false
+
+                // Provider koennte waehrend des Laufs gewechselt haben — das
+                // Ergebnis gehoert dann zum falschen Provider.
+                let providerChanged = (requestedProvider != self.provider)
+                if !providerChanged {
+                    self.handle(outcome: outcome)
                 }
+
+                // Verworfenes Ergebnis oder waehrenddessen angeforderter Abruf:
+                // sofort nachholen. Fehlte das, blieb die Anzeige bis zum
+                // naechsten Poll (3 min) auf „Lade Provider ..." stehen.
+                if providerChanged || self.pendingReload {
+                    self.pendingReload = false
+                    self.loadOnce()
+                }
+            }
+        }
+        return status
+    }
+
+    private enum CLIOutcome {
+        case success(CLIResult)
+        case failure(CodexBarStatus)
+    }
+
+    private static func runCLI(path: String, provider: String) -> CLIOutcome {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["usage", "--provider", provider, "--json"]
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        do {
+            try process.run()
+        } catch {
+            return .failure(.cliFailed("Start fehlgeschlagen: \(error.localizedDescription)"))
+        }
+
+        // Watchdog: nach kCLITimeout hart beenden, sonst haengt der Timer-Zyklus.
+        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + kCLITimeout, execute: watchdog)
+
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        watchdog.cancel()
+
+        guard !data.isEmpty else {
+            let msg = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return .failure(.cliFailed(msg.isEmpty ? "Keine Ausgabe (Exit \(process.terminationStatus))" : String(msg.prefix(160))))
+        }
+
+        do {
+            let results = try JSONDecoder().decode([CLIResult].self, from: data)
+            guard let first = results.first else {
+                return .failure(.parseError("Leeres Ergebnis-Array"))
+            }
+            return .success(first)
+        } catch {
+            return .failure(.parseError(error.localizedDescription))
+        }
+    }
+
+    private func handle(outcome: CLIOutcome) {
+        switch outcome {
+        case .failure(let failureStatus):
+            NSLog("[CodexBar] %@ (%@)", failureStatus.shortLabel, provider)
+            apply(status: failureStatus, entry: nil, source: nil)
+
+        case .success(let result):
+            if let err = result.error {
+                let message = err.message ?? "Unbekannter Fehler"
+                NSLog("[CodexBar] Provider '%@' unavailable: %@", provider, message)
+                apply(status: .providerUnavailable(message), entry: nil, source: result.source)
                 return
             }
-            self.loadOnce()
-        }
-        src.setCancelHandler { [weak self] in
-            guard let self = self else { return }
-            if self.watchedFD >= 0 {
-                close(self.watchedFD)
-                self.watchedFD = -1
+
+            guard let usage = result.usage else {
+                apply(status: .parseError("Antwort ohne usage-Objekt"), entry: nil, source: result.source)
+                return
             }
-            self.watchedSnapshotPath = nil
-        }
-        src.resume()
-        fileWatcher = src
-    }
 
-    private func stopFileWatch() {
-        fileWatcher?.cancel()
-        fileWatcher = nil
-    }
-
-    /// Durchsucht ~/Library/Group Containers nach allen CodexBar-Containern und
-    /// gibt die NEUESTE widget-snapshot.json zurueck. CodexBar hat den Container
-    /// schon einmal gewechselt (group.com.steipete.codexbar ->
-    /// Y5PE65HELJ.com.steipete.codexbar); ein einmal gewaehlter Bookmark zeigt
-    /// dann auf eine veraltete Datei. Da die App NICHT sandboxed ist, darf sie
-    /// die Container direkt lesen und die aktuell beschriebene Datei selbst finden.
-    /// Startverzeichnis für den Öffnen-Dialog: der aktuelle CodexBar-Container
-    /// (Team-ID-prefixed). REINE Pfad-Konstruktion — kein Dateizugriff, kein
-    /// Verzeichnis-Scan → löst KEINEN TCC-Prompt aus. Existiert der Ordner
-    /// nicht, navigiert der Nutzer im Dialog selbst.
-    static func suggestedSnapshotDirectory() -> String {
-        return NSString("~/Library/Group Containers/Y5PE65HELJ.com.steipete.codexbar").expandingTildeInPath
-    }
-
-    private func resolveWidgetSnapshotPath() -> String? {
-        // AUSSCHLIESSLICH der vom Nutzer einmalig (per Öffnen-Dialog) gewährte
-        // Security-Scoped Bookmark. KEIN programmatischer Group-Container-Scan
-        // und kein Legacy-Pfad-Zugriff: beides sind fremde App-Container und
-        // lösen auf macOS 15+/26 bei JEDEM Start den "Daten aus anderen Apps"-
-        // Prompt aus (die Erlaubnis persistiert dort nicht — auch nicht für
-        // notarisierte Apps). Der Bookmark gilt als User-Intent (Powerbox) und
-        // bleibt prompt-frei.
-        guard let bookmarkData = Settings.shared.codexBarSnapshotBookmarkData else { return nil }
-        do {
-            var isStale = false
-            let url = try URL(resolvingBookmarkData: bookmarkData,
-                              options: [.withSecurityScope],
-                              relativeTo: nil,
-                              bookmarkDataIsStale: &isStale)
-            if isStale,
-               let refreshed = try? url.bookmarkData(options: [.withSecurityScope],
-                                                     includingResourceValuesForKeys: nil,
-                                                     relativeTo: nil) {
-                Settings.shared.codexBarSnapshotBookmarkData = refreshed
+            let extras: [CodexBarExtraWindow] = (usage.extraRateWindows ?? []).compactMap { raw in
+                guard let id = raw.id, let window = raw.window else { return nil }
+                return CodexBarExtraWindow(id: id, title: raw.title ?? id, window: window)
             }
-            startSecurityScopedSnapshotAccess(url)
-            Settings.shared.codexBarSnapshotPath = url.path
-            return url.path
-        } catch {
-            NSLog("[CodexBar] Could not resolve snapshot bookmark: %@", error.localizedDescription)
-            Settings.shared.codexBarSnapshotBookmarkData = nil
-            return nil
+
+            let entry = CodexBarEntry(
+                provider: result.provider ?? provider,
+                updatedAt: usage.updatedAt,
+                primary: usage.primary,
+                secondary: usage.secondary,
+                tertiary: usage.tertiary,
+                usageRows: nil,
+                extraWindows: extras.isEmpty ? nil : extras
+            )
+
+            // Alle Fenster leer? Dann hat der Provider zwar geantwortet, aber
+            // nichts Verwertbares — genauso behandeln wie „nicht verfuegbar",
+            // damit das Display nicht stumm alte Werte weiterzeigt.
+            if usage.primary == nil && usage.secondary == nil && usage.tertiary == nil && extras.isEmpty {
+                apply(status: .providerUnavailable("Keine Kontingentdaten"), entry: nil, source: result.source)
+                return
+            }
+
+            let updated = usage.updatedAt.flatMap { parseISO8601($0) }
+            lastSnapshotGeneratedAt = updated
+            if let ref = updated {
+                let age = Date().timeIntervalSince(ref)
+                if age > Self.kStaleThresholdSeconds {
+                    NSLog("[CodexBar] Stale (%@): %.0f min", provider, age / 60)
+                    apply(status: .stale(ageSeconds: Int(age)), entry: entry, source: result.source)
+                    return
+                }
+            }
+
+            apply(status: .ok, entry: entry, source: result.source)
         }
     }
 
-    private func startSecurityScopedSnapshotAccess(_ url: URL) {
-        if securityScopedSnapshotURL == url { return }
-        stopSecurityScopedSnapshotAccess()
-        securityScopedSnapshotURL = url
-        isAccessingSecurityScopedSnapshot = url.startAccessingSecurityScopedResource()
-    }
-
-    private func stopSecurityScopedSnapshotAccess() {
-        if isAccessingSecurityScopedSnapshot {
-            securityScopedSnapshotURL?.stopAccessingSecurityScopedResource()
+    private func apply(status newStatus: CodexBarStatus,
+                       entry: CodexBarEntry?,
+                       source: String?) {
+        status = newStatus
+        if let entry, newStatus.isOK {
+            cachedEntries[provider] = (entry: entry, fetchedAt: Date())
         }
-        securityScopedSnapshotURL = nil
-        isAccessingSecurityScopedSnapshot = false
+        // Bei einem Fehler den Zwischenspeicher dieses Providers verwerfen —
+        // sonst wuerde ein spaeterer Wechsel wieder veraltete Werte zeigen,
+        // obwohl der Provider nachweislich nichts mehr liefert.
+        if entry == nil, !newStatus.isOK {
+            cachedEntries.removeValue(forKey: provider)
+        }
+        lastEntry = entry
+        lastSource = source
+        notify()
     }
 
     // MARK: - Helpers
 
     private func notify() {
-        DispatchQueue.main.async { [weak self] in
-            self?.onChange?()
+        if Thread.isMainThread {
+            onChange?()
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.onChange?() }
         }
     }
 
-    // Gecachte Formatter — Erzeugung ist teuer und die Konfiguration ist
-    // konstant; ISO8601DateFormatter ist fuer reines Parsen thread-safe.
-    // Gecachte Formatter — Erzeugung ist teuer und die Konfiguration ist
-    // konstant; ISO8601DateFormatter ist fuer reines Parsen thread-safe.
     private static let isoFractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -482,7 +552,6 @@ final class CodexBarSource {
     }()
 
     private func parseISO8601(_ s: String) -> Date? {
-        if let d = Self.isoFractional.date(from: s) { return d }
-        return Self.isoPlain.date(from: s)
+        Self.isoFractional.date(from: s) ?? Self.isoPlain.date(from: s)
     }
 }

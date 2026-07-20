@@ -658,10 +658,19 @@ void ui_dashboard_update(const MonitorState &state) {
 
     const bool has_recent_data = serial_has_recent_data();
     const bool clock_is_set = time(nullptr) > CLOCK_VALID_EPOCH;
-    const bool should_show_standby = !has_recent_data && (state.usage.valid || clock_is_set);
+    // Ein Hinweis-Frame setzt usage.valid = false, damit keine Balken gerendert
+    // werden. serial_has_recent_data() liefert dann aber ebenfalls false — ohne
+    // die notice_only-Ausnahme legte sich die Standby-Uhr vollflaechig ueber den
+    // Hinweis, und der Nutzer sah beim Provider-Wechsel nur die grosse Uhr.
+    const bool should_show_standby = !has_recent_data
+                                  && !state.usage.notice_only
+                                  && (state.usage.valid || clock_is_set);
 
-    // Hide splash overlay once we receive the first valid data
-    if (!first_data_received && state.usage.valid && splash_overlay != nullptr) {
+    // Hide splash overlay once we receive the first valid data — oder einen
+    // Hinweis. Sonst bliebe der Splash haengen, wenn der beim Start gewaehlte
+    // Provider gar keine Daten liefert.
+    if (!first_data_received && (state.usage.valid || state.usage.notice_only)
+        && splash_overlay != nullptr) {
         first_data_received = true;
         lv_obj_delete(splash_overlay);
         splash_overlay = nullptr;
@@ -791,6 +800,10 @@ void ui_dashboard_update(const MonitorState &state) {
         }
 
     } else if (strlen(state.usage.error) > 0) {
+        // v2.15.0: Hinweis (z. B. „Bitte App oeffnen") vs. echter Fehler.
+        // Beim Hinweis waere "ERR" irrefuehrend — es ist nichts kaputt, es
+        // fehlen nur Daten fuer den gerade gewaehlten Provider.
+        const char *pct_placeholder = state.usage.notice_only ? "--" : "ERR";
         if (is_antigravity_rows) {
             for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
                 const bool first_row = (i == 0);
@@ -801,14 +814,14 @@ void ui_dashboard_update(const MonitorState &state) {
                 if (!first_row) continue;
 
                 lv_label_set_text(ag_title[i], ag_default_title(i));
-                lv_label_set_text(ag_pct[i], "ERR");
+                lv_label_set_text(ag_pct[i], pct_placeholder);
                 lv_label_set_text(ag_reset[i], state.usage.error);
                 if (ag_bar[i]) lv_bar_set_value(ag_bar[i], 0, LV_ANIM_OFF);
             }
         } else {
-            lv_label_set_text(lbl_session_pct,   "ERR");
+            lv_label_set_text(lbl_session_pct,   pct_placeholder);
             lv_label_set_text(lbl_session_reset, state.usage.error);
-            lv_label_set_text(lbl_weekly_pct,    "ERR");
+            lv_label_set_text(lbl_weekly_pct,    pct_placeholder);
             lv_label_set_text(lbl_weekly_reset,  "");
             if (bar_session) lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
             if (bar_weekly)  lv_bar_set_value(bar_weekly,  0, LV_ANIM_OFF);
