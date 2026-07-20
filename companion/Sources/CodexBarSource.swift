@@ -139,12 +139,17 @@ enum CodexBarStatus: Equatable {
     }
 
     /// Kurztext für das Display, wenn keine Daten vorliegen.
+    ///
+    /// WICHTIG: nur ASCII. Die LVGL-Montserrat-Fonts der Firmware enthalten
+    /// keine Umlaute und kein „…“ — solche Zeichen erscheinen als Kästchen.
+    /// Deshalb enthält auch localization.cpp durchgehend keine Umlaute.
+    /// `sendNoticeToESP32` säubert zusätzlich, das hier ist die erste Instanz.
     var displayNotice: String? {
         switch self {
         case .ok: return nil
         case .notYet: return nil
         case .cliMissing: return "CodexBar-CLI fehlt"
-        case .providerUnavailable: return "Bitte App öffnen"
+        case .providerUnavailable: return "Bitte App starten"
         case .cliFailed: return "Abruf fehlgeschlagen"
         case .stale: return "Daten veraltet"
         case .parseError: return "Datenfehler"
@@ -153,7 +158,7 @@ enum CodexBarStatus: Equatable {
 
     /// Hinweis waehrend eines laufenden Abrufs. Getrennt von `displayNotice`,
     /// weil hier nichts falsch ist — es dauert nur einen Moment.
-    static let loadingNotice = "Lädt …"
+    static let loadingNotice = "Lade Provider ..."
 }
 
 // MARK: - Datenmodelle
@@ -263,13 +268,26 @@ final class CodexBarSource {
     private let runQueue = DispatchQueue(label: "de.aimonitor.codexbar-cli")
     private var isRunning = false
 
+    /// Waehrend eines laufenden Abrufs kam eine neue Anforderung (Provider-
+    /// Wechsel oder Poll). Ohne dieses Merkmal ging sie verloren: `loadOnce()`
+    /// stieg am `isRunning`-Guard aus, und das Ergebnis des laufenden Abrufs
+    /// wurde anschliessend verworfen, weil der Provider inzwischen ein anderer
+    /// war — die Anzeige blieb dann bis zum naechsten Poll auf „Lade Provider".
+    private var pendingReload = false
+
     /// Letzter erfolgreicher Stand je Provider — fuer den sofortigen Wechsel,
     /// bevor der neue Abruf durch ist.
     private var cachedEntries: [String: (entry: CodexBarEntry, fetchedAt: Date)] = [:]
 
     /// `true`, solange fuer den aktiven Provider noch nie Daten vorlagen und ein
-    /// Abruf laeuft — dann zeigt das Display „Lädt …" statt fremder Werte.
+    /// Abruf laeuft — dann zeigt das Display den Lade-Hinweis statt fremder Werte.
     var isLoadingWithoutData: Bool { isRunning && lastEntry == nil }
+
+    /// `true`, solange ein Abruf laeuft. Geht als `fetching` mit ins Envelope:
+    /// das Display zeigt dann ein Refresh-Symbol im Kopf. Wichtig bei mehreren
+    /// Geraeten — nach einem Wechsel sind die angezeigten Werte womoeglich vom
+    /// vorherigen Abruf, und der Nutzer soll sehen, dass gerade nachgeladen wird.
+    var isFetching: Bool { isRunning }
 
     deinit { stop() }
 
@@ -311,8 +329,8 @@ final class CodexBarSource {
             lastEntry = nil
             status = .notYet
         }
-        notify()
         loadOnce()
+        notify()
     }
 
     private static func normalizeProvider(_ raw: String) -> String {
@@ -345,8 +363,12 @@ final class CodexBarSource {
     @discardableResult
     func loadOnce() -> CodexBarStatus {
         // Ueberlappende Laeufe vermeiden: ein Codex-Abruf kann mehrere Sekunden
-        // dauern, der Timer darf nicht danebenschiessen.
-        guard !isRunning else { return status }
+        // dauern, der Timer darf nicht danebenschiessen. Die Anforderung wird
+        // aber gemerkt und direkt nach dem laufenden Abruf nachgeholt.
+        guard !isRunning else {
+            pendingReload = true
+            return status
+        }
 
         guard let cliPath = Self.resolveCLIPath() else {
             apply(status: .cliMissing, entry: nil, source: nil)
@@ -354,8 +376,12 @@ final class CodexBarSource {
         }
 
         isRunning = true
+        pendingReload = false
         let requestedProvider = provider
         lastLoadedAt = Date()
+        // Sofort melden, dass ein Abruf laeuft — daraus entsteht ein Frame mit
+        // `fetching: true`, und das Display zeigt sein Refresh-Symbol.
+        notify()
 
         runQueue.async { [weak self] in
             guard let self = self else { return }
@@ -363,10 +389,21 @@ final class CodexBarSource {
 
             DispatchQueue.main.async {
                 self.isRunning = false
-                // Provider koennte waehrend des Laufs gewechselt haben —
-                // veraltetes Ergebnis dann verwerfen.
-                guard requestedProvider == self.provider else { return }
-                self.handle(outcome: outcome)
+
+                // Provider koennte waehrend des Laufs gewechselt haben — das
+                // Ergebnis gehoert dann zum falschen Provider.
+                let providerChanged = (requestedProvider != self.provider)
+                if !providerChanged {
+                    self.handle(outcome: outcome)
+                }
+
+                // Verworfenes Ergebnis oder waehrenddessen angeforderter Abruf:
+                // sofort nachholen. Fehlte das, blieb die Anzeige bis zum
+                // naechsten Poll (3 min) auf „Lade Provider ..." stehen.
+                if providerChanged || self.pendingReload {
+                    self.pendingReload = false
+                    self.loadOnce()
+                }
             }
         }
         return status

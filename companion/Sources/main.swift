@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.24.0-beta.1"
+let kAppVersion = "1.24.0-beta.3"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -2741,6 +2741,32 @@ class UsageMonitor {
         }
     }
 
+    /// Macht Text fuer das ESP32-Display darstellbar.
+    ///
+    /// Die Firmware nutzt die eingebauten LVGL-Montserrat-Fonts. Die enthalten
+    /// nur ASCII — Umlaute und typografische Zeichen wie „…" erscheinen als
+    /// leere Kaestchen. Genau deshalb kommt in localization.cpp der Firmware
+    /// kein einziger Umlaut vor. Damit das nicht bei jedem neuen Text erneut
+    /// auffaellt, wird hier zentral transliteriert statt sich auf Disziplin zu
+    /// verlassen.
+    static func displaySafeText(_ text: String) -> String {
+        var out = text
+        let map: [(String, String)] = [
+            ("ä", "ae"), ("ö", "oe"), ("ü", "ue"),
+            ("Ä", "Ae"), ("Ö", "Oe"), ("Ü", "Ue"),
+            ("ß", "ss"),
+            ("…", "..."), ("–", "-"), ("—", "-"),
+            ("„", "\""), ("“", "\""), ("”", "\""), ("‚", "'"), ("‘", "'"), ("’", "'"),
+            ("·", "-"), ("→", "->"),
+        ]
+        for (from, to) in map {
+            out = out.replacingOccurrences(of: from, with: to)
+        }
+        // Alles, was danach noch ausserhalb von druckbarem ASCII liegt, fliegt
+        // raus — lieber ein fehlendes Zeichen als ein Kaestchen.
+        return String(out.unicodeScalars.filter { $0.value >= 0x20 && $0.value < 0x7F })
+    }
+
     /// Sendet einen Hinweis-Frame, wenn fuer den aktiven Provider keine Daten
     /// vorliegen (z. B. Antigravity-IDE nicht gestartet, CLI fehlt).
     ///
@@ -2753,14 +2779,15 @@ class UsageMonitor {
         // Laeuft gerade ein Abruf ohne vorhandene Daten, ist nichts kaputt —
         // dann „Lädt …" statt einer Fehlermeldung. Ohne diesen Zweig bliebe in
         // den 1–4 s des CLI-Aufrufs das Bild des vorherigen Providers stehen.
-        let notice: String
+        let rawNotice: String
         if let statusNotice = codexBar.status.displayNotice {
-            notice = statusNotice
+            rawNotice = statusNotice
         } else if codexBar.isLoadingWithoutData {
-            notice = CodexBarStatus.loadingNotice
+            rawNotice = CodexBarStatus.loadingNotice
         } else {
             return
         }
+        let notice = Self.displaySafeText(rawNotice)
 
         let provider = CodexBarProvider.normalized(codexBar.provider)
         let frameId = allocateFrameId()
@@ -2781,6 +2808,7 @@ class UsageMonitor {
                     "source": "codexbar",
                     "provider": provider.rawValue,
                     "notice": notice,
+                    "fetching": codexBar.isFetching,
                     "usage": [
                         "rows": [] as [[String: Any]],
                         "loginMethod": provider.loginLabel
@@ -2820,6 +2848,7 @@ class UsageMonitor {
     /// erzeugt wurde (Wire-kompatibel).
     private func buildUsageEnvelope(entry: CodexBarEntry, provider: CodexBarProvider, frameId: Int) -> BuiltUsageEnvelope {
         let activeProvider = provider.rawValue
+        let fetching = codexBar.isFetching
         let loginMethodLabel = provider.loginLabel
 
         let percentMode = Settings.shared.usagePercentDisplayMode
@@ -2969,6 +2998,10 @@ class UsageMonitor {
                 [
                     "source": "codexbar",
                     "provider": activeProvider,
+                    // Laeuft parallel ein Abruf? Dann zeigt das Display sein
+                    // Refresh-Symbol im Kopf — wichtig, wenn hier gerade noch
+                    // zwischengespeicherte Werte stehen.
+                    "fetching": fetching,
                     "usage": [
                         "primary": [
                             "usedPercent": primaryPercent,
