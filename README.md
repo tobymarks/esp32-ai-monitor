@@ -1,15 +1,15 @@
 # AI Monitor
 
-A macOS background app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads the local CodexBar usage snapshot for Claude, Codex, or Antigravity, then streams the current limits to a small USB-connected CYD display.
+A macOS background app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, Codex, or Antigravity usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
 
 No WiFi on the ESP32, no display-side cloud credentials, no browser tab to keep open.
 
 ## How It Works
 
-CodexBar collects the provider usage data and writes a local `widget-snapshot.json`. The **AI Monitor** Mac app watches that file, applies your selected provider and display settings, and sends a compact JSON frame over USB serial to the ESP32. The ESP32 renders the dashboard on the 2.8" color display.
+The **AI Monitor** Mac app periodically asks the locally installed CodexBar CLI for the selected provider, applies your display settings, and sends a compact JSON frame over USB serial to the ESP32. The ESP32 renders the dashboard on the 2.8" color display.
 
 ```text
-AI providers -> CodexBar snapshot -> AI Monitor.app -> USB serial -> ESP32 CYD display
+AI providers -> CodexBar CLI -> AI Monitor.app -> USB serial -> ESP32 CYD display
 ```
 
 The Mac app can also flash firmware, check GitHub Releases for app and firmware updates, and remember per-device display settings.
@@ -17,7 +17,7 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 ## Features
 
 - Claude, Codex, and Antigravity provider views
-- Session, weekly, and third usage rows where available
+- Session, weekly, and provider-specific usage rows where available (including Claude Fable)
 - Antigravity model rows for Claude, Gemini Pro, and Gemini Flash
 - Used or remaining percentage display mode
 - Live reset countdowns and local display clock
@@ -31,7 +31,7 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 ## Quick Start
 
 1. **Buy** an [ESP32-2432S028 / ESP32-2432S028R board](https://de.aliexpress.com/item/1005007731775734.html), also known as a Cheap Yellow Display.
-2. **Install and run [CodexBar](https://codexbar.app/)** so it can write the local usage snapshot.
+2. **Install [CodexBar](https://codexbar.app/)** so its local CLI is available.
 3. **Download** the AI Monitor Mac app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases).
 4. **Plug** the ESP32 into your Mac via a USB data cable.
 5. **Flash** the right firmware variant and choose the provider in the AI Monitor settings window.
@@ -39,7 +39,7 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 ## Requirements
 
 - macOS 13+ on Apple Silicon
-- [CodexBar](https://codexbar.app/) installed and writing `widget-snapshot.json`
+- [CodexBar](https://codexbar.app/) installed with its local CLI
 - Claude, Codex, or Antigravity access in CodexBar
 - ESP32-2432S028 / ESP32-2432S028R CYD board
 - USB data cable, not a charge-only cable
@@ -47,7 +47,7 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 
 ## CodexBar Dependency
 
-AI Monitor does not talk to Claude, Codex, or Antigravity directly. CodexBar is the required local data source: it signs in to your providers, tracks usage limits, and writes the snapshot that AI Monitor sends to the desk display.
+AI Monitor does not talk to Claude, Codex, or Antigravity directly. CodexBar is the required local data source: its CLI obtains the provider limits that AI Monitor sends to the desk display.
 
 Install CodexBar first:
 
@@ -128,7 +128,7 @@ The supported Mac app source lives in `companion/` and is built with Swift, AppK
 |-----------|-------|
 | ESP32 Firmware | PlatformIO, Arduino-ESP32, TFT_eSPI, LVGL v9, ArduinoJson |
 | Mac App | Swift, AppKit, POSIX serial, GitHub Releases API |
-| Data Source | CodexBar `widget-snapshot.json` |
+| Data Source | Local CodexBar CLI |
 | Website | GitHub Pages |
 
 ## Attribution

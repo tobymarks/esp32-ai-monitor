@@ -595,8 +595,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // CodexBar
         let src = monitor.codexBar
         let entry = src.lastEntry
-        codexBarStatusLabel.stringValue = src.status.shortLabel
-        if src.status.isOK {
+        let activeProvider = CodexBarProvider.normalized(src.provider)
+        let hasPartialCodexData = src.status.isOK
+            && activeProvider == .codex
+            && src.lastSource != "web"
+            && entry?.primary == nil
+        codexBarStatusLabel.stringValue = hasPartialCodexData ? "Teilweise" : src.status.shortLabel
+        if src.status.isOK && !hasPartialCodexData {
             codexBarStatusDot.state = .ok
             codexBarStatusLabel.textColor = .labelColor
         } else {
@@ -605,10 +610,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
 
         if let e = entry, src.status.isOK {
-            let sp = Int((e.primary?.usedPercent ?? 0).rounded())
-            let wp = Int((e.secondary?.usedPercent ?? 0).rounded())
-            codexBarValuesLabel.stringValue = "Session: \(sp) %   ·   Weekly: \(wp) %"
-            if let reset = e.primary?.resetDescription {
+            var values: [String] = []
+            if let primary = e.primary {
+                values.append("Session: \(Int(primary.usedPercent.rounded())) %")
+            }
+            if let secondary = e.secondary {
+                values.append("Weekly: \(Int(secondary.usedPercent.rounded())) %")
+            }
+            if let tertiary = e.tertiary {
+                values.append("Tertiary: \(Int(tertiary.usedPercent.rounded())) %")
+            }
+            for extra in e.extraWindows ?? [] {
+                values.append("\(extra.title): \(Int(extra.window.usedPercent.rounded())) %")
+            }
+            codexBarValuesLabel.stringValue = values.isEmpty ? "Keine Limits verfügbar" : values.joined(separator: "   ·   ")
+
+            if hasPartialCodexData {
+                codexBarResetSessionLabel.stringValue = "CodexBar nutzt OAuth. Für vollständige Werte AI Monitor unter Datenschutz & Sicherheit den Festplattenvollzugriff erlauben."
+                codexBarResetSessionLabel.isHidden = false
+            } else if let reset = e.primary?.resetDescription {
                 codexBarResetSessionLabel.stringValue = "Session-Reset: \(reset)"
                 codexBarResetSessionLabel.isHidden = false
             } else {
@@ -931,9 +951,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         alert.informativeText = """
         macOS-Hintergrund-App für das ESP32-Usage-Display.
 
-        Liest Claude-, Codex- und Antigravity-Nutzung aus der lokalen CodexBar-App \
-        (widget-snapshot.json im Group Container) und sendet Session- und \
-        Weekly-Werte per USB-Serial an das ESP32-Display.
+        Liest Claude-, Codex- und Antigravity-Nutzung über das lokale CodexBar-CLI \
+        und sendet die verfügbaren Nutzungslimits per USB-Serial an das \
+        ESP32-Display.
 
         Repo: github.com/tobymarks/esp32-ai-monitor
 

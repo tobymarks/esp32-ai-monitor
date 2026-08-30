@@ -1,7 +1,7 @@
 /**
- * AI Monitor v1.20.14 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.25.0-beta.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
- * Datenquelle: lokale CodexBar-App (widget-snapshot.json), KEIN direkter API-Poll.
+ * Datenquelle: lokales CodexBar-CLI, KEIN eigener direkter Provider-Poll.
  * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
  * UI-Modus: LSUIElement=YES, unsichtbar. Menüleisten-Schnellmenü optional
  * per Settings-Toggle. Settings-Fenster beim Launch und beim Reopen-Event
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.24.0"
+let kAppVersion = "1.25.0-beta.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -3083,6 +3083,54 @@ class UsageMonitor {
                     ])
                 }
             }
+
+            // CodexBar liefert provider-spezifische Zusatzlimits nicht in
+            // primary/secondary/tertiary, sondern in extraRateWindows. Bei
+            // Claude ist das aktuell z. B. das separate Wochenlimit fuer
+            // Fable. Diese Fenster gingen bisher auf dem Weg zum ESP32
+            // verloren, obwohl CodexBarSource sie bereits eingelesen hatte.
+            if rowsPayload.count < 3, let extras = entry.extraWindows {
+                for extra in extras.prefix(3 - rowsPayload.count) {
+                    let used = Int(extra.window.usedPercent.rounded())
+                    rowsPayload.append([
+                        "id": extra.id,
+                        "title": extra.title,
+                        "usedPercent": toDisplayPercentFromUsed(used),
+                        "resetsAt": extra.window.resetsAt ?? "",
+                        "windowMinutes": extra.window.windowMinutes ?? 0
+                    ])
+                }
+            }
+        }
+
+        // Nur Fenster senden, die CodexBar tatsaechlich geliefert hat. Zuvor
+        // wurden fehlende Fenster als 0 % (im Restmodus sogar 100 %) serialisiert.
+        // Besonders beim Codex-OAuth-Fallback sah das wie ein echter Stand aus,
+        // obwohl lediglich kein Session-Fenster vorhanden war.
+        var usagePayload: [String: Any] = [
+            "rows": rowsPayload,
+            "loginMethod": loginMethodLabel
+        ]
+        if entry.primary != nil {
+            usagePayload["primary"] = [
+                "usedPercent": primaryPercent,
+                "resetsAt": primaryResetsAt,
+                "windowMinutes": primaryWindow
+            ]
+        }
+        if entry.secondary != nil {
+            usagePayload["secondary"] = [
+                "usedPercent": secondaryPercent,
+                "resetsAt": secondaryResetsAt,
+                "windowMinutes": secondaryWindow
+            ]
+        }
+        if entry.tertiary != nil {
+            usagePayload["tertiary"] = [
+                "usedPercent": tertiaryPercent,
+                "resetsAt": tertiaryResetsAt,
+                "windowMinutes": tertiaryWindow
+            ]
         }
 
         // JSON-Envelope: strukturgleich zum alten Format, ab v1.10.0 mit
@@ -3103,25 +3151,7 @@ class UsageMonitor {
                     // Refresh-Symbol im Kopf — wichtig, wenn hier gerade noch
                     // zwischengespeicherte Werte stehen.
                     "fetching": fetching,
-                    "usage": [
-                        "primary": [
-                            "usedPercent": primaryPercent,
-                            "resetsAt": primaryResetsAt,
-                            "windowMinutes": primaryWindow
-                        ],
-                        "secondary": [
-                            "usedPercent": secondaryPercent,
-                            "resetsAt": secondaryResetsAt,
-                            "windowMinutes": secondaryWindow
-                        ],
-                        "tertiary": [
-                            "usedPercent": tertiaryPercent,
-                            "resetsAt": tertiaryResetsAt,
-                            "windowMinutes": tertiaryWindow
-                        ],
-                        "rows": rowsPayload,
-                        "loginMethod": loginMethodLabel
-                    ]
+                    "usage": usagePayload
                 ]
             ]
         ]

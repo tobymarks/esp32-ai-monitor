@@ -711,15 +711,21 @@ void ui_dashboard_update(const MonitorState &state) {
         }
     }
 
-    const bool is_antigravity_rows = (state.provider == PROVIDER_ANTIGRAVITY) && (state.usage.row_count > 0);
-    set_standard_widgets_visible(!is_antigravity_rows);
-    set_antigravity_widgets_visible(is_antigravity_rows);
+    // Die kompakte Zeilenansicht ist nicht Antigravity-spezifisch: CodexBar
+    // kann auch bei Claude ein drittes Limit (z. B. Fable) liefern oder bei
+    // Codex nur ein einziges verfuegbares Fenster. Die grosse Standardansicht
+    // bleibt fuer den klassischen Fall Session + Weekly erhalten.
+    const bool uses_compact_rows = state.usage.row_count > 0
+                                && (state.provider == PROVIDER_ANTIGRAVITY
+                                    || state.usage.row_count != 2);
+    set_standard_widgets_visible(!uses_compact_rows);
+    set_antigravity_widgets_visible(uses_compact_rows);
 
     // ---- Usage blocks ----
     if (state.usage.valid) {
         char buf[32];
 
-        if (is_antigravity_rows) {
+        if (uses_compact_rows) {
             lv_color_t ag_color = ui_bar_color(state.provider);
             for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
                 const bool row_active = (i < state.usage.row_count);
@@ -804,7 +810,7 @@ void ui_dashboard_update(const MonitorState &state) {
         // Beim Hinweis waere "ERR" irrefuehrend — es ist nichts kaputt, es
         // fehlen nur Daten fuer den gerade gewaehlten Provider.
         const char *pct_placeholder = state.usage.notice_only ? "--" : "ERR";
-        if (is_antigravity_rows) {
+        if (uses_compact_rows) {
             for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
                 const bool first_row = (i == 0);
                 set_obj_hidden(ag_title[i], !first_row);
