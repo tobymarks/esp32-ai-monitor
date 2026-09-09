@@ -23,7 +23,7 @@ static const ProviderInfo PROVIDERS[] = {
     {
         /* id          */ PROVIDER_OPENAI,
         /* wire_keys   */ { "codex", nullptr },
-        /* label       */ "CODEX",
+        /* label       */ "CHATGPT",
         /* row_titles  */ { "Session", "Weekly", "Tertiary" },
         /* overflow    */ "Window",
         /* bar_color   */ COLOR_OPENAI,

@@ -59,7 +59,7 @@ enum CodexBarProvider: String, CaseIterable {
         case .claude:
             return "Claude"
         case .codex:
-            return "Codex"
+            return "ChatGPT"
         case .antigravity:
             return "Antigravity"
         }
@@ -70,7 +70,7 @@ enum CodexBarProvider: String, CaseIterable {
         case .claude:
             return "Claude Max"
         case .codex:
-            return "Codex"
+            return "ChatGPT"
         case .antigravity:
             return "Antigravity"
         }

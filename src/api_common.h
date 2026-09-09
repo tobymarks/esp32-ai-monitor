@@ -73,7 +73,7 @@ struct UsageData {
 struct MonitorState {
     UsageData usage;
     uint8_t   provider;              // Legacy enum (PROVIDER_CLAUDE / PROVIDER_OPENAI)
-    char      provider_label[16];    // Dynamic uppercase display label (e.g. "CLAUDE", "CODEX")
+    char      provider_label[16];    // Dynamic uppercase display label (e.g. "CLAUDE", "CHATGPT")
                                      // Set from the Mac envelope's `provider` field (v2.9.0+).
                                      // Fallback: "CLAUDE" when absent (old companion app).
     bool      is_fetching;           // true while an API call is in progress

@@ -43,7 +43,8 @@ LV_FONT_DECLARE(font_standby_clock_76);
 // ============================================================
 static lv_obj_t *scr_dashboard      = nullptr;
 
-// true = landscape layout with arcs, false = portrait with progress bars
+// Standard two-limit layout: landscape arcs or portrait bars.
+// ChatGPT's single-limit ring works in both orientations.
 static bool landscape_layout = false;
 
 // Header
@@ -63,6 +64,12 @@ static lv_obj_t *bar_weekly         = nullptr;   // null in landscape
 static lv_obj_t *arc_weekly         = nullptr;   // null in portrait
 static lv_obj_t *lbl_weekly_title   = nullptr;
 static lv_obj_t *lbl_weekly_reset   = nullptr;
+
+// ChatGPT with a single available limit: centered ring in either orientation.
+static lv_obj_t *lbl_single_title   = nullptr;
+static lv_obj_t *arc_single         = nullptr;
+static lv_obj_t *lbl_single_pct     = nullptr;
+static lv_obj_t *lbl_single_reset   = nullptr;
 
 // Antigravity: 3 model rows (portrait bars OR landscape bars)
 static const uint8_t AG_ROW_COUNT = 3;
@@ -113,6 +120,10 @@ static inline bool widgets_ready() {
              && lbl_session_reset!= nullptr
              && lbl_weekly_pct   != nullptr
              && lbl_weekly_reset != nullptr
+             && lbl_single_title != nullptr
+             && arc_single       != nullptr
+             && lbl_single_pct   != nullptr
+             && lbl_single_reset != nullptr
              && lbl_wifi_status  != nullptr
              && lbl_status_dot   != nullptr;
     if (!base) return false;
@@ -278,8 +289,8 @@ static int16_t create_usage_block(
 }
 
 // ============================================================
-// Helper: create a LANDSCAPE arc block (title + arc w/ pct inside + reset)
-// Centre of the cell is (cx, cy); arc diameter = arc_diameter.
+// Helper: create an arc block (title + arc w/ pct inside + reset)
+// Center horizontally at cx and vertically within cell_top/cell_h.
 // ============================================================
 static void create_arc_block(
     lv_obj_t *parent,
@@ -442,6 +453,13 @@ static void set_antigravity_widgets_visible(bool visible) {
     }
 }
 
+static void set_single_widgets_visible(bool visible) {
+    set_obj_hidden(lbl_single_title, !visible);
+    set_obj_hidden(arc_single, !visible);
+    set_obj_hidden(lbl_single_pct, !visible);
+    set_obj_hidden(lbl_single_reset, !visible);
+}
+
 // ============================================================
 // Create dashboard screen (call once)
 // ============================================================
@@ -590,7 +608,15 @@ void ui_dashboard_create() {
         }
     }
 
-    // Default screen mode is Claude/Codex (Session + Weekly layout visible).
+    // Reuse the existing ring style, centered in the area below the header.
+    create_arc_block(
+        scr_dashboard, L(STR_WEEKLY),
+        sw / 2, header_h + 2, sw - 24, sh - header_h - 2, 140,
+        &lbl_single_title, &arc_single, &lbl_single_pct, &lbl_single_reset
+    );
+    set_single_widgets_visible(false);
+
+    // Default screen mode is Session + Weekly.
     set_antigravity_widgets_visible(false);
 
     // ---- Full-screen overlay for touch events ----
@@ -686,7 +712,7 @@ void ui_dashboard_update(const MonitorState &state) {
 
     // ---- Provider name ----
     // v2.9.0+: Label kommt direkt aus dem Mac-Envelope (state.provider_label,
-    // uppercase, z. B. "CLAUDE" oder "CODEX"). Fallback auf "CLAUDE" bei leerem
+    // uppercase, z. B. "CLAUDE" oder "CHATGPT"). Fallback auf "CLAUDE" bei leerem
     // String (alter App-Version).
     if (lbl_provider != nullptr) {
         const char *label = state.provider_label[0] != '\0' ? state.provider_label : "CLAUDE";
@@ -711,21 +737,34 @@ void ui_dashboard_update(const MonitorState &state) {
         }
     }
 
-    // Die kompakte Zeilenansicht ist nicht Antigravity-spezifisch: CodexBar
-    // kann auch bei Claude ein drittes Limit (z. B. Fable) liefern oder bei
-    // Codex nur ein einziges verfuegbares Fenster. Die grosse Standardansicht
-    // bleibt fuer den klassischen Fall Session + Weekly erhalten.
-    const bool uses_compact_rows = state.usage.row_count > 0
+    // ChatGPT's lone limit uses a centered ring; preserve it for notices too.
+    const bool uses_single_arc = state.provider == PROVIDER_OPENAI
+                              && (state.usage.row_count == 1 || !state.usage.valid);
+    const bool uses_compact_rows = !uses_single_arc && state.usage.row_count > 0
                                 && (state.provider == PROVIDER_ANTIGRAVITY
                                     || state.usage.row_count != 2);
-    set_standard_widgets_visible(!uses_compact_rows);
+    set_standard_widgets_visible(!uses_compact_rows && !uses_single_arc);
     set_antigravity_widgets_visible(uses_compact_rows);
+    set_single_widgets_visible(uses_single_arc);
 
     // ---- Usage blocks ----
     if (state.usage.valid) {
         char buf[32];
 
-        if (uses_compact_rows) {
+        if (uses_single_arc) {
+            const char *title = state.usage.row_title[0][0] != '\0'
+                ? state.usage.row_title[0] : L(STR_WEEKLY);
+            lv_label_set_text(lbl_single_title, title);
+            format_percentage(state.usage.row_utilization[0], buf, sizeof(buf));
+            lv_label_set_text(lbl_single_pct, buf);
+            int val = (int)(state.usage.row_utilization[0] * 100.0f);
+            if (val < 0) val = 0;
+            if (val > 100) val = 100;
+            lv_arc_set_value(arc_single, val);
+            lv_obj_set_style_arc_color(arc_single, ui_bar_color(state.provider), LV_PART_INDICATOR);
+            format_reset_compact(state.usage.row_reset_epoch[0], buf, sizeof(buf));
+            lv_label_set_text(lbl_single_reset, buf);
+        } else if (uses_compact_rows) {
             lv_color_t ag_color = ui_bar_color(state.provider);
             for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
                 const bool row_active = (i < state.usage.row_count);
@@ -810,7 +849,12 @@ void ui_dashboard_update(const MonitorState &state) {
         // Beim Hinweis waere "ERR" irrefuehrend — es ist nichts kaputt, es
         // fehlen nur Daten fuer den gerade gewaehlten Provider.
         const char *pct_placeholder = state.usage.notice_only ? "--" : "ERR";
-        if (uses_compact_rows) {
+        if (uses_single_arc) {
+            lv_label_set_text(lbl_single_title, L(STR_WEEKLY));
+            lv_label_set_text(lbl_single_pct, pct_placeholder);
+            lv_label_set_text(lbl_single_reset, state.usage.error);
+            lv_arc_set_value(arc_single, 0);
+        } else if (uses_compact_rows) {
             for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
                 const bool first_row = (i == 0);
                 set_obj_hidden(ag_title[i], !first_row);
@@ -922,6 +966,10 @@ void ui_dashboard_recreate() {
         bar_weekly         = nullptr;
         arc_weekly         = nullptr;
         lbl_weekly_reset   = nullptr;
+        lbl_single_title   = nullptr;
+        arc_single         = nullptr;
+        lbl_single_pct     = nullptr;
+        lbl_single_reset   = nullptr;
         lbl_wifi_status    = nullptr;
         lbl_status_dot     = nullptr;
         divider_middle     = nullptr;

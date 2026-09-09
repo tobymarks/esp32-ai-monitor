@@ -595,13 +595,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // CodexBar
         let src = monitor.codexBar
         let entry = src.lastEntry
-        let activeProvider = CodexBarProvider.normalized(src.provider)
-        let hasPartialCodexData = src.status.isOK
-            && activeProvider == .codex
-            && src.lastSource != "web"
-            && entry?.primary == nil
-        codexBarStatusLabel.stringValue = hasPartialCodexData ? "Teilweise" : src.status.shortLabel
-        if src.status.isOK && !hasPartialCodexData {
+        codexBarStatusLabel.stringValue = src.status.shortLabel
+        if src.status.isOK {
             codexBarStatusDot.state = .ok
             codexBarStatusLabel.textColor = .labelColor
         } else {
@@ -625,10 +620,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             }
             codexBarValuesLabel.stringValue = values.isEmpty ? "Keine Limits verfügbar" : values.joined(separator: "   ·   ")
 
-            if hasPartialCodexData {
-                codexBarResetSessionLabel.stringValue = "CodexBar nutzt OAuth. Für vollständige Werte AI Monitor unter Datenschutz & Sicherheit den Festplattenvollzugriff erlauben."
-                codexBarResetSessionLabel.isHidden = false
-            } else if let reset = e.primary?.resetDescription {
+            if let reset = e.primary?.resetDescription {
                 codexBarResetSessionLabel.stringValue = "Session-Reset: \(reset)"
                 codexBarResetSessionLabel.isHidden = false
             } else {
@@ -951,7 +943,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         alert.informativeText = """
         macOS-Hintergrund-App für das ESP32-Usage-Display.
 
-        Liest Claude-, Codex- und Antigravity-Nutzung über das lokale CodexBar-CLI \
+        Liest Claude-, ChatGPT- und Antigravity-Nutzung über das lokale CodexBar-CLI \
         und sendet die verfügbaren Nutzungslimits per USB-Serial an das \
         ESP32-Display.
 

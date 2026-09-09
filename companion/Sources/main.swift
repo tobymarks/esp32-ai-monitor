@@ -1,8 +1,8 @@
 /**
- * AI Monitor v1.25.0-beta.1 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
+ * AI Monitor v1.25.0 — macOS-Hintergrund-App für ESP32 AI Usage Monitor Display
  *
  * Datenquelle: lokales CodexBar-CLI, KEIN eigener direkter Provider-Poll.
- * Multi-Provider: Claude, Codex oder Antigravity — per Umschalter im Settings-Fenster.
+ * Multi-Provider: Claude, ChatGPT oder Antigravity — per Umschalter im Settings-Fenster.
  * UI-Modus: LSUIElement=YES, unsichtbar. Menüleisten-Schnellmenü optional
  * per Settings-Toggle. Settings-Fenster beim Launch und beim Reopen-Event
  * (Spotlight / Finder-Doppelklick).
@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.25.0-beta.1"
+let kAppVersion = "1.25.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
