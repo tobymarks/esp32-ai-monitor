@@ -955,8 +955,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         Repo: github.com/tobymarks/esp32-ai-monitor
 
-        © 2026 Tobias Marks
-        Chatbot icons created by LAFS — Flaticon
+        © 2026 Tobias Marks · MIT-Lizenz
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")

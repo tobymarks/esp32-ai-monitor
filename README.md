@@ -140,14 +140,12 @@ The supported Mac app source lives in `companion/` and is built with Swift, AppK
 
 AI Monitor is released under the [MIT License](LICENSE).
 
-The MIT License covers the source code in this repository. The application and
-menu bar icon assets are third-party material under the Flaticon Free License
-and are **excluded** from it — see [NOTICE](NOTICE) for the affected files and
-what that means if you fork and redistribute your own builds.
+The MIT License covers everything in this repository, including the app icon,
+menu bar icon and website artwork, which are original work made for this
+project. See [NOTICE](NOTICE) for third-party components and their licenses.
 
 ## Attribution
 
-- Chatbot icons created by [LAFS - Flaticon](https://www.flaticon.com/free-icons/chatbot)
 - Firmware built with [TFT_eSPI](https://github.com/Bodmer/TFT_eSPI) (MIT/BSD), [LVGL](https://github.com/lvgl/lvgl) (MIT) and [ArduinoJson](https://github.com/bblanchon/ArduinoJson) (MIT)
 - Usage data provided by [CodexBar](https://github.com/steipete/CodexBar), a separate program invoked at runtime
 - Inspired by [Aura](https://github.com/Surrey-Homeware/Aura), a weather display for the same CYD hardware
