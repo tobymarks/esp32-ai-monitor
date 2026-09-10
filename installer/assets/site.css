@@ -49,8 +49,7 @@ h1, h2, h3 { text-wrap: balance; }
 .skip-link:focus { transform: none; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 28px; min-height: 96px; border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: 11px; text-decoration: none; font-size: var(--fs-lg); font-weight: 800; letter-spacing: -.6px; white-space: nowrap; }
-.mark { width: 40px; height: 40px; display: grid; place-items: center; background: var(--primary); color: white; border-radius: 12px; }
-.mark svg { width: 27px; height: 27px; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.mark { width: 40px; height: 40px; display: block; border-radius: 9px; box-shadow: 0 1px 3px #1a5bc433; }
 nav { display: flex; align-items: center; gap: 26px; margin-left: auto; }
 nav a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
 nav a:hover, nav a.is-active { color: var(--primary); }
@@ -111,7 +110,7 @@ h2 { font-size: var(--fs-h2); letter-spacing: -.05em; line-height: 1.18; font-we
 .download-heading .eyebrow { margin: 0; }
 .app-symbol { display: inline-flex; align-items: center; justify-content: center; width: 43px; height: 43px; border: 1px solid var(--line); border-radius: 11px; background: var(--bg); font-family: var(--font-mono); font-size: var(--fs-lg); font-weight: 500; }
 .app-symbol > span { color: var(--primary); }
-.featured .app-symbol { background: var(--primary); color: white; border-color: var(--primary); }
+.app-symbol-icon { padding: 0; border: 0; background: none; border-radius: 10px; box-shadow: 0 1px 3px #1a5bc433; }
 .download-card h3 { font-size: var(--fs-xl); }
 .download-card p { max-width: 49ch; margin-bottom: 26px; }
 .tag-list { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
