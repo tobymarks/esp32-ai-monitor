@@ -13,7 +13,7 @@
   <meta property="og:description" content="Deine KI-Limits auf einen Blick. Ein kleines USB-Display für Claude, ChatGPT und Antigravity, verbunden mit deinem Mac.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://tobymarks.github.io/esp32-ai-monitor/">
-  <meta property="og:image" content="https://tobymarks.github.io/esp32-ai-monitor/assets/display-codex-front.jpg">
+  <meta property="og:image" content="https://tobymarks.github.io/esp32-ai-monitor/assets/display-chatgpt-front.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#f7f8f4">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
@@ -73,7 +73,7 @@
       <div class="hero-visual" aria-label="AI Monitor Display">
         <div class="visual-label"><span class="status-dot" aria-hidden="true"></span><span data-i18n="hero.visual.label">Deine Limits bekommen einen festen Platz.</span></div>
         <figure class="product-photo">
-          <img src="assets/display-codex-front.jpg" alt="AI Monitor Display im gedruckten Gehäuse mit ChatGPT-Limits" data-i18n-alt="hero.img.alt" width="1800" height="1350" fetchpriority="high" decoding="async">
+          <img src="assets/display-chatgpt-front.jpg" alt="AI Monitor Display im gedruckten Gehäuse mit ChatGPT-Limits" data-i18n-alt="hero.img.alt" width="1800" height="1350" fetchpriority="high" decoding="async">
         </figure>
         <div class="visual-caption"><span>AI Monitor <span class="caption-divider">/</span> ESP32</span><span data-i18n="hero.visual.caption">Per USB mit deinem Mac verbunden</span></div>
       </div>
@@ -113,6 +113,36 @@
             <span class="tag"><span data-i18n="dl.apptag">App</span> <span data-v="app">v1.27.1</span></span>
           </div>
         </article>
+      </div>
+
+      <div class="app-gallery" aria-label="Screenshots der AI Monitor App" data-i18n-aria="dl.shots.label">
+        <figure class="app-shot">
+          <div class="app-shot-frame">
+            <img src="assets/app-overview.png" alt="AI Monitor App, Bereich Übersicht: Health-Check für App, CodexBar, USB-Verbindung und Firmware" data-i18n-alt="dl.shot.overview.alt" width="2240" height="2015" loading="lazy" decoding="async">
+          </div>
+          <figcaption>
+            <strong data-i18n="dl.shot.overview.h">Übersicht</strong>
+            <span data-i18n="dl.shot.overview.p">Ein Blick genügt: App, CodexBar, USB und Firmware werden laufend geprüft.</span>
+          </figcaption>
+        </figure>
+        <figure class="app-shot">
+          <div class="app-shot-frame">
+            <img src="assets/app-connection.png" alt="AI Monitor App, Bereich Verbindung: USB-Port zum ESP32 und WLAN des Displays" data-i18n-alt="dl.shot.connection.alt" width="2240" height="2015" loading="lazy" decoding="async">
+          </div>
+          <figcaption>
+            <strong data-i18n="dl.shot.connection.h">Verbindung</strong>
+            <span data-i18n="dl.shot.connection.p">USB-Port und Display-WLAN auf einen Blick – die App findet das Display automatisch.</span>
+          </figcaption>
+        </figure>
+        <figure class="app-shot">
+          <div class="app-shot-frame compact">
+            <img src="assets/app-menu.png" alt="Schnellmenü in der Menüleiste: Claude, ChatGPT oder Antigravity wählen, Einstellungen öffnen" data-i18n-alt="dl.shot.menu.alt" width="302" height="204" loading="lazy" decoding="async">
+          </div>
+          <figcaption>
+            <strong data-i18n="dl.shot.menu.h">Menüleiste</strong>
+            <span data-i18n="dl.shot.menu.p">KI-Dienst wechseln, ohne ein Fenster zu öffnen.</span>
+          </figcaption>
+        </figure>
       </div>
     </section>
 
@@ -163,7 +193,7 @@
       <div class="hardware-grid">
         <article class="board-card">
           <figure class="hardware-photo">
-            <img src="assets/display-codex-angle.jpg" alt="AI Monitor Display neben dem Mac im transparenten Gehäuse" data-i18n-alt="hw.img.alt" width="1200" height="1600" loading="lazy" decoding="async">
+            <img src="assets/display-chatgpt-side.jpg" alt="AI Monitor Display im 3D-gedruckten Gehäuse, seitlich auf dem Monitorfuß" data-i18n-alt="hw.img.alt" width="1600" height="1200" loading="lazy" decoding="async">
           </figure>
           <div class="board-copy">
             <p class="eyebrow" data-i18n="hw.board.label">Das Display</p><h3>Cheap Yellow<br>Display.</h3><p class="board-model">ESP32-2432S028 / ESP32-2432S028R</p>
@@ -200,6 +230,27 @@
             </div>
           </article>
         </div>
+      </div>
+
+      <div class="view-grid" aria-label="Darstellungen auf dem Display" data-i18n-aria="hw.views.label">
+        <figure class="view-card">
+          <div class="view-photo">
+            <img src="assets/display-view-rings.jpg" alt="Display in der Ring-Ansicht: ChatGPT-Wochenlimit bei 15 Prozent mit Restzeit" data-i18n-alt="hw.view.rings.alt" width="1500" height="1000" loading="lazy" decoding="async">
+          </div>
+          <figcaption>
+            <strong data-i18n="hw.view.rings.h">Ringe</strong>
+            <span data-i18n="hw.view.rings.p">Ein Limit groß im Fokus, darunter die Zeit bis zum Reset.</span>
+          </figcaption>
+        </figure>
+        <figure class="view-card">
+          <div class="view-photo">
+            <img src="assets/display-view-bars.jpg" alt="Display in der Balken-Ansicht: Claude-Limits für Sitzung, Woche und Modell untereinander" data-i18n-alt="hw.view.bars.alt" width="1500" height="1000" loading="lazy" decoding="async">
+          </div>
+          <figcaption>
+            <strong data-i18n="hw.view.bars.h">Balken</strong>
+            <span data-i18n="hw.view.bars.p">Mehrere Limits untereinander – Sitzung, Woche und Modell auf einen Blick.</span>
+          </figcaption>
+        </figure>
       </div>
     </section>
 
@@ -303,11 +354,21 @@
     "dl.app.p": "Connects your Mac to the display. Adjust the display settings and install the matching firmware here.",
     "dl.release": "Release notes",
     "dl.apptag": "App",
+    "dl.shots.label": "Screenshots of the AI Monitor app",
+    "dl.shot.overview.alt": "AI Monitor app, Overview section: health check for app, CodexBar, USB connection and firmware",
+    "dl.shot.overview.h": "Overview",
+    "dl.shot.overview.p": "One glance is enough: app, CodexBar, USB and firmware are checked continuously.",
+    "dl.shot.connection.alt": "AI Monitor app, Connection section: USB port to the ESP32 and the display's Wi-Fi",
+    "dl.shot.connection.h": "Connection",
+    "dl.shot.connection.p": "USB port and display Wi-Fi at a glance – the app finds the display automatically.",
+    "dl.shot.menu.alt": "Quick menu in the menu bar: pick Claude, ChatGPT or Antigravity, open settings",
+    "dl.shot.menu.h": "Menu bar",
+    "dl.shot.menu.p": "Switch AI service without opening a window.",
 
     "hw.eyebrow": "Hardware",
     "hw.title": "Small hardware. Clear overview.",
     "hw.sub": "All you need is a CYD-series ESP32 display and a USB data cable. You can 3D-print a case to make it your own.",
-    "hw.img.alt": "AI Monitor display next to the Mac in a transparent case",
+    "hw.img.alt": "AI Monitor display in a 3D-printed case, seen from the side on the monitor stand",
     "hw.board.p": "A 2.8-inch colour touchscreen with ESP32. A single USB cable carries both power and data.",
     "hw.need.h": "What you need",
     "hw.need.1": "View the ESP32 display on AliExpress",
@@ -315,6 +376,13 @@
     "hw.need.3": "A Mac running macOS 14 or newer — Apple Silicon or Intel",
     "hw.need.4": "CodexBar with at least one provider set up",
     "hw.case.h": "A case for your desk",
+    "hw.views.label": "Views on the display",
+    "hw.view.rings.alt": "Display in ring view: ChatGPT weekly limit at 15 percent with time remaining",
+    "hw.view.rings.h": "Rings",
+    "hw.view.rings.p": "One limit front and centre, with the time until reset below.",
+    "hw.view.bars.alt": "Display in bar view: Claude limits for session, week and model stacked",
+    "hw.view.bars.h": "Bars",
+    "hw.view.bars.p": "Several limits stacked – session, week and model at a glance.",
     "hw.case.landscape": "Landscape · 3D print file",
     "hw.case.portrait": "Portrait · 3D print file",
 
