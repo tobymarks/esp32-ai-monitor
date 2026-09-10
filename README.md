@@ -39,7 +39,7 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 
 ## Requirements
 
-- macOS 13+ on Apple Silicon
+- macOS 14+ on Apple Silicon or Intel (the app ships as a universal binary)
 - [CodexBar](https://codexbar.app/) installed with its local CLI
 - Claude, ChatGPT, or Antigravity access in CodexBar
 - ESP32-2432S028 / ESP32-2432S028R CYD board
