@@ -1,0 +1,47 @@
+[
+  {
+    "provider": "antigravity",
+    "version": "0.56.8",
+    "source": "lsp",
+    "usage": {
+      "primary": {
+        "used_percent": 5.0,
+        "window_minutes": 300,
+        "resets_at": "2026-09-11T10:13:00.000Z",
+        "is_informational": false
+      },
+      "extra_rate_windows": [
+        {
+          "id": "claude",
+          "title": "Claude/GPT weekly",
+          "window": {
+            "used_percent": 20.0,
+            "window_minutes": 10080,
+            "resets_at": "2026-09-14T09:00:00.000Z",
+            "is_informational": false
+          }
+        },
+        {
+          "id": "gemini-pro",
+          "title": "Gemini 5-hour",
+          "window": {
+            "used_percent": 55.0,
+            "window_minutes": 300,
+            "resets_at": "2026-09-11T10:13:00.000Z",
+            "is_informational": false
+          }
+        },
+        {
+          "id": "gemini-flash",
+          "title": "Gemini Flash",
+          "window": {
+            "used_percent": 1.0,
+            "is_informational": false
+          }
+        }
+      ],
+      "updated_at": "2026-09-11T08:00:00.000Z"
+    },
+    "cost": null
+  }
+]

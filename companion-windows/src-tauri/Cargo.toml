@@ -1,0 +1,23 @@
+[package]
+name = "aimonitor"
+description = "AI Monitor Companion für Windows: Tray, Einstellungsfenster, CodexBar-Abruf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "aimonitor_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+aimonitor-core = { path = "../crates/core" }
+tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2.5"
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+sys-locale = "0.3"

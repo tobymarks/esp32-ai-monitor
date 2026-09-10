@@ -1,0 +1,17 @@
+[
+  {
+    "provider": "claude",
+    "version": "0.56.8",
+    "source": "oauth",
+    "usage": {
+      "primary": {
+        "used_percent": 10.0,
+        "window_minutes": 300,
+        "resets_at": "2026-09-11T10:13:00.000Z",
+        "is_informational": false
+      },
+      "updated_at": "2026-09-11T07:00:00.000Z"
+    },
+    "cost": null
+  }
+]

@@ -1,0 +1,123 @@
+/* Tokens aus installer/assets/site.css, ohne Web-Fonts: die App läuft offline. */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --paper: #ffffff;
+  --ink: #1f2730;
+  --muted: #626b78;
+  --primary: #1a5bc4;
+  --primary-deep: #144a9f;
+  --tint: #e8effb;
+  --line: #dde2ea;
+  --ok: #2f9e44;
+  --warn: #c77800;
+  --bad: #c92a2a;
+  --font-sans: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, SFMono-Regular, Menlo, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 24px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16191d;
+    --paper: #1e2227;
+    --ink: #e8ebef;
+    --muted: #9aa3ae;
+    --primary: #5b93ea;
+    --primary-deep: #7fabf0;
+    --tint: #1f2c40;
+    --line: #2c323a;
+    --ok: #51cf66;
+    --warn: #ffa94d;
+    --bad: #ff6b6b;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+h1 { font-size: var(--fs-lg); font-weight: 600; letter-spacing: -.3px; margin: 0; }
+h2 { font-size: var(--fs-md); font-weight: 600; margin: 28px 0 10px; }
+p { margin: 0 0 12px; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--font-mono); font-size: var(--fs-xs); user-select: text; }
+
+/* Layout: schmale Navigation links, Inhalt rechts. */
+.app { display: grid; grid-template-columns: 180px 1fr; height: 100%; }
+.sidebar { background: var(--paper); border-right: 1px solid var(--line); padding: 18px 10px; display: flex; flex-direction: column; gap: 18px; }
+.brand { display: flex; align-items: center; gap: 9px; padding: 0 8px; font-size: var(--fs-md); font-weight: 700; letter-spacing: -.3px; }
+.brand-mark { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(#4487f4, #1a5bc4); flex-shrink: 0; }
+.sidebar ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.nav-item { width: 100%; text-align: left; border: 0; background: transparent; border-radius: 6px; padding: 7px 10px; color: var(--muted); font-weight: 500; cursor: default; }
+.nav-item:hover { background: var(--bg); color: var(--ink); }
+.nav-item.is-active { background: var(--tint); color: var(--primary); font-weight: 600; }
+
+.content { overflow: auto; padding: 22px 28px 32px; }
+.page { max-width: 640px; }
+.page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.page-head .btn { margin-left: auto; }
+
+.btn { min-height: 28px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); font-size: var(--fs-sm); font-weight: 500; cursor: default; }
+.btn:hover:not(:disabled) { border-color: var(--primary); background: var(--tint); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: .5; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 4px; }
+
+/* Ladeanzeige im Kopf, dezent. */
+.spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Felder mit Label links und Segment-Control rechts. */
+.field-row { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; }
+.field-label { color: var(--muted); min-width: 110px; }
+.segmented { display: inline-flex; padding: 2px; background: var(--line); border-radius: 7px; gap: 2px; }
+.segmented button { border: 0; background: transparent; border-radius: 5px; padding: 4px 11px; font-weight: 500; color: var(--muted); cursor: default; }
+.segmented button:hover { color: var(--ink); }
+.segmented button.is-active { background: var(--primary); color: #fff; font-weight: 600; }
+
+.check-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 6px; }
+.check-row input { margin: 3px 0 0; accent-color: var(--primary); }
+.check-row > span { display: flex; flex-direction: column; }
+.check-title { font-weight: 500; }
+.check-detail { font-size: var(--fs-xs); }
+
+/* Status-Pill nach status.kind. */
+.status-line { display: flex; align-items: center; gap: 10px; margin: 18px 0 14px; flex-wrap: wrap; }
+.status-message { user-select: text; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; background: var(--tint); color: var(--primary); }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill-ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.pill-stale { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.pill-cliMissing, .pill-providerUnavailable, .pill-cliFailed, .pill-parseError { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.pill-notYet { color: var(--muted); background: var(--line); }
+
+/* Zeilen: Titel, Prozent, Balken, Countdown. */
+.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.row-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+.row-title { font-weight: 500; }
+.row-percent { font-variant-numeric: tabular-nums; font-weight: 600; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar-fill { height: 100%; background: var(--primary); border-radius: 3px; transition: width 300ms ease; }
+.row-meta { font-size: var(--fs-xs); margin-top: 4px; }
+.meta-line { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--fs-xs); margin-top: 16px; }
+
+/* Diagnose. */
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 16px 0 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; word-break: break-all; }
+.output { margin: 0 0 8px; padding: 10px 12px; max-height: 220px; overflow: auto; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; white-space: pre-wrap; word-break: break-word; user-select: text; cursor: text; }

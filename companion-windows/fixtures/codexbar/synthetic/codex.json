@@ -1,0 +1,24 @@
+[
+  {
+    "provider": "codex",
+    "version": "0.56.8",
+    "source": "oauth",
+    "usage": {
+      "primary": {
+        "used_percent": 48.0,
+        "window_minutes": 300,
+        "resets_at": "2026-09-11T10:13:00.000Z",
+        "is_informational": false
+      },
+      "secondary": {
+        "used_percent": 21.0,
+        "window_minutes": 10080,
+        "resets_at": "2026-09-14T09:00:00.000Z",
+        "is_informational": false
+      },
+      "login_method": "chatgpt",
+      "updated_at": "2026-09-11T08:00:00.000Z"
+    },
+    "cost": null
+  }
+]

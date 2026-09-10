@@ -13,6 +13,10 @@ Erwartete Dateien nach dem Aufnehmen mit `collect_fixtures.ps1`:
 | `<provider>-error.json` | Fehlerfall, Provider in Win-CodexBar nicht eingerichtet |
 | `cli-version.txt` | Ausgabe von `codexbar-cli --version` |
 
+Bis echte Aufnahmen vorliegen, liegen unter `synthetic/` aus dem Win-CodexBar-Quellcode
+abgeleitete Dateien im selben Format (`make_synthetic.py`). Die Tests des Core-Crates
+laufen gegen beide Verzeichnisse: `cargo test -p aimonitor-core`.
+
 Unterschiede zu den Mac-Fixtures unter `companion/Fixtures/codexbar/`:
 
 - Feldnamen in snake_case: `used_percent`, `resets_at`, `window_minutes`,

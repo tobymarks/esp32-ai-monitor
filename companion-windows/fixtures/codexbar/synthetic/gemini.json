@@ -1,0 +1,32 @@
+[
+  {
+    "provider": "gemini",
+    "version": "0.56.8",
+    "source": "auto",
+    "usage": {
+      "primary": {
+        "used_percent": 62.0,
+        "window_minutes": 1440,
+        "resets_at": "2026-09-11T17:12:00.000Z",
+        "reset_description": "Resets in 9h 12m",
+        "is_informational": false
+      },
+      "secondary": {
+        "used_percent": 18.5,
+        "window_minutes": 1440,
+        "resets_at": "2026-09-11T17:12:00.000Z",
+        "reset_description": "Resets in 9h 12m",
+        "is_informational": false
+      },
+      "tertiary": {
+        "used_percent": 3.0,
+        "window_minutes": 1440,
+        "resets_at": "2026-09-11T17:12:00.000Z",
+        "reset_description": "Resets in 9h 12m",
+        "is_informational": false
+      },
+      "updated_at": "2026-09-11T08:00:00.000Z"
+    },
+    "cost": null
+  }
+]

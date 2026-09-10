@@ -1,6 +1,6 @@
 # AI Monitor für Windows – Umsetzungsplan
 
-Stand: 10. September 2026. Bezug: Mac-App 1.28.0, Firmware 2.17.0.
+Stand: 11. September 2026. Bezug: Mac-App 1.28.0, Firmware 2.17.0.
 
 ## Ziel
 
@@ -100,6 +100,21 @@ Aufwand: 4 bis 5 Tage.
 
 Ergebnis: Tray zeigt Provider-Werte, Provider-Umschaltung, Diagnose mit letztem
 CLI-Output und CLI-Version.
+
+### Stand Phase 1 (11. September 2026)
+
+Auf dem Mac gebaut und gestartet, Windows-Lauf steht aus.
+
+| Teil | Status | Ergebnis |
+|---|---|---|
+| Workspace | erledigt | `companion-windows/` mit Cargo-Workspace (`crates/core`, `src-tauri`), pnpm/Vite/React-Frontend, README, `.gitignore`. |
+| Core-Crate `aimonitor-core` | erledigt | Provider-Modell, CLI-Parser für snake_case (Win-CodexBar) und camelCase (Upstream) mit Fehler als String oder Objekt, Zeilenregeln als Port von `buildUsageEnvelope`, Status, CLI-Suche und Prozessaufruf mit Timeout und ohne Konsolenfenster, Fixture-Modus über `AIMONITOR_CODEXBAR_FIXTURE_DIR`, zustandsbehaftete Quelle mit Cache je Provider. 26 Tests, darunter Schema-Tests gegen synthetische, Upstream- und (sobald vorhanden) echte Windows-Fixtures. |
+| Tauri-Hülle | erledigt | Tray mit Provider-Menü, Aktualisieren, Einstellungen, Beenden; Tooltip mit erster Zeile; kein Fenster beim Start; Einstellungsfenster mit Übersicht, Diagnose und Platzhaltern für Verbindung, Display, Updates; Schließen versteckt nur; Autostart über `tauri-plugin-autostart`; Settings als JSON im App-Config-Verzeichnis; Lokalisierung de/en aus den Mac-Strings; Design mit den Tokens der Installer-Seite, hell und dunkel. |
+| Abnahme | teilweise | `pnpm build`, `cargo build`, `cargo test` grün. Start mit echtem Upstream-CLI, mit Mac-Fixtures und mit synthetischen Fixtures geprüft, Fenster per Bildschirmfoto abgenommen. Nicht geprüft: Tray-Klicks, Windows-Build, Registry-Autostart. |
+
+Offen für Windows: `collect_fixtures.ps1` ausführen und die echten Aufnahmen committen, dann
+laufen die Schema-Tests dagegen. Entwickler-Schalter `AIMONITOR_OPEN_SETTINGS=1` öffnet das
+Fenster beim Start.
 
 ## Phase 2 – Serial und Display
 
