@@ -464,13 +464,15 @@ final class CodexBarSource {
     static let fixtureDirEnv = "AIMONITOR_CODEXBAR_FIXTURE_DIR"
 
     private static func runCLI(path: String, provider: String) -> CLIOutcome {
+        // Nur Provider mit vorhandener Datei werden ersetzt — die uebrigen
+        // laufen weiter ueber das echte CLI, so laesst sich ein Mix aus echten
+        // und simulierten Providern durchspielen.
         if let dir = ProcessInfo.processInfo.environment[fixtureDirEnv], !dir.isEmpty {
             let file = (dir as NSString).appendingPathComponent("\(provider).json")
-            guard let data = FileManager.default.contents(atPath: file) else {
-                return .failure(.cliFailed("Fixture fehlt: \(file)"))
+            if let data = FileManager.default.contents(atPath: file) {
+                NSLog("[CodexBar] Fixture statt CLI: %@", file)
+                return decodeCLIOutput(data, errData: Data(), exitStatus: 0)
             }
-            NSLog("[CodexBar] Fixture statt CLI: %@", file)
-            return decodeCLIOutput(data, errData: Data(), exitStatus: 0)
         }
 
         let process = Process()

@@ -5,8 +5,9 @@ aus dem CodexBar-Quellcode (`*StatusProbe.toUsageSnapshot()` bzw.
 `CopilotUsageFetcher.fetch()`). Sie dienen dazu, Provider ohne eigenes Konto
 bis aufs Display durchzuspielen.
 
-Nutzung: App mit gesetzter Umgebungsvariable starten, dann liest sie statt des
-CLI die Datei `<dir>/<provider>.json`:
+Nutzung: App mit gesetzter Umgebungsvariable starten, dann liest sie fuer jeden
+Provider mit vorhandener Datei `<dir>/<provider>.json` diese statt des CLI, alle
+anderen Provider laufen weiter ueber das echte CLI:
 
     AIMONITOR_CODEXBAR_FIXTURE_DIR="$PWD/companion/Fixtures/codexbar" \
       "/Applications/AI Monitor.app/Contents/MacOS/AIMonitor"
