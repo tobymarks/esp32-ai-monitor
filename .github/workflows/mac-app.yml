@@ -175,15 +175,16 @@ jobs:
           path: companion/build/AIMonitor.dmg
           if-no-files-found: warn
 
-      # Ab v1.13.0: Der CI-Build ist nur ad-hoc-signiert und würde manuell
-      # hochgeladene, signierte + notarisierte + gestapelte Assets vom lokalen
-      # Build überschreiben. Guard: Nur hochladen, wenn keine Release-Assets
-      # existieren (= CI läuft vor dem manuellen Release-Upload) ODER wenn
-      # explizit per workflow_dispatch mit upload_to_release=true getriggert.
-      # Sobald Tobias die Signing-Secrets (.p12 Base64 + Notary-Creds) als
-      # GitHub-Secrets hinterlegt, wird dieser Guard entfernt und CI übernimmt
-      # Signing/Notarization komplett.
-      - name: Attach assets to GitHub Release (guarded)
+      # CI baut vollstaendig signiert + notarisiert + gestapelt: der Job
+      # importiert die Developer ID aus den Repo-Secrets und setzt NOTARIZE=1,
+      # build.sh erledigt Signing, Notarisierung und Stapling.
+      #
+      # Bis v1.26.0 stand hier ein Guard, der den Upload uebersprang, sobald
+      # AIMonitor.zip bereits am Release hing — noetig, solange CI nur ad-hoc
+      # signierte und die echten Assets von Hand hochgeladen wurden. Seit die
+      # Signing-Secrets hinterlegt sind, liefert CI dieselbe Qualitaet; der
+      # Guard erzwang nur noch unnoetige lokale Builds und ist entfallen.
+      - name: Attach assets to GitHub Release
         if: startsWith(github.ref, 'refs/tags/app-v') || startsWith(github.ref, 'refs/tags/app-beta-v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -191,27 +192,25 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           # Release anlegen, falls es noch nicht existiert. Beta-Tags
           # (app-beta-v*) werden als prerelease markiert, damit der In-App-
-          # Updater sie ausschliesslich im Beta-Kanal anbietet. Bei stabilen
-          # app-v*-Tags legt i.d.R. der manuelle, signierte Upload das Release
-          # an — dieser create-Fallback greift nur, wenn keiner existiert.
+          # Updater sie ausschliesslich im Beta-Kanal anbietet.
+          # Existiert bereits ein Release mit eigenen Notes, bleibt es
+          # unveraendert — hier werden dann nur die Assets angehaengt.
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             if [[ "$TAG" == app-beta-v* ]]; then
               gh release create "$TAG" --prerelease --title "$TAG" \
-                --notes "Automatisierter Beta-Build (ad-hoc signiert)."
+                --notes "Automatisierter Beta-Build (signiert und notarisiert)."
             else
-              gh release create "$TAG" --title "$TAG" \
-                --notes "Automatisierter Build."
+              gh release create "$TAG" --title "$TAG" --generate-notes
             fi
           fi
-          # Guard: Prüfe, ob AIMonitor.zip bereits als Release-Asset existiert.
-          # Wenn ja: lokaler Build war zuerst da (signiert + stapled) — CI-Assets
-          # NICHT überschreiben.
-          if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | grep -q "^AIMonitor.zip$"; then
-            echo "Release $TAG already has AIMonitor.zip — assuming stapled local build. Skipping CI upload."
-            exit 0
-          fi
-          echo "No existing assets — uploading CI build to $TAG."
+          echo "Uploading notarized CI build to $TAG."
           gh release upload "$TAG" \
             companion/build/AIMonitor.zip \
             companion/build/AIMonitor.dmg \
             --clobber
+
+          # Gegenprobe: Was hochgeladen wurde, muss Gatekeeper passieren.
+          # Faengt ab, dass ein unbemerkt ad-hoc signierter Build als Release
+          # herausgeht, falls die Signing-Secrets einmal fehlen.
+          spctl -a -t open --context context:primary-signature -vv \
+            companion/build/AIMonitor.dmg

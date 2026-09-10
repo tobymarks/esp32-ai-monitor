@@ -122,6 +122,9 @@ The supported Mac app source lives in `companion/` and is built with Swift, AppK
 - Pushes to `main` that touch firmware or installer files build and deploy the GitHub Pages installer.
 - Firmware tags build release assets for both ILI9341 and ST7789 variants.
 - App tags build `AIMonitor.zip` and `AIMonitor.dmg` via the macOS workflow.
+- App release assets are signed with a Developer ID, notarized by Apple and stapled,
+  so they open without a Gatekeeper warning. The workflow creates the release and
+  attaches both files; no local build is required.
 
 ## Tech Stack
 
