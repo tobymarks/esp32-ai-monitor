@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.27.0"
+let kAppVersion = "1.27.1"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -1209,18 +1209,32 @@ class FirmwareManager {
         return false
     }
 
-    func resolveEsptool() -> (python: String, mode: String)? {
-        guard let python = findPython3() else { return nil }
+    /// Findet das Flash-Werkzeug.
+    ///
+    /// Bevorzugt wird das mitgelieferte esptool-Binary: es braucht kein Python
+    /// und passt zur laufenden Architektur. `#if arch` wird pro Slice des
+    /// Universal Binary ausgewertet, der arm64-Slice greift also zu
+    /// `esptool-arm64`, der x86_64-Slice zu `esptool-x86_64`.
+    ///
+    /// Die Python-Pfade bleiben als Rueckfallebene fuer Installationen ohne
+    /// gebundeltes Binary (z. B. selbst gebaute Debug-Builds).
+    func resolveEsptool() -> (launchPath: String, mode: String)? {
+        #if arch(arm64)
+        let bundledName = "esptool-arm64"
+        #else
+        let bundledName = "esptool-x86_64"
+        #endif
         if let resourcePath = Bundle.main.resourcePath {
-            let bundledDir = (resourcePath as NSString).appendingPathComponent("esptool-pkg")
-            let bundledScript = (bundledDir as NSString).appendingPathComponent("esptool.py")
-            if FileManager.default.fileExists(atPath: bundledScript) {
-                return (python: python, mode: "bundled:\(bundledDir)")
+            let toolDir = (resourcePath as NSString).appendingPathComponent("esptool-bin")
+            let binary = (toolDir as NSString).appendingPathComponent(bundledName)
+            if FileManager.default.isExecutableFile(atPath: binary) {
+                return (launchPath: binary, mode: "binary")
             }
         }
+        guard let python = findPython3() else { return nil }
         let platformioScript = NSString("~/.platformio/packages/tool-esptoolpy/esptool.py").expandingTildeInPath
         if FileManager.default.fileExists(atPath: platformioScript) {
-            return (python: python, mode: "platformio:\(platformioScript)")
+            return (launchPath: python, mode: "platformio:\(platformioScript)")
         }
         let checkProcess = Process()
         checkProcess.executableURL = URL(fileURLWithPath: python)
@@ -1229,7 +1243,7 @@ class FirmwareManager {
         checkProcess.standardError = Pipe()
         do {
             try checkProcess.run(); checkProcess.waitUntilExit()
-            if checkProcess.terminationStatus == 0 { return (python: python, mode: "module") }
+            if checkProcess.terminationStatus == 0 { return (launchPath: python, mode: "module") }
         } catch {}
         return nil
     }
@@ -1407,22 +1421,18 @@ class FirmwareManager {
                 "--baud", "\(kFlashBaudRate)",
                 "write_flash", "0x0", binPath
             ]
-            process.executableURL = URL(fileURLWithPath: tool.python)
-            if tool.mode == "module" {
+            process.executableURL = URL(fileURLWithPath: tool.launchPath)
+            switch tool.mode {
+            case "binary":
+                // Eigenstaendiges esptool — kein Python, keine PYTHONPATH-Akrobatik.
+                process.arguments = esptoolArgs
+            case "module":
                 process.arguments = ["-m", "esptool"] + esptoolArgs
-            } else if tool.mode.hasPrefix("bundled:") {
-                let bundledDir = String(tool.mode.dropFirst("bundled:".count))
-                let scriptPath = (bundledDir as NSString).appendingPathComponent("esptool.py")
-                let contribDir = (bundledDir as NSString).appendingPathComponent("_contrib")
-                var env = ProcessInfo.processInfo.environment
-                let existingPythonPath = env["PYTHONPATH"] ?? ""
-                env["PYTHONPATH"] = [bundledDir, contribDir, existingPythonPath]
-                    .filter { !$0.isEmpty }.joined(separator: ":")
-                process.environment = env
-                process.arguments = [scriptPath] + esptoolArgs
-            } else if tool.mode.hasPrefix("platformio:") {
-                let scriptPath = String(tool.mode.dropFirst("platformio:".count))
-                process.arguments = [scriptPath] + esptoolArgs
+            default:
+                if tool.mode.hasPrefix("platformio:") {
+                    let scriptPath = String(tool.mode.dropFirst("platformio:".count))
+                    process.arguments = [scriptPath] + esptoolArgs
+                }
             }
             process.standardOutput = outputPipe
             process.standardError = errorPipe

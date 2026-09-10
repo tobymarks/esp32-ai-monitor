@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.27.0"
+APP_VERSION="1.27.1"
 
 # Developer ID Signing (ab v1.13.0) — optional. Wenn die Identity nicht im
 # Keychain ist (z.B. CI-Runner ohne Cert-Import), fallen wir auf Ad-hoc-Sign
@@ -140,38 +140,61 @@ done
 cp Resources/MenuBarIconTemplate.png "$APP/Contents/Resources/" 2>/dev/null || true
 cp Resources/MenuBarIconTemplate@2x.png "$APP/Contents/Resources/" 2>/dev/null || true
 
-# Bundle esptool from PlatformIO (full package with dependencies)
-ESPTOOL_DIR="$HOME/.platformio/packages/tool-esptoolpy"
-PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || true)}"
-if [ -d "$ESPTOOL_DIR" ]; then
-  mkdir -p "$APP/Contents/Resources/esptool-pkg"
-  cp "$ESPTOOL_DIR/esptool.py" "$APP/Contents/Resources/esptool-pkg/"
-  cp -R "$ESPTOOL_DIR/esptool" "$APP/Contents/Resources/esptool-pkg/"
-  cp -R "$ESPTOOL_DIR/_contrib" "$APP/Contents/Resources/esptool-pkg/" 2>/dev/null || true
-  if [ -n "$PYTHON_BIN" ]; then
-    "$PYTHON_BIN" -m pip install --disable-pip-version-check --no-compile --upgrade \
-      --target "$APP/Contents/Resources/esptool-pkg" \
-      "bitstring>=3.1.6,!=4.2.0" \
-      "cryptography>=2.1.4" \
-      "ecdsa>=0.16.0" \
-      "pyserial>=3.3" \
-      "reedsolo>=1.5.3,<1.8" \
-      "PyYAML>=5.1" \
-      "intelhex" \
-      "argcomplete>=3"
-    if "$PYTHON_BIN" "$APP/Contents/Resources/esptool-pkg/esptool.py" version >/dev/null 2>&1; then
-      echo "Bundled esptool package from PlatformIO (dependencies verified)"
-    else
-      echo "ERROR: Bundled esptool verification failed"
-      exit 1
-    fi
-  else
-    echo "WARNING: python3 not found, cannot vendor esptool dependencies"
+# Bundle esptool als eigenstaendige Binaries (ab v1.27.1).
+#
+# Vorher lag hier das Python-Paket aus PlatformIO plus per pip gevendorte
+# Abhaengigkeiten. Das hatte zwei Fehler, die erst mit dem Universal Build
+# sichtbar wurden:
+#   1. pip zieht Wheels fuer die Architektur des BUILD-Rechners. Auf einem
+#      Apple-Silicon-Runner landeten arm64-only .so-Dateien im Bundle —
+#      auf Intel waere das Flashen gescheitert.
+#   2. Die Extensions sind an eine Python-Minor-Version gebunden
+#      (cpython-314). Mit einem anderen python3 im PATH brach der Import.
+#
+# Espressif liefert esptool als eigenstaendige Binaries je Architektur.
+# Damit entfaellt die Python-Abhaengigkeit fuer das Flashen komplett.
+ESPTOOL_VERSION="${ESPTOOL_VERSION:-5.4.0}"
+ESPTOOL_CACHE="${ESPTOOL_CACHE:-$HOME/.cache/aimonitor-esptool}"
+ESPTOOL_DEST="$APP/Contents/Resources/esptool-bin"
+mkdir -p "$ESPTOOL_DEST" "$ESPTOOL_CACHE"
+
+# Espressif nennt die Intel-Variante "amd64"; im Bundle heisst sie wie die
+# Swift-Architektur "x86_64", damit die App sie direkt adressieren kann.
+for PAIR in "arm64:arm64" "amd64:x86_64"; do
+  UP_ARCH="${PAIR%%:*}"
+  OUT_ARCH="${PAIR##*:}"
+  TARBALL="$ESPTOOL_CACHE/esptool-v$ESPTOOL_VERSION-macos-$UP_ARCH.tar.gz"
+  if [ ! -f "$TARBALL" ]; then
+    URL="https://github.com/espressif/esptool/releases/download/v$ESPTOOL_VERSION/esptool-v$ESPTOOL_VERSION-macos-$UP_ARCH.tar.gz"
+    echo "Downloading esptool $ESPTOOL_VERSION ($UP_ARCH)..."
+    # --retry/--continue-at: der Download ist ~60 MB und darf einen Abbruch
+    # ueberleben. Erst nach vollstaendigem Transfer umbenennen, damit eine
+    # abgebrochene .part nie als gueltiges Archiv missverstanden wird.
+    curl -fL --retry 3 --retry-delay 2 --continue-at - \
+      -o "$TARBALL.part" "$URL" \
+      || { echo "ERROR: esptool download failed ($UP_ARCH)"; rm -f "$TARBALL.part"; exit 1; }
+    tar -tzf "$TARBALL.part" >/dev/null 2>&1 \
+      || { echo "ERROR: esptool archive corrupt ($UP_ARCH)"; rm -f "$TARBALL.part"; exit 1; }
+    mv "$TARBALL.part" "$TARBALL"
   fi
-else
-  echo "WARNING: PlatformIO esptool not found at $ESPTOOL_DIR"
-  echo "  Firmware flashing will use system-installed esptool (pip3 install esptool)"
-fi
+  TMP_X=$(mktemp -d)
+  tar -xzf "$TARBALL" -C "$TMP_X"
+  # Nur das esptool-Binary uebernehmen — espefuse und esp_rfc2217_server
+  # werden nicht gebraucht und wuerden das Bundle unnoetig aufblaehen.
+  SRC_BIN=$(find "$TMP_X" -type f -name esptool -perm +111 | head -1)
+  [ -n "$SRC_BIN" ] || { echo "ERROR: esptool binary not found in $UP_ARCH tarball"; exit 1; }
+  cp "$SRC_BIN" "$ESPTOOL_DEST/esptool-$OUT_ARCH"
+  chmod +x "$ESPTOOL_DEST/esptool-$OUT_ARCH"
+  rm -rf "$TMP_X"
+
+  # Gegenprobe: Slice muss zur erwarteten Architektur passen, sonst waere
+  # genau der Fehler zurueck, den dieser Umbau beseitigt.
+  GOT=$(lipo -archs "$ESPTOOL_DEST/esptool-$OUT_ARCH" 2>/dev/null)
+  case " $GOT " in
+    *" $OUT_ARCH "*) echo "Bundled esptool $ESPTOOL_VERSION ($OUT_ARCH)" ;;
+    *) echo "ERROR: esptool-$OUT_ARCH hat Architektur '$GOT'"; exit 1 ;;
+  esac
+done
 
 # =============================================================================
 # Code-Signing
@@ -179,20 +202,29 @@ fi
 if [ "$HAS_DEVELOPER_ID" = "1" ]; then
   echo "Signing with Developer ID (Hardened Runtime + Timestamp)..."
 
-  # Inside-Out-Signing: Zuerst alle eingebetteten Mach-O-Binaries (.so/.dylib)
-  # im esptool-pkg/-Tree signieren, dann erst die .app selbst. --deep ist
-  # deprecated für Distribution — wir machen es manuell.
-  # Die Python-Extension-Binaries werden vom Python-Subprozess geladen (nicht
-  # vom App-Prozess selbst), aber für Notarization müssen ALLE Mach-O-Dateien
-  # im Bundle mit unserer Developer ID + Hardened Runtime + Timestamp signiert
-  # sein.
-  if [ -d "$APP/Contents/Resources/esptool-pkg" ]; then
-    find "$APP/Contents/Resources/esptool-pkg" -type f \( -name "*.so" -o -name "*.dylib" \) -print0 | \
-      while IFS= read -r -d '' lib; do
-        codesign --force --timestamp --options runtime \
-          --sign "$SIGN_IDENTITY" "$lib"
-      done
-    echo "Signed embedded Python extensions in esptool-pkg/"
+  # Inside-Out-Signing: Zuerst die eingebetteten Mach-O-Binaries signieren,
+  # dann erst die .app selbst. --deep ist fuer Distribution deprecated, wir
+  # machen es manuell. Die esptool-Binaries laufen als eigener Prozess, aber
+  # fuer die Notarisierung muessen ALLE Mach-O-Dateien im Bundle mit unserer
+  # Developer ID + Hardened Runtime + Timestamp signiert sein — die Signatur
+  # von Espressif wird dabei ersetzt.
+  # Die esptool-Binaries werden BEWUSST NICHT neu signiert.
+  #
+  # Es sind PyInstaller-Bundles: sie entpacken zur Laufzeit ein eigenes
+  # Python-Framework und laden es per dlopen. Signiert man nur die aeussere
+  # Huelle mit unserer Developer ID, traegt die eingebettete Library weiter
+  # Espressifs Team-ID — der Hardened Runtime bricht den Ladevorgang dann ab
+  # ("mapping process and mapped file have different Team IDs") und das
+  # Flashen scheitert. Espressif signiert die Binaries bereits selbst mit
+  # Developer ID und Hardened Runtime; eingebettete Helfer duerfen fremd
+  # signiert sein, solange die Signatur gueltig ist.
+  if [ -d "$APP/Contents/Resources/esptool-bin" ]; then
+    for TOOL in "$APP/Contents/Resources/esptool-bin/"esptool-*; do
+      [ -f "$TOOL" ] || continue
+      codesign --verify --strict "$TOOL" 2>/dev/null \
+        || { echo "ERROR: $(basename "$TOOL") hat keine gueltige Signatur"; exit 1; }
+    done
+    echo "Verified vendor signatures of bundled esptool binaries"
   fi
 
   # Main app binary + Bundle. Mit --options runtime = Hardened Runtime.
