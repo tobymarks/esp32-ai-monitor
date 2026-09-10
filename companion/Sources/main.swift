@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.27.1"
+let kAppVersion = "1.28.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -2877,9 +2877,11 @@ class UsageMonitor {
         let primaryResetsAt = entry.primary?.resetsAt ?? ""
         let secondaryResetsAt = entry.secondary?.resetsAt ?? ""
         let tertiaryResetsAt = entry.tertiary?.resetsAt ?? ""
-        let primaryWindow = entry.primary?.windowMinutes ?? 300
-        let secondaryWindow = entry.secondary?.windowMinutes ?? 10080
-        let tertiaryWindow = entry.tertiary?.windowMinutes ?? 10080
+        // Fehlende Fensterlaengen provider-spezifisch ergaenzen (Copilot
+        // liefert grundsaetzlich keine, Cursor je nach Plan).
+        let primaryWindow = entry.primary?.windowMinutes ?? provider.defaultWindowMinutes(at: 0)
+        let secondaryWindow = entry.secondary?.windowMinutes ?? provider.defaultWindowMinutes(at: 1)
+        let tertiaryWindow = entry.tertiary?.windowMinutes ?? provider.defaultWindowMinutes(at: 2)
 
         let isoFormatter = Self.frameISOFormatter
         let now = Date()
@@ -2970,7 +2972,7 @@ class UsageMonitor {
                         "title": defaultRowTitle(idx),
                         "usedPercent": displayPercent,
                         "resetsAt": w.resetsAt ?? "",
-                        "windowMinutes": w.windowMinutes ?? 0
+                        "windowMinutes": w.windowMinutes ?? provider.defaultWindowMinutes(at: idx)
                     ])
                 }
             }

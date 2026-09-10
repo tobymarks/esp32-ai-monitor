@@ -1,0 +1,38 @@
+[
+  {
+    "provider": "cursor",
+    "source": "web",
+    "usage": {
+      "primary": {
+        "usedPercent": 54.0,
+        "resetsAt": "2026-09-28T01:11:48Z",
+        "windowMinutes": 43200,
+        "resetDescription": "Resets Sep 27 at 9:00AM"
+      },
+      "secondary": {
+        "usedPercent": 61.0,
+        "resetsAt": "2026-09-28T01:11:48Z",
+        "windowMinutes": 43200,
+        "resetDescription": "Resets Sep 27 at 9:00AM"
+      },
+      "tertiary": {
+        "usedPercent": 12.0,
+        "resetsAt": "2026-09-28T01:11:48Z",
+        "windowMinutes": 43200,
+        "resetDescription": "Resets Sep 27 at 9:00AM"
+      },
+      "extraRateWindows": [
+        {
+          "id": "grok-bot",
+          "title": "Grok Bot",
+          "window": {
+            "usedPercent": 20.0,
+            "resetsAt": "2026-09-14T20:11:48Z",
+            "windowMinutes": 10080
+          }
+        }
+      ],
+      "updatedAt": "2026-09-10T20:11:48Z"
+    }
+  }
+]

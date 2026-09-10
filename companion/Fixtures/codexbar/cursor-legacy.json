@@ -1,0 +1,15 @@
+[
+  {
+    "provider": "cursor",
+    "source": "web",
+    "usage": {
+      "primary": {
+        "usedPercent": 46.0,
+        "resetsAt": "2026-09-28T01:11:48Z",
+        "windowMinutes": 43200,
+        "resetDescription": "230 / 500 requests"
+      },
+      "updatedAt": "2026-09-10T20:11:48Z"
+    }
+  }
+]

@@ -37,6 +37,18 @@ enum CodexBarProvider: String, CaseIterable {
     case claude
     case codex
     case antigravity
+    // Ab App v1.28.0: drei weitere CodexBar-Provider. Alle drei liefern ihre
+    // Kontingente in primary/secondary/tertiary (kein extraRateWindows-Modell
+    // wie Antigravity), unterscheiden sich aber in Fensterlaenge und Titeln:
+    //  - gemini:  Pro / Flash / Flash Lite, je 24-h-Fenster (windowMinutes 1440)
+    //  - copilot: Premium Requests / Chat, Monatsfenster, windowMinutes fehlt
+    //             im CLI-JSON; Chat ist bei Pro-Plaenen unbegrenzt und dann nil,
+    //             primary kann bei reinen Chat-Plaenen nil sein
+    //  - cursor:  Plan gesamt / Auto / API ueber den Abrechnungsmonat; alte
+    //             Request-Plaene liefern nur primary
+    case gemini
+    case copilot
+    case cursor
 
     static let defaultProvider: CodexBarProvider = .claude
 
@@ -62,6 +74,12 @@ enum CodexBarProvider: String, CaseIterable {
             return "ChatGPT"
         case .antigravity:
             return "Antigravity"
+        case .gemini:
+            return "Gemini"
+        case .copilot:
+            return "Copilot"
+        case .cursor:
+            return "Cursor"
         }
     }
 
@@ -73,6 +91,12 @@ enum CodexBarProvider: String, CaseIterable {
             return "ChatGPT"
         case .antigravity:
             return "Antigravity"
+        case .gemini:
+            return "Gemini CLI"
+        case .copilot:
+            return "GitHub Copilot"
+        case .cursor:
+            return "Cursor"
         }
     }
 
@@ -82,7 +106,7 @@ enum CodexBarProvider: String, CaseIterable {
     var usesModelRows: Bool {
         switch self {
         case .antigravity: return true
-        case .claude, .codex: return false
+        case .claude, .codex, .gemini, .copilot, .cursor: return false
         }
     }
 
@@ -92,20 +116,39 @@ enum CodexBarProvider: String, CaseIterable {
         switch self {
         case .antigravity: return ["Claude", "Gemini Pro", "Gemini Flash"]
         case .claude, .codex: return ["Session", "Weekly", "Tertiary"]
+        case .gemini: return ["Pro", "Flash", "Flash Lite"]
+        case .copilot: return ["Premium", "Chat", "Extra"]
+        case .cursor: return ["Plan", "Auto", "API"]
         }
     }
 
     /// Titel fuer Zeilen jenseits von `defaultRowTitles`.
     var fallbackRowTitle: String {
         switch self {
-        case .antigravity: return "Model"
-        case .claude, .codex: return "Window"
+        case .antigravity, .gemini: return "Model"
+        case .copilot: return "Quota"
+        case .claude, .codex, .cursor: return "Window"
         }
     }
 
     /// Default-Titel fuer einen konkreten Zeilenindex (mit Fallback).
     func defaultRowTitle(at index: Int) -> String {
         index >= 0 && index < defaultRowTitles.count ? defaultRowTitles[index] : fallbackRowTitle
+    }
+
+    /// Fensterlaenge in Minuten, wenn das CLI keine liefert. Die Firmware
+    /// leitet daraus den Fortschritt bis zum Reset ab; ein falscher Default
+    /// (frueher pauschal 5 h / 7 Tage) verzerrt die Anzeige, bei Copilot
+    /// fehlt `windowMinutes` im CLI-JSON grundsaetzlich.
+    func defaultWindowMinutes(at index: Int) -> Int {
+        switch self {
+        case .claude, .codex, .antigravity:
+            return index == 0 ? 300 : 10080
+        case .gemini:
+            return 1440
+        case .copilot, .cursor:
+            return 43200
+        }
     }
 }
 
@@ -414,7 +457,22 @@ final class CodexBarSource {
         case failure(CodexBarStatus)
     }
 
+    /// Entwicklermodus: Ist `AIMONITOR_CODEXBAR_FIXTURE_DIR` gesetzt, wird statt
+    /// des CLI die Datei `<dir>/<provider>.json` gelesen (gleiches Format wie
+    /// `codexbar usage --provider <p> --json`). So laesst sich der komplette
+    /// Weg bis aufs Display fuer Provider pruefen, fuer die kein Konto vorliegt.
+    static let fixtureDirEnv = "AIMONITOR_CODEXBAR_FIXTURE_DIR"
+
     private static func runCLI(path: String, provider: String) -> CLIOutcome {
+        if let dir = ProcessInfo.processInfo.environment[fixtureDirEnv], !dir.isEmpty {
+            let file = (dir as NSString).appendingPathComponent("\(provider).json")
+            guard let data = FileManager.default.contents(atPath: file) else {
+                return .failure(.cliFailed("Fixture fehlt: \(file)"))
+            }
+            NSLog("[CodexBar] Fixture statt CLI: %@", file)
+            return decodeCLIOutput(data, errData: Data(), exitStatus: 0)
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = ["usage", "--provider", provider, "--json"]
@@ -438,10 +496,14 @@ final class CodexBarSource {
         process.waitUntilExit()
         watchdog.cancel()
 
+        return decodeCLIOutput(data, errData: errData, exitStatus: process.terminationStatus)
+    }
+
+    private static func decodeCLIOutput(_ data: Data, errData: Data, exitStatus: Int32) -> CLIOutcome {
         guard !data.isEmpty else {
             let msg = String(data: errData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return .failure(.cliFailed(msg.isEmpty ? "Keine Ausgabe (Exit \(process.terminationStatus))" : String(msg.prefix(160))))
+            return .failure(.cliFailed(msg.isEmpty ? "Keine Ausgabe (Exit \(exitStatus))" : String(msg.prefix(160))))
         }
 
         do {

@@ -103,8 +103,8 @@ static lv_obj_t *standby_overlay    = nullptr;
 static lv_obj_t *standby_clock      = nullptr;
 static lv_obj_t *standby_wifi       = nullptr;
 
-// Default per-row titles for Antigravity, sourced from the central
-// provider table ("Claude" / "Gemini Pro" / "Gemini Flash" / "Model").
+// Placeholder row titles while the compact rows are created (before any
+// frame arrived). At render time the titles come from the active provider.
 static const char* ag_default_title(uint8_t idx) {
     return default_row_title_for_provider(PROVIDER_ANTIGRAVITY, idx);
 }
@@ -737,9 +737,12 @@ void ui_dashboard_update(const MonitorState &state) {
         }
     }
 
-    // ChatGPT's lone limit uses a centered ring; preserve it for notices too.
-    const bool uses_single_arc = state.provider == PROVIDER_OPENAI
-                              && (state.usage.row_count == 1 || !state.usage.valid);
+    // A lone limit uses the centered ring — originally ChatGPT's weekly
+    // window, since FW 2.17.0 any provider with exactly one row (e.g. Copilot
+    // premium requests, Cursor legacy request plans). ChatGPT keeps the ring
+    // for notices without valid usage, so its layout never flips.
+    const bool uses_single_arc = state.usage.row_count == 1
+                              || (state.provider == PROVIDER_OPENAI && !state.usage.valid);
     const bool uses_compact_rows = !uses_single_arc && state.usage.row_count > 0
                                 && (state.provider == PROVIDER_ANTIGRAVITY
                                     || state.usage.row_count != 2);
@@ -776,7 +779,7 @@ void ui_dashboard_update(const MonitorState &state) {
 
                 const char *title = state.usage.row_title[i][0] != '\0'
                     ? state.usage.row_title[i]
-                    : ag_default_title(i);
+                    : default_row_title_for_provider(state.provider, i);
                 lv_label_set_text(ag_title[i], title);
 
                 format_percentage(state.usage.row_utilization[i], buf, sizeof(buf));
@@ -863,7 +866,7 @@ void ui_dashboard_update(const MonitorState &state) {
                 set_obj_hidden(ag_reset[i], !first_row);
                 if (!first_row) continue;
 
-                lv_label_set_text(ag_title[i], ag_default_title(i));
+                lv_label_set_text(ag_title[i], default_row_title_for_provider(state.provider, i));
                 lv_label_set_text(ag_pct[i], pct_placeholder);
                 lv_label_set_text(ag_reset[i], state.usage.error);
                 if (ag_bar[i]) lv_bar_set_value(ag_bar[i], 0, LV_ANIM_OFF);

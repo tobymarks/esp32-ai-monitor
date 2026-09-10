@@ -1,0 +1,13 @@
+[
+  {
+    "provider": "copilot",
+    "source": "auto",
+    "usage": {
+      "secondary": {
+        "usedPercent": 40.0,
+        "resetsAt": "2026-09-28T01:11:48Z"
+      },
+      "updatedAt": "2026-09-10T20:11:48Z"
+    }
+  }
+]

@@ -8,7 +8,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.16.0"
+#define APP_VERSION "2.17.0"
 #define APP_NAME    "AI Usage Monitor"
 
 // Display-Controller-ID (aus Build-Flags abgeleitet, Compile-Zeit).
@@ -135,6 +135,12 @@ extern uint16_t SCREEN_HEIGHT;
 #define PROVIDER_CLAUDE   0
 #define PROVIDER_OPENAI   1
 #define PROVIDER_ANTIGRAVITY 2
+// Ab FW v2.17.0 (App v1.28.0): weitere CodexBar-Provider. Die Zeilen kommen
+// wie bei Claude/ChatGPT aus primary/secondary/tertiary, nur mit anderen
+// Titeln und Fensterlaengen (siehe providers.cpp).
+#define PROVIDER_GEMINI   3
+#define PROVIDER_COPILOT  4
+#define PROVIDER_CURSOR   5
 
 // ============================================================
 // Orientation options
@@ -194,6 +200,12 @@ struct AppConfig {
 #define COLOR_ANTHROPIC    0xCC7C5E
 #define COLOR_OPENAI       0x49A3B0
 #define COLOR_ANTIGRAVITY  0x60BA7E
+// Hausfarben der neuen Provider. Gemini: Blau aus dem Markenverlauf. Copilot
+// und Cursor fuehren Schwarz/Weiss als Marke — das taugt nicht als Balken auf
+// beiden Themes, deshalb je ein neutraler, gut unterscheidbarer Ersatzton.
+#define COLOR_GEMINI       0x6E8DF5
+#define COLOR_COPILOT      0x9AA5B5
+#define COLOR_CURSOR       0xD98CB3
 #define COLOR_BAR_BG       0x3A3937
 #define COLOR_STATUS_OK    0x27AE60
 #define COLOR_STATUS_ERR   0xE74C3C

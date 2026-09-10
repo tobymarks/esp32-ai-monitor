@@ -1,6 +1,6 @@
 # AI Monitor
 
-A macOS background app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, ChatGPT, or Antigravity usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
+A macOS background app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
 
 No WiFi on the ESP32, no display-side cloud credentials, no browser tab to keep open.
 
@@ -16,10 +16,11 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 
 ## Features
 
-- Claude, ChatGPT, and Antigravity provider views
+- Provider views for Claude, ChatGPT, Antigravity, Gemini CLI, GitHub Copilot, and Cursor
 - Session, weekly, and provider-specific usage rows where available (including Claude Fable)
 - Centered circular ChatGPT display when only one limit is available, in portrait and landscape
-- Antigravity model rows for Claude, Gemini Pro, and Gemini Flash
+- Antigravity model rows for Claude, Gemini Pro, and Gemini Flash; Gemini CLI rows for Pro, Flash, and Flash Lite; Cursor rows for plan, auto, and API usage
+- Copilot premium-request quota as a single centered ring
 - Used or remaining percentage display mode
 - Live reset countdowns and local display clock
 - Optional cost/extra-usage support when supplied by the provider data
@@ -41,14 +42,14 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 
 - macOS 14+ on Apple Silicon or Intel (the app ships as a universal binary)
 - [CodexBar](https://codexbar.app/) installed with its local CLI
-- Claude, ChatGPT, or Antigravity access in CodexBar
+- At least one of Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor set up in CodexBar
 - ESP32-2432S028 / ESP32-2432S028R CYD board
 - USB data cable, not a charge-only cable
 - Optional: PlatformIO if you want to build or flash the firmware manually
 
 ## CodexBar Dependency
 
-AI Monitor does not talk to Claude, ChatGPT, or Antigravity directly. CodexBar is the required local data source: its CLI obtains the provider limits that AI Monitor sends to the desk display.
+AI Monitor does not talk to any AI service directly. CodexBar is the required local data source: its CLI obtains the provider limits that AI Monitor sends to the desk display.
 
 Install CodexBar first:
 
@@ -57,7 +58,7 @@ Install CodexBar first:
 - Latest download: [CodexBar GitHub Releases](https://github.com/steipete/CodexBar/releases/latest)
 - Homebrew: `brew install --cask steipete/tap/codexbar`
 
-After CodexBar is running, enable the providers you want there. AI Monitor will then offer Claude, ChatGPT, and Antigravity as display sources.
+After CodexBar is running, enable the providers you want there. AI Monitor will then offer Claude, ChatGPT, Antigravity, Gemini, Copilot, and Cursor as display sources.
 
 ## Hardware
 

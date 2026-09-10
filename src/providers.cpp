@@ -36,6 +36,35 @@ static const ProviderInfo PROVIDERS[] = {
         /* overflow    */ "Model",
         /* bar_color   */ COLOR_ANTIGRAVITY,
     },
+    {
+        // Gemini CLI: three 24-hour model quotas (Pro / Flash / Flash Lite).
+        /* id          */ PROVIDER_GEMINI,
+        /* wire_keys   */ { "gemini", nullptr },
+        /* label       */ "GEMINI",
+        /* row_titles  */ { "Pro", "Flash", "Flash Lite" },
+        /* overflow    */ "Model",
+        /* bar_color   */ COLOR_GEMINI,
+    },
+    {
+        // GitHub Copilot: monthly premium-request quota, optional chat quota.
+        // Usually a single row, rendered as the centered ring.
+        /* id          */ PROVIDER_COPILOT,
+        /* wire_keys   */ { "copilot", nullptr },
+        /* label       */ "COPILOT",
+        /* row_titles  */ { "Premium", "Chat", "Extra" },
+        /* overflow    */ "Quota",
+        /* bar_color   */ COLOR_COPILOT,
+    },
+    {
+        // Cursor: plan total / auto (Cursor models) / API (named models) over
+        // the billing month. Legacy request plans deliver only the first row.
+        /* id          */ PROVIDER_CURSOR,
+        /* wire_keys   */ { "cursor", nullptr },
+        /* label       */ "CURSOR",
+        /* row_titles  */ { "Plan", "Auto", "API" },
+        /* overflow    */ "Window",
+        /* bar_color   */ COLOR_CURSOR,
+    },
 };
 
 static const size_t PROVIDER_COUNT = sizeof(PROVIDERS) / sizeof(PROVIDERS[0]);

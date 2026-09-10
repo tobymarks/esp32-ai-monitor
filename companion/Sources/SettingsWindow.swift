@@ -943,7 +943,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         alert.informativeText = """
         macOS-Hintergrund-App für das ESP32-Usage-Display.
 
-        Liest Claude-, ChatGPT- und Antigravity-Nutzung über das lokale CodexBar-CLI \
+        Liest die Nutzung von Claude, ChatGPT, Antigravity, Gemini, Copilot und Cursor \
+        über das lokale CodexBar-CLI \
         und sendet die verfügbaren Nutzungslimits per USB-Serial an das \
         ESP32-Display.
 
