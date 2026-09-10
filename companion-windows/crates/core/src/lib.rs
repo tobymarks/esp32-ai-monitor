@@ -13,12 +13,20 @@
 //! - [`runner`]: CLI finden, aufrufen, Fixture-Modus
 //! - [`rows`]: Anzeigezeilen nach den Regeln der Mac-App aufbauen
 //! - [`source`]: zustandsbehaftete Quelle mit Zwischenspeicher je Provider
+//! - [`semver`]: Versionsvergleich wie in der Mac-App
+//! - [`protocol`]: Drahtformat zum Gerät: Nachrichten, Kommandos, Framing, Textregeln
+//! - [`envelope`]: Usage-, Notice- und Diagnose-Frames
+//! - [`device`]: Geräteprofile je MAC und ihre Registry
 
 pub mod codexbar;
+pub mod device;
+pub mod envelope;
 pub mod model;
+pub mod protocol;
 pub mod provider;
 pub mod rows;
 pub mod runner;
+pub mod semver;
 pub mod source;
 pub mod status;
 
@@ -27,6 +35,8 @@ pub use provider::Provider;
 pub use rows::{build_rows, PercentMode, Row};
 pub use source::{FetchOutcome, Snapshot, Source};
 pub use status::Status;
+pub use device::{DeviceProfile, DeviceRegistry};
+pub use protocol::{DeviceInfo, DeviceMessage};
 
 use std::time::Duration;
 

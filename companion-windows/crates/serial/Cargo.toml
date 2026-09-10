@@ -1,0 +1,18 @@
+[package]
+name = "aimonitor-serial"
+description = "USB-Serial-Verbindung zur CYD: Port-Suche, Handshake, Frames, Kommandos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aimonitor-core = { path = "../core" }
+serialport.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+[[example]]
+name = "probe"
