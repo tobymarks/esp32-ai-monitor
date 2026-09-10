@@ -15,17 +15,17 @@ extension SettingsWindowController {
 
         setupTestButton = NSButton(title: "Testbild senden", target: self, action: #selector(sendTestFrame))
         setupTestButton.bezelStyle = .rounded
-        setupTestButton.toolTip = "Sendet einen Beispiel-Screen an das Display, um Verbindung und Darstellung zu prüfen."
+        setupTestButton.toolTip = L("diag.test.tooltip")
 
         setupCopyButton = NSButton(title: "Diagnose kopieren", target: self, action: #selector(copyDiagnostics))
         setupCopyButton.bezelStyle = .rounded
-        setupCopyButton.toolTip = "Kopiert einen technischen Bericht für Fehlersuche und Support."
+        setupCopyButton.toolTip = L("diag.copy.tooltip")
 
         let actions = NSStackView(views: [setupTestButton, setupCopyButton])
         actions.orientation = .horizontal
         actions.spacing = 8
 
-        let helper = NSTextField(wrappingLabelWithString: "Technische Funktionen für Fehlersuche, Support und Setup-Kontrolle.")
+        let helper = NSTextField(wrappingLabelWithString: L("diag.intro"))
         helper.font = NSFont.appFont(.callout)
         helper.textColor = .secondaryLabelColor
 
@@ -39,10 +39,10 @@ extension SettingsWindowController {
     @objc func sendTestFrame() {
         guard let monitor = monitor else { return }
         if monitor.sendDiagnosticTestFrame() {
-            setupDetailLabel.stringValue = "Testbild gesendet. Echte Daten werden automatisch wiederhergestellt."
+            setupDetailLabel.stringValue = L("diag.test.ok")
             setupDetailLabel.textColor = .secondaryLabelColor
         } else {
-            setupDetailLabel.stringValue = "Testbild konnte nicht gesendet werden. ESP32-Verbindung prüfen."
+            setupDetailLabel.stringValue = L("diag.test.failed")
             setupDetailLabel.textColor = .systemRed
             NSSound.beep()
         }
@@ -53,7 +53,7 @@ extension SettingsWindowController {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(report, forType: .string)
-        setupDetailLabel.stringValue = "Diagnose wurde in die Zwischenablage kopiert."
+        setupDetailLabel.stringValue = L("diag.copy.ok")
         setupDetailLabel.textColor = .secondaryLabelColor
     }
 

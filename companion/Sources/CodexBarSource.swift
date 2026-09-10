@@ -125,11 +125,11 @@ enum CodexBarStatus: Equatable {
         switch self {
         case .ok: return "OK"
         case .notYet: return "…"
-        case .cliMissing: return "CLI fehlt"
-        case .providerUnavailable: return "Provider offline"
-        case .cliFailed: return "Abruf fehlgeschlagen"
+        case .cliMissing: return L("codex.short.climissing")
+        case .providerUnavailable: return L("codex.short.offline")
+        case .cliFailed: return L("codex.short.failed")
         case .stale(let ageSec): return "stale (\(ageSec / 60)m alt)"
-        case .parseError: return "parse error"
+        case .parseError: return L("codex.short.parse")
         }
     }
 
@@ -148,17 +148,17 @@ enum CodexBarStatus: Equatable {
         switch self {
         case .ok: return nil
         case .notYet: return nil
-        case .cliMissing: return "CodexBar-CLI fehlt"
-        case .providerUnavailable: return "Bitte App starten"
-        case .cliFailed: return "Abruf fehlgeschlagen"
-        case .stale: return "Daten veraltet"
-        case .parseError: return "Datenfehler"
+        case .cliMissing: return LD("dsp.notice.climissing")
+        case .providerUnavailable: return LD("dsp.notice.startapp")
+        case .cliFailed: return LD("dsp.notice.failed")
+        case .stale: return LD("dsp.notice.stale")
+        case .parseError: return LD("dsp.notice.parse")
         }
     }
 
     /// Hinweis waehrend eines laufenden Abrufs. Getrennt von `displayNotice`,
     /// weil hier nichts falsch ist — es dauert nur einen Moment.
-    static let loadingNotice = "Lade Provider ..."
+    static var loadingNotice: String { LD("dsp.notice.loading") }
 }
 
 // MARK: - Datenmodelle
@@ -463,7 +463,7 @@ final class CodexBarSource {
 
         case .success(let result):
             if let err = result.error {
-                let message = err.message ?? "Unbekannter Fehler"
+                let message = err.message ?? L("err.unknown")
                 NSLog("[CodexBar] Provider '%@' unavailable: %@", provider, message)
                 apply(status: .providerUnavailable(message), entry: nil, source: result.source)
                 return
@@ -493,7 +493,7 @@ final class CodexBarSource {
             // nichts Verwertbares — genauso behandeln wie „nicht verfuegbar",
             // damit das Display nicht stumm alte Werte weiterzeigt.
             if usage.primary == nil && usage.secondary == nil && usage.tertiary == nil && extras.isEmpty {
-                apply(status: .providerUnavailable("Keine Kontingentdaten"), entry: nil, source: result.source)
+                apply(status: .providerUnavailable(L("codex.noquota")), entry: nil, source: result.source)
                 return
             }
 

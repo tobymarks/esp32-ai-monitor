@@ -42,6 +42,7 @@ swiftc \
   Sources/StatusIndicator.swift \
   Sources/NotificationBanner.swift \
   Sources/Typography.swift \
+  Sources/Localization.swift \
   Sources/SettingsWindow.swift \
   Sources/SettingsWindow+Overview.swift \
   Sources/SettingsWindow+Display.swift \
@@ -96,6 +97,14 @@ done < <(/usr/libexec/PlistBuddy -c "Print" "$ICON_PARTIAL_PLIST" \
 echo "App-Icon aus AppIcon.icon kompiliert (Assets.car + AppIcon.icns)"
 # Menubar-Icons werden ab v1.8.0 nicht mehr verwendet (LSUIElement unsichtbar),
 # bleiben aber im Repo für den Fall, dass wir die Entscheidung revidieren.
+# Lokalisierung: de.lproj / en.lproj ins Bundle (App folgt der Systemsprache).
+for lang in de en; do
+  if [ -d "Resources/$lang.lproj" ]; then
+    mkdir -p "$APP/Contents/Resources/$lang.lproj"
+    cp "Resources/$lang.lproj/Localizable.strings" "$APP/Contents/Resources/$lang.lproj/"
+  fi
+done
+
 cp Resources/MenuBarIconTemplate.png "$APP/Contents/Resources/" 2>/dev/null || true
 cp Resources/MenuBarIconTemplate@2x.png "$APP/Contents/Resources/" 2>/dev/null || true
 

@@ -20,7 +20,7 @@ extension SettingsWindowController {
 
         setupStatusDot = StatusIndicator(state: .inactive)
 
-        setupStatusLabel = NSTextField(labelWithString: "Setup wird geprüft …")
+        setupStatusLabel = NSTextField(labelWithString: L("ov.checking"))
         setupStatusLabel.font = NSFont.appFont(.title3, weight: .semibold)
 
         let setupStatusRow = NSStackView(views: [setupStatusDot, setupStatusLabel])
@@ -45,15 +45,15 @@ extension SettingsWindowController {
         healthBox.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(healthBox)
 
-        appSettingsToggle = NSButton(checkboxWithTitle: "Menüleisten-Schnellmenü aktivieren",
+        appSettingsToggle = NSButton(checkboxWithTitle: L("ov.menubar.title"),
                                      target: self,
                                      action: #selector(menuBarQuickMenuToggled))
         appSettingsToggle.font = NSFont.appFont(.body)
-        appSettingsToggle.toolTip = "Zeigt Provider-Auswahl und Status direkt in der macOS-Menüleiste."
+        appSettingsToggle.toolTip = L("ov.menubar.detail")
         appSettingsToggle.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(appSettingsToggle)
 
-        let helper = NSTextField(labelWithString: "Zeigt ein NSStatusItem mit Provider-Auswahl und Einstellungen.")
+        let helper = NSTextField(labelWithString: L("ov.menubar.tooltip"))
         helper.font = NSFont.appFont(.subheadline)
         helper.textColor = .secondaryLabelColor
         helper.lineBreakMode = .byWordWrapping
@@ -106,9 +106,9 @@ extension SettingsWindowController {
     }
 
     private func buildNextStepBox() -> NSView {
-        let heading = makeSectionHeading("Nächster Schritt")
+        let heading = makeSectionHeading(L("ov.next.title"))
 
-        nextStepLabel = NSTextField(labelWithString: "Setup wird geprüft …")
+        nextStepLabel = NSTextField(labelWithString: L("ov.checking"))
         nextStepLabel.font = NSFont.appFont(.title3, weight: .semibold)
         nextStepLabel.lineBreakMode = .byWordWrapping
         nextStepLabel.maximumNumberOfLines = 2
@@ -120,11 +120,11 @@ extension SettingsWindowController {
 
         nextStepPrimaryButton = NSButton(title: "Öffnen", target: self, action: #selector(performNextStepPrimary))
         nextStepPrimaryButton.bezelStyle = .rounded
-        nextStepPrimaryButton.toolTip = "Öffnet den wichtigsten nächsten Schritt für den aktuellen Zustand."
+        nextStepPrimaryButton.toolTip = L("ov.next.primary.tooltip")
 
         nextStepSecondaryButton = NSButton(title: "Diagnose", target: self, action: #selector(performNextStepSecondary))
         nextStepSecondaryButton.bezelStyle = .rounded
-        nextStepSecondaryButton.toolTip = "Öffnet die Diagnose oder einen passenden zweiten Schritt."
+        nextStepSecondaryButton.toolTip = L("ov.next.secondary.tooltip")
 
         let buttons = NSStackView(views: [nextStepPrimaryButton, nextStepSecondaryButton])
         buttons.orientation = .horizontal
@@ -143,23 +143,23 @@ extension SettingsWindowController {
         let appRow = buildHealthRow(title: "App", dot: &healthAppDot,
                                     label: &healthAppLabel,
                                     detail: &healthAppDetailLabel,
-                                    tooltip: "Zeigt, ob die macOS-App aktuell ist oder ein Update bekannt ist.")
+                                    tooltip: L("ov.health.app.tooltip"))
         let codexRow = buildHealthRow(title: "CodexBar", dot: &healthCodexDot,
                                       label: &healthCodexLabel,
                                       detail: &healthCodexDetailLabel,
-                                      tooltip: "Prüft, ob aktuelle Provider-Daten aus CodexBar gelesen werden.")
+                                      tooltip: L("ov.health.codex.tooltip"))
         let usbRow = buildHealthRow(title: "USB", dot: &healthUSBDot,
                                     label: &healthUSBLabel,
                                     detail: &healthUSBDetailLabel,
-                                    tooltip: "Zeigt, ob das ESP32-Display per USB erreichbar ist.")
+                                    tooltip: L("ov.health.usb.tooltip"))
         let wifiRow = buildHealthRow(title: "Display-WiFi", dot: &healthWiFiDot,
                                      label: &healthWiFiLabel,
                                      detail: &healthWiFiDetailLabel,
-                                     tooltip: "Zeigt, ob das Display im WLAN ist und die Uhr synchronisiert wurde.")
+                                     tooltip: L("ov.health.wifi.tooltip"))
         let firmwareRow = buildHealthRow(title: "Firmware", dot: &healthFirmwareDot,
                                          label: &healthFirmwareLabel,
                                          detail: &healthFirmwareDetailLabel,
-                                         tooltip: "Zeigt, ob die Display-Firmware bekannt, passend und aktuell ist.")
+                                         tooltip: L("ov.health.fw.tooltip"))
 
         let stack = NSStackView(views: [heading, appRow, codexRow, usbRow, wifiRow, firmwareRow])
         stack.orientation = .vertical
@@ -212,7 +212,7 @@ extension SettingsWindowController {
         statusRow.orientation = .horizontal
         statusRow.spacing = 6
 
-        codexBarValuesLabel = NSTextField(labelWithString: "Session: — · Weekly: —")
+        codexBarValuesLabel = NSTextField(labelWithString: L("ov.limits.empty"))
         codexBarValuesLabel.font = NSFont.appMonospacedDigit(.body)
 
         codexBarResetSessionLabel = NSTextField(labelWithString: "")
@@ -223,10 +223,10 @@ extension SettingsWindowController {
         codexBarResetWeeklyLabel.font = NSFont.appFont(.subheadline)
         codexBarResetWeeklyLabel.textColor = .secondaryLabelColor
 
-        codexBarReloadButton = NSButton(title: "Jetzt neu laden", target: self, action: #selector(reloadCodexBar))
+        codexBarReloadButton = NSButton(title: L("codex.reload"), target: self, action: #selector(reloadCodexBar))
         codexBarReloadButton.bezelStyle = .rounded
         codexBarReloadButton.controlSize = .small
-        codexBarReloadButton.toolTip = "Liest die aktuellen CodexBar-Daten erneut ein."
+        codexBarReloadButton.toolTip = L("ov.reload.tooltip")
 
         let spacerBeforeButton = NSView()
         spacerBeforeButton.translatesAutoresizingMaskIntoConstraints = false
@@ -253,10 +253,10 @@ extension SettingsWindowController {
         let app = AppUpdateManager.shared
         if app.latestRelease == nil {
             setHealth(dot: healthAppDot, label: healthAppLabel, detail: healthAppDetailLabel,
-                      status: "Nicht geprüft", detailText: "Update-Check starten", state: .inactive)
+                      status: L("ov.state.unchecked"), detailText: L("ov.action.checkupdates"), state: .inactive)
         } else if app.hasUpdate {
             setHealth(dot: healthAppDot, label: healthAppLabel, detail: healthAppDetailLabel,
-                      status: "Update bereit", detailText: app.latestVersionDisplay, state: .info)
+                      status: L("ov.state.updateready"), detailText: app.latestVersionDisplay, state: .info)
         } else {
             setHealth(dot: healthAppDot, label: healthAppLabel, detail: healthAppDetailLabel,
                       status: "Aktuell", detailText: "v\(kAppVersion)", state: .ok)
@@ -284,10 +284,10 @@ extension SettingsWindowController {
                       status: "Port offen", detailText: "Firmware installieren", state: .attention)
         case .probing:
             setHealth(dot: healthUSBDot, label: healthUSBLabel, detail: healthUSBDetailLabel,
-                      status: "Handshake", detailText: "Gerät wird geprüft", state: .pending)
+                      status: "Handshake", detailText: L("ov.state.checkingdevice"), state: .pending)
         case .disconnected:
             setHealth(dot: healthUSBDot, label: healthUSBLabel, detail: healthUSBDetailLabel,
-                      status: "Fehlt", detailText: "Kabel oder Port prüfen", state: .inactive)
+                      status: "Fehlt", detailText: L("ov.state.checkcable"), state: .inactive)
         }
 
         updateWiFiHealth(serialState: serial.state)
@@ -304,7 +304,7 @@ extension SettingsWindowController {
 
         guard let json = lastWiFiStatusJSON else {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
-                      status: "Unbekannt", detailText: "Status wird geladen", state: .inactive)
+                      status: "Unbekannt", detailText: L("ov.state.loading"), state: .inactive)
             return
         }
 
@@ -319,13 +319,13 @@ extension SettingsWindowController {
                       status: "OK", detailText: "\(ssid), \(rssi) dBm", state: .ok)
         } else if connected {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
-                      status: "Wartet", detailText: "\(ssid), Zeit noch nicht synchron", state: .pending)
+                      status: "Wartet", detailText: L("ov.wifi.nosync", ssid), state: .pending)
         } else if configured {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
                       status: "Getrennt", detailText: "\(ssid) gespeichert", state: .attention)
         } else {
             setHealth(dot: healthWiFiDot, label: healthWiFiLabel, detail: healthWiFiDetailLabel,
-                      status: "Optional", detailText: "Kein WLAN gespeichert", state: .inactive)
+                      status: "Optional", detailText: L("ov.state.nowifi"), state: .inactive)
         }
     }
 
@@ -336,22 +336,22 @@ extension SettingsWindowController {
                       status: "Fehlt", detailText: "AI-Monitor-Firmware flashen", state: .error)
         } else if fw.isFlashing {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Flash läuft", detailText: fw.flashProgress, state: .info)
+                      status: L("ov.state.flashing"), detailText: fw.flashProgress, state: .info)
         } else if fw.latestRelease == nil {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Nicht geprüft", detailText: "Release-Daten laden", state: .inactive)
+                      status: L("ov.state.unchecked"), detailText: "Release-Daten laden", state: .inactive)
         } else if !fw.hasExpectedReleaseAssets {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Prüfen", detailText: "Release unvollständig", state: .attention)
+                      status: "Prüfen", detailText: L("ov.state.incomplete"), state: .attention)
         } else if fw.hasUpdate {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Update bereit", detailText: fw.latestVersionDisplay, state: .info)
+                      status: L("ov.state.updateready"), detailText: fw.latestVersionDisplay, state: .info)
         } else if serialState == .connected {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
                       status: "Aktuell", detailText: fw.installedVersionDisplay, state: .ok)
         } else {
             setHealth(dot: healthFirmwareDot, label: healthFirmwareLabel, detail: healthFirmwareDetailLabel,
-                      status: "Wartet", detailText: "ESP32 verbinden", state: .inactive)
+                      status: "Wartet", detailText: L("ov.esp32.connect"), state: .inactive)
         }
     }
 
@@ -361,60 +361,60 @@ extension SettingsWindowController {
 
         if serialState == .foreignFirmware {
             setNextStep(title: "Firmware installieren",
-                        detail: "Der USB-Port ist erreichbar, aber auf dem Gerät läuft noch keine AI-Monitor-Firmware.",
-                        primaryTitle: "Firmware flashen",
+                        detail: L("ov.fw.missing.detail"),
+                        primaryTitle: L("flash.action.plain"),
                         primaryAction: .flashFirmware,
-                        secondaryTitle: "Diagnose öffnen",
+                        secondaryTitle: L("ov.action.diag"),
                         secondaryAction: .openDiagnostics)
         } else if serialState == .disconnected {
             setNextStep(title: "Display per USB verbinden",
-                        detail: "Schließe das Display an und scanne bei Bedarf die Ports neu.",
-                        primaryTitle: "Verbindung öffnen",
+                        detail: L("ov.usb.missing.detail"),
+                        primaryTitle: L("ov.action.conn"),
                         primaryAction: .openConnection,
-                        secondaryTitle: "Diagnose öffnen",
+                        secondaryTitle: L("ov.action.diag"),
                         secondaryAction: .openDiagnostics)
         } else if serialState == .probing {
-            setNextStep(title: "Verbindung wird geprüft",
-                        detail: "Die App wartet auf die Antwort des ESP32. Wenn das länger dauert, öffne Verbindung und scanne die Ports neu.",
-                        primaryTitle: "Verbindung öffnen",
+            setNextStep(title: L("ov.handshake.title"),
+                        detail: L("ov.handshake.detail"),
+                        primaryTitle: L("ov.action.conn"),
                         primaryAction: .openConnection,
-                        secondaryTitle: "Diagnose öffnen",
+                        secondaryTitle: L("ov.action.diag"),
                         secondaryAction: .openDiagnostics)
         } else if !codexOK {
-            setNextStep(title: "CodexBar-Daten prüfen",
+            setNextStep(title: L("ov.codex.check"),
                         detail: setupDetailForCodexStatus(monitor?.codexBar.status ?? .notYet,
                                                           provider: monitor?.codexBar.provider ?? Settings.shared.selectedProvider),
                         primaryTitle: "CodexBar neu laden",
                         primaryAction: .reloadCodex,
-                        secondaryTitle: "Diagnose öffnen",
+                        secondaryTitle: L("ov.action.diag"),
                         secondaryAction: .openDiagnostics)
         } else if fw.hasUpdate {
             setNextStep(title: "Firmware aktualisieren",
-                        detail: "Für das Display ist \(fw.latestVersionDisplay) verfügbar.",
-                        primaryTitle: "Firmware flashen",
+                        detail: L("ov.fw.update.detail", fw.latestVersionDisplay),
+                        primaryTitle: L("flash.action.plain"),
                         primaryAction: .flashFirmware,
-                        secondaryTitle: "Updates öffnen",
+                        secondaryTitle: L("ov.action.updates"),
                         secondaryAction: .openUpdates)
         } else if AppUpdateManager.shared.hasUpdate {
-            setNextStep(title: "App-Update installieren",
-                        detail: "Für die macOS-App ist \(AppUpdateManager.shared.latestVersionDisplay) verfügbar.",
-                        primaryTitle: "Update laden",
+            setNextStep(title: L("ov.appupdate.title"),
+                        detail: L("ov.app.update.detail", AppUpdateManager.shared.latestVersionDisplay),
+                        primaryTitle: L("ov.action.getupdate"),
                         primaryAction: .checkUpdates,
-                        secondaryTitle: "Updates öffnen",
+                        secondaryTitle: L("ov.action.updates"),
                         secondaryAction: .openUpdates)
         } else if lastWiFiStatusJSON == nil {
-            setNextStep(title: "Display-WiFi prüfen",
-                        detail: "USB ist bereit. Der WiFi-Status wird noch geladen oder wurde noch nicht abgefragt.",
+            setNextStep(title: L("ov.wifi.check"),
+                        detail: L("ov.wifi.check.detail"),
                         primaryTitle: "WiFi scannen",
                         primaryAction: .scanWiFi,
-                        secondaryTitle: "Verbindung öffnen",
+                        secondaryTitle: L("ov.action.conn"),
                         secondaryAction: .openConnection)
         } else {
-            setNextStep(title: "Alles bereit",
-                        detail: "App, CodexBar und ESP32 sind einsatzbereit. Änderungen findest du in den Bereichen oben.",
-                        primaryTitle: "Display öffnen",
+            setNextStep(title: L("ov.allset.title"),
+                        detail: L("ov.allset.detail"),
+                        primaryTitle: L("ov.action.display"),
                         primaryAction: .openDisplay,
-                        secondaryTitle: "Updates prüfen",
+                        secondaryTitle: L("ov.action.checkupd"),
                         secondaryAction: .checkUpdates)
         }
     }
@@ -462,7 +462,7 @@ extension SettingsWindowController {
 
         if ready {
             setupStatusDot.state = .ok
-            setupStatusLabel.stringValue = "Alles bereit"
+            setupStatusLabel.stringValue = L("ov.allset.title")
             setupStatusLabel.textColor = .labelColor
             let provider = CodexBarProvider.normalized(monitor.codexBar.provider).displayLabel
             let device = DeviceRegistry.shared.currentProfile()?.friendlyName ?? "ESP32"
@@ -474,33 +474,33 @@ extension SettingsWindowController {
         switch serialState {
         case .connected:
             setupStatusDot.state = .attention
-            setupStatusLabel.stringValue = "CodexBar prüfen"
+            setupStatusLabel.stringValue = L("ov.codex.title")
             setupStatusLabel.textColor = .systemOrange
             setupDetailLabel.stringValue = setupDetailForCodexStatus(monitor.codexBar.status,
                                                                      provider: monitor.codexBar.provider)
             setupDetailLabel.textColor = .secondaryLabelColor
         case .foreignFirmware:
             setupStatusDot.state = .error
-            setupStatusLabel.stringValue = "Firmware fehlt"
+            setupStatusLabel.stringValue = L("ov.fw.missing.title")
             setupStatusLabel.textColor = .systemRed
-            var detail = "Der USB-Port ist offen, aber das Gerät antwortet nicht als AI-Monitor."
-            if !codexOK { detail += " CodexBar ist ebenfalls nicht bereit." }
+            var detail = L("ov.fw.foreign.detail")
+            if !codexOK { detail += L("ov.suffix.codexalso") }
             setupDetailLabel.stringValue = detail
             setupDetailLabel.textColor = .secondaryLabelColor
         case .probing:
             setupStatusDot.state = .pending
-            setupStatusLabel.stringValue = "ESP32-Handshake läuft"
+            setupStatusLabel.stringValue = L("ov.handshake.short")
             setupStatusLabel.textColor = .labelColor
-            var detail = "Die App prüft gerade, ob auf dem verbundenen Gerät AI-Monitor läuft."
-            if !codexOK { detail += " CodexBar ist noch nicht bereit." }
+            var detail = L("ov.handshake.short.detail")
+            if !codexOK { detail += L("ov.suffix.codexnotyet") }
             setupDetailLabel.stringValue = detail
             setupDetailLabel.textColor = .secondaryLabelColor
         case .disconnected:
             setupStatusDot.state = codexOK ? .inactive : .attention
-            setupStatusLabel.stringValue = codexOK ? "ESP32 verbinden" : "Setup unvollständig"
+            setupStatusLabel.stringValue = codexOK ? L("ov.esp32.connect") : L("ov.setup.incomplete")
             setupStatusLabel.textColor = codexOK ? .secondaryLabelColor : .systemOrange
             if codexOK {
-                setupDetailLabel.stringValue = "Kein passender USB-Serial-Port erkannt. Kabel, Board oder Port-Auswahl prüfen."
+                setupDetailLabel.stringValue = L("ov.usb.none.detail")
             } else {
                 setupDetailLabel.stringValue = "\(setupDetailForCodexStatus(monitor.codexBar.status, provider: monitor.codexBar.provider)) ESP32 ist nicht verbunden."
             }
@@ -514,7 +514,7 @@ extension SettingsWindowController {
         case .ok:
             return "\(providerLabel)-Daten sind aktuell."
         case .cliMissing:
-            return "Das CodexBar-CLI wurde nicht gefunden. Installiere es mit „brew install codexbar“."
+            return L("ov.codex.notfound")
         case .providerUnavailable(let message):
             return "\(providerLabel) liefert keine Daten: \(message)"
         case .cliFailed(let message):

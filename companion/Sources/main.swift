@@ -82,136 +82,13 @@ extension Notification.Name {
 // MARK: - Localization
 // ============================================================
 
-struct Strings {
-    let firmware: String
-    let flashFirmware: String
-    let flashing: String
-    let downloading: String
-    let noReleaseFound: String
-    let couldNotLoadRelease: String
-    let downloadFailed: String
-    let noESP32Connected: String
-    let connectESP32: String
-    let flashFirmwareQuestion: String
-    let flash: String
-    let cancel: String
-    let flashSuccess: String
-    let flashFailed: String
-    let preparing: String
-    let noUpdateAvailable: String
-    let appUpdateAvailable: String
-    let download: String
-    let openInBrowser: String
-    let later: String
-    let skipVersion: String
-    let updateFailed: String
-    let install: String
-    let appIsCurrentSuffix: String
-    let installQuestion: String
-    let restartInfo: String
-    let downloadRunning: String
-    let updateDownload: String
-    let flashSuccessMessage: String
-    let flashFailedPrefix: String
-    let errorPrefix: String
-    let firmwareCurrent: String
-    let firmwareAvailable: String
-    // --- Flash-Dialog (ab App v1.15.0) ---
-    let flashDialogTitle: String
-    let flashDialogBoardVariant: String
-    let flashDialogVariantStandard: String
-    let flashDialogVariantAlternative: String
-    let flashDialogVariantHint: String
-    let flashDialogStart: String
-}
-
-let stringsDE = Strings(
-    firmware: "Firmware:",
-    flashFirmware: "Firmware flashen...",
-    flashing: "Flash läuft...",
-    downloading: "Download...",
-    noReleaseFound: "Kein Release gefunden",
-    couldNotLoadRelease: "Konnte kein Firmware-Release von GitHub laden.",
-    downloadFailed: "Download fehlgeschlagen",
-    noESP32Connected: "Kein ESP32 verbunden",
-    connectESP32: "Bitte ESP32 per USB verbinden.",
-    flashFirmwareQuestion: "Firmware flashen?",
-    flash: "Flashen",
-    cancel: "Abbrechen",
-    flashSuccess: "Flash erfolgreich",
-    flashFailed: "Flash fehlgeschlagen",
-    preparing: "Vorbereitung...",
-    noUpdateAvailable: "Kein Update verfügbar",
-    appUpdateAvailable: "App-Update verfügbar",
-    download: "Herunterladen",
-    openInBrowser: "Im Browser öffnen",
-    later: "Später",
-    skipVersion: "Version überspringen",
-    updateFailed: "Update fehlgeschlagen",
-    install: "Installieren",
-    appIsCurrentSuffix: "ist aktuell.",
-    installQuestion: "Update auf %@ installieren?",
-    restartInfo: "Die App wird kurz neu gestartet.",
-    downloadRunning: "Download läuft...",
-    updateDownload: "Update herunterladen...",
-    flashSuccessMessage: "Firmware erfolgreich geflasht!",
-    flashFailedPrefix: "Flash fehlgeschlagen:",
-    errorPrefix: "Fehler:",
-    firmwareCurrent: "(aktuell)",
-    firmwareAvailable: "verfügbar",
-    flashDialogTitle: "Firmware flashen",
-    flashDialogBoardVariant: "Board-Variante",
-    flashDialogVariantStandard: "Standard (ILI9341) — CYD-2432S028R",
-    flashDialogVariantAlternative: "Alternative (ST7789) — CYD-2432S028",
-    flashDialogVariantHint: "Im Zweifel zuerst Standard probieren. Wenn das Display nach dem Flash rauscht oder gekippt ist, die Alternative wählen.",
-    flashDialogStart: "Flashen starten"
-)
-
-let stringsEN = Strings(
-    firmware: "Firmware:",
-    flashFirmware: "Flash firmware...",
-    flashing: "Flashing...",
-    downloading: "Download...",
-    noReleaseFound: "No release found",
-    couldNotLoadRelease: "Could not load firmware release from GitHub.",
-    downloadFailed: "Download failed",
-    noESP32Connected: "No ESP32 connected",
-    connectESP32: "Please connect ESP32 via USB.",
-    flashFirmwareQuestion: "Flash firmware?",
-    flash: "Flash",
-    cancel: "Cancel",
-    flashSuccess: "Flash successful",
-    flashFailed: "Flash failed",
-    preparing: "Preparing...",
-    noUpdateAvailable: "No update available",
-    appUpdateAvailable: "App update available",
-    download: "Download",
-    openInBrowser: "Open in browser",
-    later: "Later",
-    skipVersion: "Skip version",
-    updateFailed: "Update failed",
-    install: "Install",
-    appIsCurrentSuffix: "is up to date.",
-    installQuestion: "Install update %@?",
-    restartInfo: "The app will restart briefly.",
-    downloadRunning: "Downloading...",
-    updateDownload: "Download update...",
-    flashSuccessMessage: "Firmware flashed successfully!",
-    flashFailedPrefix: "Flash failed:",
-    errorPrefix: "Error:",
-    firmwareCurrent: "(current)",
-    firmwareAvailable: "available",
-    flashDialogTitle: "Flash firmware",
-    flashDialogBoardVariant: "Board variant",
-    flashDialogVariantStandard: "Standard (ILI9341) — CYD-2432S028R",
-    flashDialogVariantAlternative: "Alternative (ST7789) — CYD-2432S028",
-    flashDialogVariantHint: "When in doubt, try Standard first. If the display shows noise or looks wrong after flashing, pick the alternative.",
-    flashDialogStart: "Start flashing"
-)
-
-func S() -> Strings {
-    return Settings.shared.language == "en" ? stringsEN : stringsDE
-}
+// Die frueheren `Strings`/stringsDE/stringsEN und `S()` sind entfallen.
+// Sie deckten nur Flash- und Update-Texte ab und haben die App-Sprache an
+// `Settings.shared.language` gekoppelt — also an die Sprache der Labels auf
+// dem Display. Wer das Display auf Englisch stellte, bekam damit auch eine
+// englische App, und die uebrige Oberflaeche blieb ohnehin deutsch.
+// Uebersetzungen laufen jetzt ueber L() und Resources/{de,en}.lproj und
+// folgen der macOS-Systemsprache — siehe Localization.swift.
 
 // ============================================================
 // MARK: - Device Registry (Per-Device Settings, ab v1.14.0)
@@ -1090,10 +967,10 @@ class AppUpdateManager {
     }
 
     func downloadAndInstall(completion: @escaping (Bool, String) -> Void) {
-        guard let release = latestRelease else { completion(false, S().noReleaseFound); return }
+        guard let release = latestRelease else { completion(false, L("release.none.title")); return }
         guard let asset = release.assets.first(where: { $0.name == kAppAssetName }) else {
             if let htmlUrl = release.html_url, let url = URL(string: htmlUrl) { NSWorkspace.shared.open(url) }
-            completion(true, S().openInBrowser); return
+            completion(true, L("common.open_browser")); return
         }
         guard let downloadUrl = URL(string: asset.browser_download_url) else {
             completion(false, "Invalid download URL"); return
@@ -1113,7 +990,7 @@ class AppUpdateManager {
                 return
             }
             guard let tempUrl = tempUrl else {
-                DispatchQueue.main.async { self.onUpdate?(); completion(false, S().downloadFailed) }
+                DispatchQueue.main.async { self.onUpdate?(); completion(false, L("download.failed")) }
                 return
             }
             let downloadDir = NSTemporaryDirectory() + "AIMonitor-Update"
@@ -1140,12 +1017,12 @@ class AppUpdateManager {
                     let extractedAppPath = downloadDir + "/\(appName)"
                     DispatchQueue.main.async { self.onUpdate?(); completion(true, extractedAppPath) }
                 } else {
-                    DispatchQueue.main.async { self.onUpdate?(); completion(false, "Keine .app im Download gefunden") }
+                    DispatchQueue.main.async { self.onUpdate?(); completion(false, L("update.err.noapp")) }
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.onUpdate?()
-                    completion(false, "\(S().errorPrefix) \(error.localizedDescription)")
+                    completion(false, "\(L("common.error.prefix")) \(error.localizedDescription)")
                 }
             }
         }
@@ -1246,13 +1123,13 @@ enum FirmwareFlashPhase {
     func label(percent: Int? = nil, version: String? = nil) -> String {
         switch self {
         case .idle:        return ""
-        case .downloading: return "Firmware wird geladen …"
-        case .connecting:  return "Verbindung zum ESP32 wird hergestellt …"
-        case .erasing:     return "Flashspeicher wird gelöscht …"
+        case .downloading: return L("flash.step.download")
+        case .connecting:  return L("flash.step.connect")
+        case .erasing:     return L("flash.step.erase")
         case .writing:
             if let p = percent { return "Firmware wird geschrieben … \(p) %" }
-            return "Firmware wird geschrieben …"
-        case .verifying:   return "Verifikation läuft …"
+            return L("flash.step.write")
+        case .verifying:   return L("flash.step.verify")
         case .rebooting:   return "Neustart …"
         case .done:
             if let v = version { return "Fertig. Firmware \(v) aktiv." }
@@ -1433,7 +1310,7 @@ class FirmwareManager {
     /// dann aber als Hinweis im `completion`-Text, damit der Dialog den
     /// User warnen kann.
     func downloadFirmware(variant: String, completion: @escaping (Bool, String?) -> Void) {
-        guard let release = latestRelease else { completion(false, S().noReleaseFound); return }
+        guard let release = latestRelease else { completion(false, L("release.none.title")); return }
         let requestedAsset = kFirmwareAssetByDisplay[variant] ?? kFirmwareAssetName
         let asset: GitHubAsset? = release.assets.first(where: { $0.name == requestedAsset })
             ?? release.assets.first(where: { $0.name == kFirmwareAssetName })
@@ -1468,7 +1345,7 @@ class FirmwareManager {
             }
             guard let tempURL = tempURL else {
                 DispatchQueue.main.async { self.onUpdate?() }
-                completion(false, S().downloadFailed); return
+                completion(false, L("download.failed")); return
             }
             do {
                 if FileManager.default.fileExists(atPath: destPath) { try FileManager.default.removeItem(atPath: destPath) }
@@ -1511,10 +1388,10 @@ class FirmwareManager {
 
     func flashFirmware(port: String, completion: @escaping (Bool, String) -> Void) {
         guard let binPath = downloadedBinPath, FileManager.default.fileExists(atPath: binPath) else {
-            completion(false, recordFlashFailure("Keine Firmware-Datei vorhanden")); return
+            completion(false, recordFlashFailure(L("flash.err.nofile"))); return
         }
         guard let tool = resolveEsptool() else {
-            completion(false, recordFlashFailure("esptool nicht gefunden")); return
+            completion(false, recordFlashFailure(L("flash.err.notool"))); return
         }
         isFlashing = true
         setPhase(.connecting)
@@ -1607,7 +1484,7 @@ class FirmwareManager {
                         self.isFlashing = false
                         self.onUpdate?()
                     }
-                    completion(true, S().flashSuccessMessage)
+                    completion(true, L("flash.ok.info"))
                 } else {
                     self.setPhase(.failed)
                     DispatchQueue.main.async {
@@ -1687,39 +1564,43 @@ class FirmwareManager {
             lower.contains("timed out waiting for packet") ||
             lower.contains("invalid head of packet") {
             return (
-                "Display nicht im Flash-Modus erreichbar.",
-                "USB-Kabel prüfen, das Display kurz neu verbinden und erneut flashen. Falls dein Board eine Boot-Taste hat, halte sie beim Start des Flashens gedrückt."
+                L("flash.err.nobootmode"),
+                L("flash.err.bootmode.detail")
             )
         }
         if lower.contains("resource busy") || lower.contains("device busy") ||
             lower.contains("could not open") || lower.contains("permission denied") {
             return (
-                "USB-Port ist gerade blockiert.",
-                "Trenne andere serielle Tools, stecke das Display neu ein und scanne die Ports erneut."
+                L("flash.err.busy"),
+                L("flash.err.busy.fix")
             )
         }
         if lower.contains("no such file") || lower.contains("keine firmware-datei") ||
             lower.contains("not found") || lower.contains("kein ") {
             return (
-                "Firmware-Datei fehlt.",
-                "Prüfe die Updates erneut. Wenn das Release unvollständig ist, warte auf ein vollständiges Firmware-Release oder öffne es im Browser."
+                L("flash.err.nofile.title"),
+                L("flash.err.nofile.detail")
             )
         }
         if lower.contains("exit-code") || lower.contains("fatal error") || lower.contains("write_flash") {
             return (
-                "Schreiben der Firmware wurde abgebrochen.",
-                "Versuche denselben Flash erneut. Wenn das Display danach falsch aussieht, wähle im Recovery-Dialog die andere Display-Variante."
+                L("flash.err.aborted"),
+                L("flash.err.aborted.detail")
             )
         }
-        if lower.contains("esptool nicht gefunden") || lower.contains("could not be started") ||
-            lower.contains("konnte nicht gestartet") {
+        // Achtung: `lower` ist kleingeschrieben, L() nicht — die uebersetzte
+        // Meldung muss vor dem Vergleich ebenfalls kleingeschrieben werden.
+        // "esptool" faengt zusaetzlich die englischen Originalausgaben ab und
+        // bleibt stabil, wenn sich eine Uebersetzung aendert.
+        if lower.contains(L("flash.err.notool").lowercased()) || lower.contains("esptool") ||
+            lower.contains("could not be started") || lower.contains("konnte nicht gestartet") {
             return (
-                "Flash-Werkzeug konnte nicht gestartet werden.",
-                "Die App enthält das Flash-Werkzeug normalerweise selbst. Installiere die App neu oder nutze den DMG-Download aus dem aktuellen Release."
+                L("flash.err.toolstart"),
+                L("flash.err.toolstart.detail")
             )
         }
         return (
-            "Flash konnte nicht abgeschlossen werden.",
+            L("flash.err.incomplete"),
             "\(rawMessage)\n\nDu kannst denselben Flash erneut versuchen oder die andere Display-Variante wählen."
         )
     }
@@ -2405,7 +2286,7 @@ class UsageMonitor {
             self.sendUsageToESP32()
             if self.pendingDiagnosticAfterNextConnect && self.serialPort.state == .connected {
                 self.pendingDiagnosticAfterNextConnect = false
-                self.serialLinkDetail = "Testframe nach Firmware-Update wird gesendet"
+                self.serialLinkDetail = L("serial.testframe.sending")
                 DispatchQueue.main.async { self.onUpdate?() }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                     _ = self?.sendDiagnosticTestFrame()
@@ -2478,7 +2359,7 @@ class UsageMonitor {
 
     func queueDiagnosticTestFrameAfterNextConnect() {
         pendingDiagnosticAfterNextConnect = true
-        serialLinkDetail = "Testframe nach Firmware-Update wartet auf Verbindung"
+        serialLinkDetail = L("serial.testframe.waiting")
         onUpdate?()
     }
 
@@ -2533,7 +2414,7 @@ class UsageMonitor {
 
         lastSerialAutoRepairDate = now
         serialConsecutiveUnconfirmedFrames = 0
-        serialLinkDetail = "USB-Verbindung wird neu aufgebaut"
+        serialLinkDetail = L("serial.reconnecting")
         NSLog("[Serial] Auto-repair: reconnecting after unconfirmed frame #%d", frameId)
 
         DispatchQueue.main.async { [weak self] in
@@ -2543,7 +2424,7 @@ class UsageMonitor {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                 guard let self = self else { return }
                 self.serialPort.scanForPort()
-                self.serialLinkDetail = "USB-Verbindung neu aufgebaut"
+                self.serialLinkDetail = L("serial.reconnected")
                 self.onUpdate?()
             }
         }
@@ -3342,7 +3223,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "AI Monitor beenden",
+        let quitItem = NSMenuItem(title: L("app.quit"),
                                   action: #selector(NSApplication.terminate(_:)),
                                   keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
@@ -3381,7 +3262,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // HIG: „Display the About menu item first. Include a separator after
         // the About menu item so that it appears by itself in a group."
-        let aboutItem = NSMenuItem(title: "Über AI Monitor",
+        let aboutItem = NSMenuItem(title: L("app.about"),
                                    action: #selector(showAboutFromMenu),
                                    keyEquivalent: "")
         aboutItem.target = self
@@ -3389,7 +3270,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appMenu.addItem(.separator())
 
         // HIG: Einstellungen gehoeren ins App-Menue, Shortcut ⌘,
-        let settingsItem = NSMenuItem(title: "Einstellungen …",
+        let settingsItem = NSMenuItem(title: L("app.settings"),
                                       action: #selector(openSettingsFromMenu),
                                       keyEquivalent: ",")
         settingsItem.keyEquivalentModifierMask = [.command]
@@ -3397,7 +3278,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appMenu.addItem(settingsItem)
         appMenu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "AI Monitor beenden",
+        let quitItem = NSMenuItem(title: L("app.quit"),
                                   action: #selector(NSApplication.terminate(_:)),
                                   keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
@@ -3490,11 +3371,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func runFirmwareFlash() {
         let fw = FirmwareManager.shared
         guard fw.latestRelease != nil else {
-            alert(title: S().noReleaseFound, info: S().couldNotLoadRelease, style: .warning)
+            alert(title: L("release.none.title"), info: L("release.none.info"), style: .warning)
             return
         }
         guard let port = monitor.serialPort.connectedPort else {
-            alert(title: S().noESP32Connected, info: S().connectESP32, style: .warning); return
+            alert(title: L("esp32.none.title"), info: L("esp32.none.info"), style: .warning); return
         }
 
         // Default-Variante bestimmen — aus Profil (falls bekannt), sonst ILI9341.
@@ -3510,12 +3391,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let preflight = [
             "USB: \(shortPort) erkannt",
             fw.hasExpectedReleaseAssets
-                ? "Firmware-Dateien: vollständig"
+                ? L("flash.pre.files.ok")
                 : "Firmware-Dateien fehlen: \(missingAssets.joined(separator: ", "))",
-            esptoolReady ? "Flash-Werkzeug: verfügbar" : "Flash-Werkzeug: nicht verfügbar",
-            "Hinweis: USB-Kabel während des Flashens nicht trennen."
+            esptoolReady ? L("flash.pre.tool.ok") : L("flash.pre.tool.missing"),
+            L("flash.hint.cable")
         ]
-        let warning = canStart ? nil : "Flashen ist erst möglich, wenn USB, Firmware-Dateien und Flash-Werkzeug bereit sind."
+        let warning = canStart ? nil : L("flash.hint.ready")
 
         FlashDialogController.presentModal(info: info,
                                            defaultVariant: defaultVariant,
@@ -3569,7 +3450,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fw.downloadFirmware(variant: variant) { [weak self] success, error in
             DispatchQueue.main.async {
                 if success { proceed() }
-                else { self?.alert(title: S().downloadFailed,
+                else { self?.alert(title: L("download.failed"),
                                    info: error ?? "Unknown error",
                                    style: .warning) }
             }
@@ -3578,11 +3459,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func presentFlashRecovery(message: String, port: String, variant: String) {
         let alert = NSAlert()
-        alert.messageText = S().flashFailed
+        alert.messageText = L("flash.failed.title")
         alert.informativeText = "\(message)\n\nRecovery: Du kannst denselben Flash erneut versuchen oder die andere Display-Variante flashen."
         alert.alertStyle = .critical
-        alert.addButton(withTitle: "Erneut flashen")
-        alert.addButton(withTitle: "Andere Variante")
+        alert.addButton(withTitle: L("flash.retry"))
+        alert.addButton(withTitle: L("flash.othervariant.short"))
         alert.addButton(withTitle: "Schließen")
         present(alert) { [weak self] response in
             guard let self = self else { return }
@@ -3627,9 +3508,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // bleibt stehen, bis der Nutzer handelt oder es schliesst.
         settingsController?.showBanner(
             state: .info,
-            title: "Firmware-Update verfügbar",
-            detail: "\(deviceName) läuft mit \(installedVersion), verfügbar ist \(latestVersion).",
-            actionTitle: "Firmware flashen"
+            title: L("fw.update.available"),
+            detail: L("fw.update.device", deviceName, installedVersion, latestVersion),
+            actionTitle: L("flash.action.plain")
         ) { [weak self] in
             self?.runFirmwareFlash()
         }
@@ -3642,8 +3523,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 if hasUpdate { self?.showAppUpdateAlert() }
                 else {
-                    self?.alert(title: S().noUpdateAvailable,
-                                info: "AI Monitor v\(kAppVersion) \(S().appIsCurrentSuffix)",
+                    self?.alert(title: L("update.none.title"),
+                                info: "AI Monitor v\(kAppVersion) \(L("update.none.suffix"))",
                                 style: .informational)
                 }
             }
@@ -3654,7 +3535,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appMgr = AppUpdateManager.shared
         guard appMgr.hasUpdate else { return }
         let alert = NSAlert()
-        alert.messageText = S().appUpdateAvailable
+        alert.messageText = L("update.available.title")
         let assetNames = appMgr.latestRelease?.assets.map(\.name).joined(separator: ", ") ?? "—"
         let hasZip = appMgr.latestRelease?.assets.contains { $0.name == kAppAssetName } ?? false
         let hasDMG = appMgr.latestRelease?.assets.contains { $0.name == "AIMonitor.dmg" } ?? false
@@ -3678,9 +3559,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         alert.informativeText = info
         alert.alertStyle = .informational
-        alert.addButton(withTitle: hasZip ? S().download : S().openInBrowser)
-        alert.addButton(withTitle: S().later)
-        alert.addButton(withTitle: S().skipVersion)
+        alert.addButton(withTitle: hasZip ? L("common.download") : L("common.open_browser"))
+        alert.addButton(withTitle: L("common.later"))
+        alert.addButton(withTitle: L("update.skip"))
         present(alert) { [weak self] response in
             switch response {
             case .alertFirstButtonReturn:
@@ -3699,20 +3580,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appMgr.downloadAndInstall { [weak self] success, extractedPathOrError in
             DispatchQueue.main.async {
                 guard success else {
-                    self?.alert(title: S().updateFailed, info: extractedPathOrError, style: .critical); return
+                    self?.alert(title: L("update.failed.title"), info: extractedPathOrError, style: .critical); return
                 }
                 let alert = NSAlert()
-                alert.messageText = String(format: S().installQuestion, appMgr.latestVersionDisplay)
-                alert.informativeText = S().restartInfo
+                alert.messageText = String(format: L("update.confirm.title"), appMgr.latestVersionDisplay)
+                alert.informativeText = L("update.confirm.info")
                 alert.alertStyle = .informational
-                alert.addButton(withTitle: S().install)
-                alert.addButton(withTitle: S().later)
+                alert.addButton(withTitle: L("common.install"))
+                alert.addButton(withTitle: L("common.later"))
                 self?.present(alert) { response in
                     guard response == .alertFirstButtonReturn else { return }
                     Settings.shared.pendingFirmwareCheckAfterAppUpdate = true
                     appMgr.performAutoUpdate(extractedAppPath: extractedPathOrError) { _, errorMessage in
                         DispatchQueue.main.async {
-                            self?.alert(title: S().updateFailed, info: errorMessage, style: .critical)
+                            self?.alert(title: L("update.failed.title"), info: errorMessage, style: .critical)
                         }
                     }
                 }

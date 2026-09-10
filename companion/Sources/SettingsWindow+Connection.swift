@@ -26,7 +26,7 @@ extension SettingsWindowController {
 
         portStatusDot = StatusIndicator(state: .inactive)
 
-        portStatusLabel = NSTextField(labelWithString: "nicht verbunden")
+        portStatusLabel = NSTextField(labelWithString: L("conn.port.status.disconnected"))
         portStatusLabel.font = NSFont.appFont(.body)
 
         let statusRow = NSStackView(views: [portStatusDot, portStatusLabel])
@@ -36,14 +36,14 @@ extension SettingsWindowController {
         portPopup = NSPopUpButton()
         portPopup.target = self
         portPopup.action = #selector(portChosen)
-        portPopup.toolTip = "Automatisch wählt den ersten passenden USB-Serial-Port. Manuelle Auswahl pinnt ein bestimmtes Gerät."
+        portPopup.toolTip = L("conn.port.tooltip")
         portPopup.translatesAutoresizingMaskIntoConstraints = false
         portPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         portRefreshButton = NSButton(title: "Ports neu scannen", target: self, action: #selector(refreshPorts))
         portRefreshButton.bezelStyle = .rounded
         portRefreshButton.controlSize = .small
-        portRefreshButton.toolTip = "Sucht erneut nach angeschlossenen ESP32-Geräten."
+        portRefreshButton.toolTip = L("conn.port.refresh.tooltip")
 
         let controlRow = NSStackView(views: [portPopup, portRefreshButton])
         controlRow.orientation = .horizontal
@@ -61,7 +61,7 @@ extension SettingsWindowController {
 
         wifiStatusDot = StatusIndicator(state: .inactive)
 
-        wifiStatusLabel = NSTextField(labelWithString: "Status unbekannt")
+        wifiStatusLabel = NSTextField(labelWithString: L("conn.wifi.status.unknown"))
         wifiStatusLabel.font = NSFont.appFont(.body)
         wifiStatusLabel.lineBreakMode = .byTruncatingTail
         wifiStatusLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -72,17 +72,17 @@ extension SettingsWindowController {
         statusRow.spacing = 6
 
         wifiNetworkPopup = NSPopUpButton()
-        wifiNetworkPopup.addItem(withTitle: "Noch nicht gescannt")
+        wifiNetworkPopup.addItem(withTitle: L("conn.wifi.notscanned"))
         wifiNetworkPopup.target = self
         wifiNetworkPopup.action = #selector(wifiNetworkChosen)
-        wifiNetworkPopup.toolTip = "Netzwerke, die das ESP32-Display aktuell sieht."
+        wifiNetworkPopup.toolTip = L("conn.wifi.list.tooltip")
         wifiNetworkPopup.translatesAutoresizingMaskIntoConstraints = false
         wifiNetworkPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
 
         wifiScanButton = NSButton(title: "Scannen", target: self, action: #selector(scanWiFi))
         wifiScanButton.bezelStyle = .rounded
         wifiScanButton.controlSize = .small
-        wifiScanButton.toolTip = "Sucht WLAN-Netzwerke aus Sicht des ESP32-Displays."
+        wifiScanButton.toolTip = L("conn.wifi.scan.tooltip")
 
         let scanRow = NSStackView(views: [wifiNetworkPopup, wifiScanButton])
         scanRow.orientation = .horizontal
@@ -90,19 +90,19 @@ extension SettingsWindowController {
 
         wifiPasswordField = NSSecureTextField()
         wifiPasswordField.placeholderString = "Passwort"
-        wifiPasswordField.toolTip = "WLAN-Passwort für das ausgewählte Netzwerk. Wird auf dem Display gespeichert."
+        wifiPasswordField.toolTip = L("conn.wifi.pw.tooltip")
         wifiPasswordField.translatesAutoresizingMaskIntoConstraints = false
         wifiPasswordField.widthAnchor.constraint(equalToConstant: 180).isActive = true
 
         wifiConnectButton = NSButton(title: "Verbinden", target: self, action: #selector(connectWiFi))
         wifiConnectButton.bezelStyle = .rounded
         wifiConnectButton.controlSize = .small
-        wifiConnectButton.toolTip = "Speichert das WLAN auf dem Display und verbindet es."
+        wifiConnectButton.toolTip = L("conn.wifi.connect.tooltip")
 
         wifiForgetButton = NSButton(title: "Vergessen", target: self, action: #selector(forgetWiFi))
         wifiForgetButton.bezelStyle = .rounded
         wifiForgetButton.controlSize = .small
-        wifiForgetButton.toolTip = "Löscht die gespeicherten WLAN-Daten auf dem Display."
+        wifiForgetButton.toolTip = L("conn.wifi.forget.tooltip")
 
         let connectRow = NSStackView(views: [wifiPasswordField, wifiConnectButton, wifiForgetButton])
         connectRow.orientation = .horizontal
@@ -122,7 +122,7 @@ extension SettingsWindowController {
         if !ready {
             lastWiFiStatusJSON = nil
             wifiStatusDot?.state = .inactive
-            wifiStatusLabel?.stringValue = "ESP32 verbinden, um WiFi einzurichten"
+            wifiStatusLabel?.stringValue = L("conn.wifi.need_device")
             wifiStatusLabel?.textColor = .secondaryLabelColor
         }
     }
@@ -132,7 +132,7 @@ extension SettingsWindowController {
         lastWiFiStatusJSON = json
         guard let json = json else {
             wifiStatusDot.state = .attention
-            wifiStatusLabel.stringValue = "Keine Antwort vom Display"
+            wifiStatusLabel.stringValue = L("conn.wifi.noanswer")
             wifiStatusLabel.textColor = .systemOrange
             updateOverviewGuidance()
             return
@@ -153,11 +153,11 @@ extension SettingsWindowController {
         } else if configured {
             wifiStatusDot.state = .attention
             wifiStatusLabel.textColor = .systemOrange
-            wifiStatusLabel.stringValue = ssid.isEmpty ? "Gespeichert, nicht verbunden" : "\(ssid) gespeichert, nicht verbunden"
+            wifiStatusLabel.stringValue = ssid.isEmpty ? L("conn.wifi.saved_only") : L("conn.wifi.saved_ssid", ssid)
         } else {
             wifiStatusDot.state = .inactive
             wifiStatusLabel.textColor = .secondaryLabelColor
-            wifiStatusLabel.stringValue = "Kein WiFi gespeichert"
+            wifiStatusLabel.stringValue = L("conn.wifi.none_saved")
         }
         updateOverviewGuidance()
     }
@@ -181,7 +181,7 @@ extension SettingsWindowController {
     func updateWiFiNetworkPopup() {
         wifiNetworkPopup.removeAllItems()
         if wifiNetworks.isEmpty {
-            wifiNetworkPopup.addItem(withTitle: "Keine Netzwerke")
+            wifiNetworkPopup.addItem(withTitle: L("conn.wifi.no_networks"))
             wifiNetworkPopup.isEnabled = false
             return
         }
@@ -199,12 +199,12 @@ extension SettingsWindowController {
         portPopup.removeAllItems()
         let available = monitor.serialPort.availablePortPaths()
         if available.isEmpty {
-            portPopup.addItem(withTitle: "(keine Ports gefunden)")
+            portPopup.addItem(withTitle: L("conn.port.none"))
             portPopup.isEnabled = false
             return
         }
         portPopup.isEnabled = true
-        portPopup.addItem(withTitle: "(automatisch)")
+        portPopup.addItem(withTitle: L("conn.port.auto"))
         for p in available {
             portPopup.addItem(withTitle: (p as NSString).lastPathComponent)
         }
@@ -224,8 +224,8 @@ extension SettingsWindowController {
         guard let monitor = monitor, monitor.serialPort.state == .connected else { return }
         wifiScanButton.isEnabled = false
         wifiNetworkPopup.removeAllItems()
-        wifiNetworkPopup.addItem(withTitle: "Scan läuft …")
-        wifiStatusLabel.stringValue = "Display scannt WiFi-Netzwerke …"
+        wifiNetworkPopup.addItem(withTitle: L("conn.wifi.scanning"))
+        wifiStatusLabel.stringValue = L("conn.wifi.scanning.detail")
         wifiStatusLabel.textColor = .secondaryLabelColor
 
         monitor.serialPort.performJSONCommand(["cmd": "wifi_scan"],
@@ -236,7 +236,7 @@ extension SettingsWindowController {
             guard let items = json?["networks"] as? [[String: Any]] else {
                 self.wifiNetworks = []
                 self.updateWiFiNetworkPopup()
-                self.wifiStatusLabel.stringValue = "Scan fehlgeschlagen"
+                self.wifiStatusLabel.stringValue = L("conn.wifi.scan.failed")
                 self.wifiStatusLabel.textColor = .systemOrange
                 return
             }
@@ -267,7 +267,7 @@ extension SettingsWindowController {
         guard let monitor = monitor, monitor.serialPort.state == .connected else { return }
         let idx = wifiNetworkPopup.indexOfSelectedItem
         guard idx >= 0 && idx < wifiNetworks.count else {
-            wifiStatusLabel.stringValue = "Bitte zuerst ein Netzwerk scannen und auswählen."
+            wifiStatusLabel.stringValue = L("conn.wifi.pick_first")
             wifiStatusLabel.textColor = .systemOrange
             return
         }

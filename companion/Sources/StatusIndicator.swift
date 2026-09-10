@@ -60,8 +60,8 @@ final class StatusIndicator: NSImageView {
             switch self {
             case .ok: return "Status: in Ordnung"
             case .attention: return "Status: Achtung"
-            case .error: return "Status: Fehler"
-            case .pending: return "Status: wird geprüft"
+            case .error: return L("status.error")
+            case .pending: return L("status.checking")
             case .info: return "Status: Hinweis"
             case .inactive: return "Status: inaktiv"
             }

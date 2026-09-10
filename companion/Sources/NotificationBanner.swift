@@ -70,13 +70,13 @@ final class NotificationBanner: NSView {
 
         closeButton.isBordered = false
         closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill",
-                                    accessibilityDescription: "Hinweis schließen")
+                                    accessibilityDescription: L("banner.close"))
         closeButton.imagePosition = .imageOnly
         closeButton.contentTintColor = .tertiaryLabelColor
         closeButton.target = self
         closeButton.action = #selector(dismiss)
-        closeButton.toolTip = "Hinweis schließen"
-        closeButton.setAccessibilityLabel("Hinweis schließen")
+        closeButton.toolTip = L("banner.close")
+        closeButton.setAccessibilityLabel(L("banner.close"))
 
         let row = NSStackView(views: [indicator, textStack, actionButton, closeButton])
         row.orientation = .horizontal

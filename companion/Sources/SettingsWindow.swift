@@ -357,11 +357,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                                                target: self,
                                                action: #selector(providerChosen))
         providerSegmented.segmentStyle = .rounded
-        providerSegmented.toolTip = "Wählt, welche CodexBar-Daten auf dem Display angezeigt werden."
+        providerSegmented.toolTip = L("hdr.provider.tooltip")
         providerSegmented.selectedSegment = CodexBarProvider
             .normalized(Settings.shared.selectedProvider)
             .segmentIndex
-        providerSegmented.setAccessibilityLabel("Datenquelle für das Display")
+        providerSegmented.setAccessibilityLabel(L("hdr.provider.label"))
         providerSegmented.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(providerSegmented)
 
@@ -476,13 +476,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         footerAboutButton = NSButton()
         footerAboutButton.isBordered = false
         footerAboutButton.image = NSImage(systemSymbolName: "info.circle",
-                                          accessibilityDescription: "Über AI Monitor")
+                                          accessibilityDescription: L("app.about"))
         footerAboutButton.imagePosition = .imageOnly
         footerAboutButton.contentTintColor = .secondaryLabelColor
         footerAboutButton.target = self
         footerAboutButton.action = #selector(showAbout)
-        footerAboutButton.toolTip = "Über AI Monitor"
-        footerAboutButton.setAccessibilityLabel("Über AI Monitor")
+        footerAboutButton.toolTip = L("app.about")
+        footerAboutButton.setAccessibilityLabel(L("app.about"))
         footerAboutButton.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(footerAboutButton)
 
@@ -618,7 +618,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             for extra in e.extraWindows ?? [] {
                 values.append("\(extra.title): \(Int(extra.window.usedPercent.rounded())) %")
             }
-            codexBarValuesLabel.stringValue = values.isEmpty ? "Keine Limits verfügbar" : values.joined(separator: "   ·   ")
+            codexBarValuesLabel.stringValue = values.isEmpty ? L("limits.none") : values.joined(separator: "   ·   ")
 
             if let reset = e.primary?.resetDescription {
                 codexBarResetSessionLabel.stringValue = "Session-Reset: \(reset)"
@@ -639,7 +639,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             let msg: String
             switch src.status {
             case .cliMissing:
-                msg = "CodexBar-CLI nicht gefunden („brew install codexbar“)."
+                msg = L("codex.notfound.short")
             case .providerUnavailable(let m):
                 let providerLabel = CodexBarProvider.normalized(src.provider).displayLabel
                 msg = "\(providerLabel) liefert keine Daten: \(m)"
@@ -680,12 +680,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 portStatusLabel.textColor = .secondaryLabelColor
             case .disconnected:
                 portStatusDot.state = .inactive
-                portStatusLabel.stringValue = "nicht verbunden"
+                portStatusLabel.stringValue = L("state.disconnected")
                 portStatusLabel.textColor = .secondaryLabelColor
             }
         } else {
             portStatusDot.state = .inactive
-            portStatusLabel.stringValue = "nicht verbunden"
+            portStatusLabel.stringValue = L("state.disconnected")
             portStatusLabel.textColor = .secondaryLabelColor
         }
         rebuildPortPopup()
@@ -704,14 +704,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         fwVariantLabel.stringValue = firmwareVariantText(profile?.displayVariant, state: sp.state)
         if isForeign {
-            fwVersionLabel.stringValue = "Installiert: unbekannt"
+            fwVersionLabel.stringValue = L("fw.installed.unknown")
             if fw.isFlashing {
-                fwUpdateLabel.stringValue = "Flash läuft …"
+                fwUpdateLabel.stringValue = L("flash.running.ellipsis")
                 fwUpdateLabel.textColor = .secondaryLabelColor
                 fwFlashButton.isEnabled = false
                 fwFlashButton.title = "flashing …"
             } else if fw.isDownloading {
-                fwUpdateLabel.stringValue = "Download läuft …"
+                fwUpdateLabel.stringValue = L("download.running.ellipsis")
                 fwUpdateLabel.textColor = .secondaryLabelColor
                 fwFlashButton.isEnabled = false
                 fwFlashButton.title = "downloading …"
@@ -719,24 +719,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 fwUpdateLabel.stringValue = "Firmware-Release unvollständig: \(missingAssets.joined(separator: ", "))"
                 fwUpdateLabel.textColor = .systemOrange
                 fwFlashButton.isEnabled = false
-                fwFlashButton.title = "Firmware flashen …"
+                fwFlashButton.title = L("flash.action.short")
             } else {
-                fwUpdateLabel.stringValue = "Dieses Geraet hat keine AI-Monitor-Firmware. Jetzt flashen, um loszulegen."
+                fwUpdateLabel.stringValue = L("fw.foreign.cta")
                 fwUpdateLabel.textColor = .systemRed
                 fwFlashButton.isEnabled = true
-                fwFlashButton.title = "Firmware flashen"
+                fwFlashButton.title = L("flash.action.plain")
                 fwFlashButton.keyEquivalent = "\r"
             }
         } else {
             fwFlashButton.keyEquivalent = ""
             fwVersionLabel.stringValue = "Installiert: \(fw.installedVersionDisplay)"
             if fw.isFlashing {
-                fwUpdateLabel.stringValue = "Flash läuft …"
+                fwUpdateLabel.stringValue = L("flash.running.ellipsis")
                 fwUpdateLabel.textColor = .secondaryLabelColor
                 fwFlashButton.isEnabled = false
                 fwFlashButton.title = "flashing …"
             } else if fw.isDownloading {
-                fwUpdateLabel.stringValue = "Download läuft …"
+                fwUpdateLabel.stringValue = L("download.running.ellipsis")
                 fwUpdateLabel.textColor = .secondaryLabelColor
                 fwFlashButton.isEnabled = false
                 fwFlashButton.title = "downloading …"
@@ -744,17 +744,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 fwUpdateLabel.stringValue = "Firmware-Release unvollständig: \(missingAssets.joined(separator: ", "))"
                 fwUpdateLabel.textColor = .systemOrange
                 fwFlashButton.isEnabled = false
-                fwFlashButton.title = "Firmware flashen …"
+                fwFlashButton.title = L("flash.action.short")
             } else if fw.hasUpdate {
-                fwUpdateLabel.stringValue = "Update verfügbar: \(fw.latestVersionDisplay)"
+                fwUpdateLabel.stringValue = L("fw.update.line", fw.latestVersionDisplay)
                 fwUpdateLabel.textColor = .systemBlue
                 fwFlashButton.isEnabled = (sp.state == .connected)
-                fwFlashButton.title = "Firmware flashen …"
+                fwFlashButton.title = L("flash.action.short")
             } else {
                 fwUpdateLabel.stringValue = "Aktuell."
                 fwUpdateLabel.textColor = .secondaryLabelColor
                 fwFlashButton.isEnabled = (sp.state == .connected && fw.latestRelease != nil)
-                fwFlashButton.title = "Andere Display-Variante flashen …"
+                fwFlashButton.title = L("flash.other.variant")
             }
         }
 
@@ -847,8 +847,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         requestWiFiStatus()
 
         if codexBarReloadButton != nil {
-            codexBarReloadButton.title = "Jetzt neu laden"
-            codexBarReloadButton.toolTip = "Fragt die Daten über das CodexBar-CLI erneut ab."
+            codexBarReloadButton.title = L("codex.reload")
+            codexBarReloadButton.toolTip = L("codex.reload.tooltip")
         }
 
         // Footer-Version (falls kAppVersion sich in einem Hot-Reload mal aendert)
@@ -898,7 +898,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func serialFrameReceiptText(_ receipt: SerialFrameReceipt?) -> String {
-        guard let receipt else { return " · noch nicht bestätigt" }
+        guard let receipt else { return L("frame.unconfirmed") }
         let age = Int(Date().timeIntervalSince(receipt.date))
         let ageText: String
         if age < 60 { ageText = "vor \(age) s" }
@@ -1068,7 +1068,7 @@ final class FlashDialogController: NSWindowController {
         let mask: NSWindow.StyleMask = [.titled, .closable]
         let window = NSWindow(contentRect: rect, styleMask: mask,
                               backing: .buffered, defer: false)
-        window.title = S().flashDialogTitle
+        window.title = L("flashdlg.title")
         window.isReleasedWhenClosed = false
         super.init(window: window)
         buildUI()
@@ -1079,7 +1079,7 @@ final class FlashDialogController: NSWindowController {
     private func buildUI() {
         guard let content = window?.contentView else { return }
 
-        let title = NSTextField(labelWithString: S().flashDialogTitle)
+        let title = NSTextField(labelWithString: L("flashdlg.title"))
         title.font = NSFont.appFont(.title3, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(title)
@@ -1108,17 +1108,17 @@ final class FlashDialogController: NSWindowController {
         warningLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(warningLabel)
 
-        let groupLabel = NSTextField(labelWithString: S().flashDialogBoardVariant)
+        let groupLabel = NSTextField(labelWithString: L("flashdlg.variant"))
         groupLabel.font = NSFont.appFont(.callout, weight: .medium)
         groupLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(groupLabel)
 
-        radioStandard = NSButton(radioButtonWithTitle: S().flashDialogVariantStandard,
+        radioStandard = NSButton(radioButtonWithTitle: L("flashdlg.variant.standard"),
                                  target: self, action: #selector(variantChanged(_:)))
         radioStandard.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(radioStandard)
 
-        radioAlternative = NSButton(radioButtonWithTitle: S().flashDialogVariantAlternative,
+        radioAlternative = NSButton(radioButtonWithTitle: L("flashdlg.variant.alt"),
                                     target: self, action: #selector(variantChanged(_:)))
         radioAlternative.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(radioAlternative)
@@ -1130,23 +1130,23 @@ final class FlashDialogController: NSWindowController {
             radioStandard.state = .on
         }
 
-        let hint = NSTextField(wrappingLabelWithString: S().flashDialogVariantHint)
+        let hint = NSTextField(wrappingLabelWithString: L("flashdlg.variant.hint"))
         hint.font = NSFont.appFont(.subheadline)
         hint.textColor = .tertiaryLabelColor
         hint.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(hint)
 
-        startBtn = NSButton(title: S().flashDialogStart, target: self, action: #selector(onStart))
+        startBtn = NSButton(title: L("flashdlg.start"), target: self, action: #selector(onStart))
         startBtn.bezelStyle = .rounded
         startBtn.keyEquivalent = "\r"  // Enter
         startBtn.isEnabled = canStart
         startBtn.toolTip = canStart
-            ? "Startet Download und Flash mit der gewählten Display-Variante."
-            : "Flashen ist blockiert, bis der Preflight-Check grün ist."
+            ? L("flashdlg.start.tooltip")
+            : L("flashdlg.blocked")
         startBtn.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(startBtn)
 
-        let cancelBtn = NSButton(title: S().cancel, target: self, action: #selector(onCancel))
+        let cancelBtn = NSButton(title: L("common.cancel"), target: self, action: #selector(onCancel))
         cancelBtn.bezelStyle = .rounded
         cancelBtn.keyEquivalent = "\u{1b}"  // Escape
         cancelBtn.translatesAutoresizingMaskIntoConstraints = false

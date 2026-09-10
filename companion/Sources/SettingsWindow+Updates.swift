@@ -32,17 +32,17 @@ extension SettingsWindowController {
         updateChannelPopup.widthAnchor.constraint(equalToConstant: 180).isActive = true
         let channelRow = twoColumnRow("Update-Kanal", updateChannelPopup)
 
-        let channelHelper = NSTextField(labelWithString: "Stable nutzt veröffentlichte Releases. Beta zeigt zusätzlich Vorabversionen für App und Firmware.")
+        let channelHelper = NSTextField(labelWithString: L("upd.channel.intro"))
         channelHelper.font = NSFont.appFont(.subheadline)
         channelHelper.textColor = .secondaryLabelColor
         channelHelper.lineBreakMode = .byWordWrapping
         channelHelper.maximumNumberOfLines = 2
-        channelHelper.toolTip = "Stable zeigt nur veröffentlichte Versionen. Beta zeigt zusätzlich Vorabversionen."
+        channelHelper.toolTip = L("upd.channel.tooltip")
         updateChannelPopup.toolTip = channelHelper.toolTip
 
         let checkButton = NSButton(title: "Nach Updates suchen …", target: self, action: #selector(checkAppUpdate))
         checkButton.bezelStyle = .rounded
-        checkButton.toolTip = "Prüft App- und Firmware-Releases auf GitHub."
+        checkButton.toolTip = L("upd.check.tooltip")
 
         let stack = NSStackView(views: [heading, channelRow, channelHelper, checkButton])
         stack.orientation = .vertical
@@ -65,9 +65,9 @@ extension SettingsWindowController {
         fwUpdateLabel.font = NSFont.appFont(.callout)
         fwUpdateLabel.textColor = .secondaryLabelColor
 
-        fwFlashButton = NSButton(title: "Firmware flashen …", target: self, action: #selector(flashFirmware))
+        fwFlashButton = NSButton(title: L("flash.action.short"), target: self, action: #selector(flashFirmware))
         fwFlashButton.bezelStyle = .rounded
-        fwFlashButton.toolTip = "Installiert die aktuelle Display-Firmware über USB. Nutze die andere Variante, wenn das Bild falsch wirkt."
+        fwFlashButton.toolTip = L("upd.flash.tooltip")
 
         fwProgressBar = NSProgressIndicator()
         fwProgressBar.style = .bar

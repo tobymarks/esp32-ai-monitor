@@ -17,7 +17,7 @@ extension SettingsWindowController {
 
     func buildDisplayBox() -> NSView {
         let heading = makeSectionHeading("Display einrichten")
-        let intro = NSTextField(wrappingLabelWithString: "Stelle das verbundene Display in drei Schritten ein: Gerät erkennen, Darstellung wählen, Ergebnis prüfen.")
+        let intro = NSTextField(wrappingLabelWithString: L("disp.intro"))
         intro.font = NSFont.appFont(.callout)
         intro.textColor = .secondaryLabelColor
 
@@ -27,10 +27,10 @@ extension SettingsWindowController {
 
         // Theme
         themePopup = NSPopUpButton()
-        themePopup.addItems(withTitles: ["Automatisch (macOS)", "Dark", "Light"])
+        themePopup.addItems(withTitles: [L("disp.tz.auto"), "Dark", "Light"])
         themePopup.target = self
         themePopup.action = #selector(themeChosen)
-        themePopup.toolTip = "Legt fest, ob das Display hell, dunkel oder passend zu macOS angezeigt wird."
+        themePopup.toolTip = L("disp.theme.tooltip")
         let themeRow = twoColumnRow("Theme", themePopup)
 
         // Prozent-Logik (global für alle Provider)
@@ -41,7 +41,7 @@ extension SettingsWindowController {
         ])
         percentModePopup.target = self
         percentModePopup.action = #selector(percentModeChosen)
-        percentModePopup.toolTip = "Wählt, ob Nutzung oder verbleibendes Kontingent angezeigt wird."
+        percentModePopup.toolTip = L("disp.percent.tooltip")
         percentModePopup.translatesAutoresizingMaskIntoConstraints = false
         percentModePopup.widthAnchor.constraint(equalToConstant: 240).isActive = true
         let percentModeRow = twoColumnRow("Prozentmodus", percentModePopup)
@@ -55,7 +55,7 @@ extension SettingsWindowController {
         ])
         orientationPopup.target = self
         orientationPopup.action = #selector(orientationChosen)
-        orientationPopup.toolTip = "Dreht die Anzeige passend zur USB-Position."
+        orientationPopup.toolTip = L("disp.orient.tooltip")
         let orientRow = twoColumnRow("Ausrichtung", orientationPopup)
 
         // Language
@@ -63,7 +63,7 @@ extension SettingsWindowController {
         languagePopup.addItems(withTitles: ["Deutsch", "English"])
         languagePopup.target = self
         languagePopup.action = #selector(languageChosen)
-        languagePopup.toolTip = "Sprache der Labels auf dem ESP32-Display."
+        languagePopup.toolTip = L("disp.lang.tooltip")
         let langRow = twoColumnRow("Sprache", languagePopup)
 
         // TimeZone (v1.12.0) — steuert displayTime auf dem ESP32.
@@ -71,7 +71,7 @@ extension SettingsWindowController {
         rebuildTimeZonePopup()
         timeZonePopup.target = self
         timeZonePopup.action = #selector(timeZoneChosen)
-        timeZonePopup.toolTip = "Bestimmt Uhrzeit und Reset-Zeiten auf dem Display."
+        timeZonePopup.toolTip = L("disp.tz.tooltip")
         timeZonePopup.translatesAutoresizingMaskIntoConstraints = false
         timeZonePopup.widthAnchor.constraint(equalToConstant: 240).isActive = true
         let tzRow = twoColumnRow("Zeitzone", timeZonePopup)
@@ -80,7 +80,7 @@ extension SettingsWindowController {
         brightnessSlider = NSSlider(value: Double(Settings.shared.lastKnownBrightness),
                                     minValue: 5, maxValue: 100,
                                     target: self, action: #selector(brightnessChanged))
-        brightnessSlider.toolTip = "Helligkeit des angeschlossenen Displays."
+        brightnessSlider.toolTip = L("disp.bright.tooltip")
         brightnessSlider.isContinuous = true
         brightnessSlider.numberOfTickMarks = 0
         brightnessSlider.translatesAutoresizingMaskIntoConstraints = false
@@ -96,14 +96,14 @@ extension SettingsWindowController {
         brightControls.spacing = 8
         let brightRow = twoColumnRow("Helligkeit", brightControls)
 
-        lastUpdateLabel = NSTextField(labelWithString: "Letztes Update an ESP32: —")
+        lastUpdateLabel = NSTextField(labelWithString: L("disp.lastsend.none"))
         lastUpdateLabel.font = NSFont.appFont(.subheadline)
         lastUpdateLabel.textColor = .secondaryLabelColor
 
         let deviceStep = buildDisplaySetupStep(
             number: "1",
-            title: "Display auswählen",
-            detail: "Name und Profil helfen, mehrere Displays auseinanderzuhalten.",
+            title: L("disp.step.pick"),
+            detail: L("disp.step.pick.detail"),
             views: [deviceRowBuilt, deviceProfilesRow]
         )
 
@@ -122,23 +122,23 @@ extension SettingsWindowController {
         let appearanceStep = buildDisplaySetupStep(
             number: "2",
             title: "Darstellung einstellen",
-            detail: "Ausrichtung und Helligkeit sind die wichtigsten Werte. Alles wird direkt an das ESP32-Display gesendet.",
+            detail: L("disp.step.look.detail"),
             views: [appearanceRows]
         )
 
         let testButton = NSButton(title: "Testbild senden", target: self, action: #selector(sendTestFrame))
         testButton.bezelStyle = .rounded
-        testButton.toolTip = "Sendet einen Beispiel-Screen, um Ausrichtung, Helligkeit und Verbindung zu prüfen."
+        testButton.toolTip = L("disp.test.tooltip")
         displayTestButton = testButton
 
-        let testHelper = NSTextField(wrappingLabelWithString: "Sende nach Änderungen ein Testbild. Wenn es falsch gedreht ist, ändere die Ausrichtung und teste erneut.")
+        let testHelper = NSTextField(wrappingLabelWithString: L("disp.test.hint"))
         testHelper.font = NSFont.appFont(.subheadline)
         testHelper.textColor = .secondaryLabelColor
 
         let testStep = buildDisplaySetupStep(
             number: "3",
-            title: "Ergebnis prüfen",
-            detail: "Das Testbild bestätigt, dass Darstellung und USB-Verbindung zusammenpassen.",
+            title: L("disp.step.check"),
+            detail: L("disp.step.check.detail"),
             views: [testButton, testHelper, lastUpdateLabel]
         )
 
@@ -210,14 +210,14 @@ extension SettingsWindowController {
         // Systemeinstellungen, faerben sich nicht mit dem Control-Tint und
         // werden von VoiceOver als „Bleistift" statt als Aktion vorgelesen.
         deviceEditButton.image = NSImage(systemSymbolName: "pencil",
-                                         accessibilityDescription: "Name ändern")
+                                         accessibilityDescription: L("disp.name.edit"))
         deviceEditButton.imagePosition = .imageOnly
         deviceEditButton.contentTintColor = .secondaryLabelColor
         deviceEditButton.target = self
         deviceEditButton.action = #selector(beginDeviceNameEdit)
         deviceEditButton.setButtonType(.momentaryPushIn)
-        deviceEditButton.toolTip = "Name ändern"
-        deviceEditButton.setAccessibilityLabel("Gerätename ändern")
+        deviceEditButton.toolTip = L("disp.name.edit")
+        deviceEditButton.setAccessibilityLabel(L("disp.name.edit.tooltip"))
         deviceEditButton.translatesAutoresizingMaskIntoConstraints = false
         deviceEditButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
@@ -273,7 +273,7 @@ extension SettingsWindowController {
 
         deviceForgetButton = NSButton(title: "Vergessen", target: self, action: #selector(forgetCurrentDeviceProfile))
         deviceForgetButton.bezelStyle = .rounded
-        deviceForgetButton.toolTip = "Aktuelles Geräteprofil entfernen"
+        deviceForgetButton.toolTip = L("disp.profile.forget.tooltip")
 
         let controls = NSStackView(views: [deviceProfilesPopup, deviceForgetButton])
         controls.orientation = .horizontal
@@ -301,17 +301,17 @@ extension SettingsWindowController {
         }
         let raw = deviceEditField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty {
-            deviceEditHintLabel.stringValue = "Name darf nicht leer sein."
+            deviceEditHintLabel.stringValue = L("disp.name.err.empty")
             deviceEditHintLabel.isHidden = false
             return
         }
         if raw.count > 30 {
-            deviceEditHintLabel.stringValue = "Name darf max. 30 Zeichen haben."
+            deviceEditHintLabel.stringValue = L("disp.name.err.long")
             deviceEditHintLabel.isHidden = false
             return
         }
         if DeviceRegistry.shared.isNameTaken(raw, excludeMAC: profile.mac) {
-            deviceEditHintLabel.stringValue = "Name bereits vergeben."
+            deviceEditHintLabel.stringValue = L("disp.name.err.dup")
             deviceEditHintLabel.isHidden = false
             return
         }
@@ -359,7 +359,7 @@ extension SettingsWindowController {
                 deviceNameLabel.toolTip = macTip
                 deviceRow.toolTip = macTip
             } else {
-                deviceNameLabel.stringValue = "— (kein Profil)"
+                deviceNameLabel.stringValue = L("disp.profile.none")
                 deviceNameLabel.textColor = .tertiaryLabelColor
                 deviceEditButton.isEnabled = false
                 deviceEditButton.isHidden = true
@@ -367,21 +367,21 @@ extension SettingsWindowController {
                 deviceRow.toolTip = nil
             }
         case .foreignFirmware:
-            deviceNameLabel.stringValue = "Fremde Firmware — bitte flashen"
+            deviceNameLabel.stringValue = L("disp.fw.foreign")
             deviceNameLabel.textColor = .systemRed
             deviceEditButton.isEnabled = false
             deviceEditButton.isHidden = true
-            deviceNameLabel.toolTip = "Dieses ESP32-Geraet antwortet nicht auf get_info und hat vermutlich keine AI-Monitor-Firmware."
+            deviceNameLabel.toolTip = L("disp.fw.foreign.detail")
             deviceRow.toolTip = deviceNameLabel.toolTip
         case .probing:
-            deviceNameLabel.stringValue = "— (Geraete-Handshake …)"
+            deviceNameLabel.stringValue = L("disp.device.handshake")
             deviceNameLabel.textColor = .secondaryLabelColor
             deviceEditButton.isEnabled = false
             deviceEditButton.isHidden = true
             deviceNameLabel.toolTip = nil
             deviceRow.toolTip = nil
         case .disconnected:
-            deviceNameLabel.stringValue = "— (nicht verbunden)"
+            deviceNameLabel.stringValue = L("disp.device.disconnected")
             deviceNameLabel.textColor = .tertiaryLabelColor
             deviceEditButton.isEnabled = false
             deviceEditButton.isHidden = true
@@ -404,7 +404,7 @@ extension SettingsWindowController {
 
         deviceProfilesPopup.removeAllItems()
         if profiles.isEmpty {
-            deviceProfilesPopup.addItem(withTitle: "Keine Profile")
+            deviceProfilesPopup.addItem(withTitle: L("disp.profile.empty"))
             deviceProfilesPopup.isEnabled = false
         } else {
             for profile in profiles {
@@ -457,8 +457,8 @@ extension SettingsWindowController {
     @objc private func forgetCurrentDeviceProfile() {
         guard let profile = DeviceRegistry.shared.currentProfile() else { return }
         let alert = NSAlert()
-        alert.messageText = "Gerät vergessen?"
-        alert.informativeText = "\(profile.friendlyName) wird aus der Profilliste entfernt. Anzeige-Einstellungen für dieses Gerät gehen verloren."
+        alert.messageText = L("disp.forget.title")
+        alert.informativeText = L("disp.forget.info", profile.friendlyName)
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Vergessen")
         alert.addButton(withTitle: "Abbrechen")
@@ -517,7 +517,7 @@ extension SettingsWindowController {
             timeZonePopup.addItem(withTitle: Self.titleForTimeZone(current))
         }
         timeZonePopup.menu?.addItem(.separator())
-        timeZonePopup.addItem(withTitle: "Weitere …")
+        timeZonePopup.addItem(withTitle: L("disp.tz.more"))
 
         // Auswahl setzen
         if let idx = kTimeZonePopupIdentifiers.firstIndex(of: current) {
@@ -564,13 +564,13 @@ extension SettingsWindowController {
 
     private func presentTimeZonePicker() {
         let alert = NSAlert()
-        alert.messageText = "Zeitzone wählen"
-        alert.informativeText = "Filter und Auswahl — die ausgewählte IANA-Zone wird für die Display-Uhr und Reset-Berechnungen genutzt."
+        alert.messageText = L("disp.tz.title")
+        alert.informativeText = L("disp.tz.intro")
         alert.alertStyle = .informational
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 260))
         let search = NSSearchField(frame: NSRect(x: 0, y: 230, width: 360, height: 24))
-        search.placeholderString = "Filter (z. B. Berlin, New_York, UTC)"
+        search.placeholderString = L("disp.tz.filter")
         container.addSubview(search)
 
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 220))
