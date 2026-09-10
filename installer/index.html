@@ -17,9 +17,8 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#f7f8f4">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="preload" href="assets/fonts/plus-jakarta-sans-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/plus-jakarta-sans-700-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
@@ -222,6 +221,9 @@
           </article>
           <article class="plain-card">
             <h3 data-i18n="hw.case.h">Ein Gehäuse für deinen Schreibtisch</h3>
+            <figure class="case-photo">
+              <img src="assets/display-case-portrait.jpg" alt="AI Monitor Display im Hochformat-Gehäuse auf dem Schreibtisch, mit Claude-Limits als Balken" data-i18n-alt="hw.case.img.alt" width="1500" height="1200" loading="lazy" decoding="async">
+            </figure>
             <div class="case-links">
               <a class="case-link" href="https://makerworld.com/de/models/2583102-weather-station-pro-anemometer-esp32-2432s028-cyd#profileId-2849155" target="_blank" rel="noopener">
                 <span data-i18n="hw.case.landscape">Querformat · 3D-Druckdatei</span>
@@ -297,6 +299,8 @@
         <a href="https://github.com/tobymarks/esp32-ai-monitor/blob/main/LICENSE" target="_blank" rel="noopener">MIT</a>
         &nbsp;/&nbsp;
         <a href="https://www.flaticon.com/free-icons/chatbot" title="chatbot icons" target="_blank" rel="noopener" data-i18n="footer.icons">Bildnachweise</a>
+        &nbsp;/&nbsp;
+        <a href="impressum.html" data-i18n="footer.legal">Impressum &amp; Datenschutz</a>
       </span>
     </div>
   </footer>
@@ -380,6 +384,7 @@
     "hw.need.3": "A Mac running macOS 14 or newer — Apple Silicon or Intel",
     "hw.need.4": "CodexBar with at least one provider set up",
     "hw.case.h": "A case for your desk",
+    "hw.case.img.alt": "AI Monitor display in a portrait case on the desk, showing Claude limits as bars",
     "hw.views.label": "Views on the display",
     "hw.view.rings.alt": "Display in ring view: ChatGPT weekly limit at 15 percent with time remaining",
     "hw.view.rings.h": "Rings",
@@ -404,6 +409,7 @@
 
     "footer.fw": "Firmware",
     "footer.app": "App",
+    "footer.legal": "Legal notice & privacy",
     "footer.icons": "Icon attribution",
 
     "_title": "AI Monitor – Your AI limits at a glance",
