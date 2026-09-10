@@ -5,23 +5,23 @@
     "usage": {
       "primary": {
         "usedPercent": 62.0,
-        "resetsAt": "2026-09-11T05:23:48Z",
+        "resetsAt": "2026-09-11T05:42:26Z",
         "windowMinutes": 1440,
         "resetDescription": "Resets in 9h 12m"
       },
       "secondary": {
         "usedPercent": 18.5,
-        "resetsAt": "2026-09-11T05:23:48Z",
+        "resetsAt": "2026-09-11T05:42:26Z",
         "windowMinutes": 1440,
         "resetDescription": "Resets in 9h 12m"
       },
       "tertiary": {
         "usedPercent": 3.0,
-        "resetsAt": "2026-09-11T05:23:48Z",
+        "resetsAt": "2026-09-11T05:42:26Z",
         "windowMinutes": 1440,
         "resetDescription": "Resets in 9h 12m"
       },
-      "updatedAt": "2026-09-10T20:11:48Z"
+      "updatedAt": "2026-09-10T20:30:26Z"
     }
   }
 ]

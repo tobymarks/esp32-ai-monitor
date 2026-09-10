@@ -13,5 +13,5 @@ CLI die Datei `<dir>/<provider>.json`:
 
 Varianten wie `copilot-chat-only.json` oder `cursor-legacy.json` vorher auf den
 Provider-Namen kopieren. Die Zeitstempel sind relativ zum Erzeugungszeitpunkt
-und werden beim Anlegen frisch gesetzt; fuer einen neuen Satz das Skript im
-Commit-Verlauf erneut ausfuehren oder die `resetsAt`-Werte von Hand anpassen.
+und werden mit `make_fixtures.py` frisch gesetzt — vor jedem Testlauf neu erzeugen,
+sonst gelten die Daten nach 15 Minuten als veraltet.

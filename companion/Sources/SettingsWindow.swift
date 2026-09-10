@@ -604,16 +604,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             codexBarStatusLabel.textColor = .systemOrange
         }
 
+        // Zeilentitel kommen vom Provider (Session/Weekly bei Claude und
+        // ChatGPT, Pro/Flash/Flash Lite bei Gemini, Premium/Chat bei Copilot …).
+        let providerMeta = CodexBarProvider.normalized(src.provider)
+        let rowTitle: (Int) -> String = { providerMeta.defaultRowTitle(at: $0) }
+
         if let e = entry, src.status.isOK {
             var values: [String] = []
             if let primary = e.primary {
-                values.append("Session: \(Int(primary.usedPercent.rounded())) %")
+                values.append("\(rowTitle(0)): \(Int(primary.usedPercent.rounded())) %")
             }
             if let secondary = e.secondary {
-                values.append("Weekly: \(Int(secondary.usedPercent.rounded())) %")
+                values.append("\(rowTitle(1)): \(Int(secondary.usedPercent.rounded())) %")
             }
             if let tertiary = e.tertiary {
-                values.append("Tertiary: \(Int(tertiary.usedPercent.rounded())) %")
+                values.append("\(rowTitle(2)): \(Int(tertiary.usedPercent.rounded())) %")
             }
             for extra in e.extraWindows ?? [] {
                 values.append("\(extra.title): \(Int(extra.window.usedPercent.rounded())) %")
@@ -621,21 +626,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             codexBarValuesLabel.stringValue = values.isEmpty ? L("limits.none") : values.joined(separator: "   ·   ")
 
             if let reset = e.primary?.resetDescription {
-                codexBarResetSessionLabel.stringValue = "Session-Reset: \(reset)"
+                codexBarResetSessionLabel.stringValue = "\(rowTitle(0))-Reset: \(reset)"
                 codexBarResetSessionLabel.isHidden = false
             } else {
                 codexBarResetSessionLabel.stringValue = ""
                 codexBarResetSessionLabel.isHidden = true
             }
             if let reset = e.secondary?.resetDescription {
-                codexBarResetWeeklyLabel.stringValue = "Weekly-Reset: \(reset)"
+                codexBarResetWeeklyLabel.stringValue = "\(rowTitle(1))-Reset: \(reset)"
                 codexBarResetWeeklyLabel.isHidden = false
             } else {
                 codexBarResetWeeklyLabel.stringValue = ""
                 codexBarResetWeeklyLabel.isHidden = true
             }
         } else {
-            codexBarValuesLabel.stringValue = "Session: — · Weekly: —"
+            codexBarValuesLabel.stringValue = "\(rowTitle(0)): — · \(rowTitle(1)): —"
             let msg: String
             switch src.status {
             case .cliMissing:
