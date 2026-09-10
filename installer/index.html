@@ -1137,6 +1137,8 @@
   if (start !== "de") apply(start);
 
   // --- "You are here": aktive Sektion in der Navigation markieren ---
+  // Bewusst per scroll-Listener statt IntersectionObserver: deterministisch,
+  // testbar und bei drei Sektionen performant unkritisch.
   var links = [].slice.call(document.querySelectorAll('.topbar nav a[href^="#"]'));
   var targets = links
     .map(function (a) {
@@ -1145,17 +1147,23 @@
     })
     .filter(Boolean);
 
-  if (targets.length && "IntersectionObserver" in window) {
-    var visible = new Set();
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (en) {
-        if (en.isIntersecting) visible.add(en.target); else visible.delete(en.target);
-      });
-      var active = targets.filter(function (t) { return visible.has(t.el); })[0];
-      links.forEach(function (a) { a.classList.remove("is-active"); });
-      if (active) active.a.classList.add("is-active");
-    }, { rootMargin: "-45% 0px -45% 0px" });
-    targets.forEach(function (t) { io.observe(t.el); });
+  function markiereAktiv() {
+    var mitte = window.innerHeight / 2;
+    var aktiv = null;
+    targets.forEach(function (t) {
+      var r = t.el.getBoundingClientRect();
+      if (r.top <= mitte && r.bottom > mitte) aktiv = t;
+    });
+    links.forEach(function (a) { a.classList.remove("is-active"); });
+    if (aktiv) aktiv.a.classList.add("is-active");
+  }
+
+  if (targets.length) {
+    // Kein requestAnimationFrame-Throttle: der pausiert in Hintergrund-Tabs.
+    // Bei drei Sektionen ist der direkte Aufruf ohnehin vernachlaessigbar.
+    window.addEventListener("scroll", markiereAktiv, { passive: true });
+    window.addEventListener("resize", markiereAktiv, { passive: true });
+    markiereAktiv();
   }
 })();
 </script>
