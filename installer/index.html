@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Monitor — Claude, ChatGPT und Antigravity auf dem Desk-Display</title>
   <meta name="description" content="AI Monitor zeigt Claude-, ChatGPT- und Antigravity-Limits auf einem kleinen ESP32-Display. CodexBar liefert die Daten, die Mac App verbindet und flasht das Display.">
+  <link rel="canonical" href="https://tobymarks.github.io/esp32-ai-monitor/">
+  <link rel="alternate" hreflang="de" href="https://tobymarks.github.io/esp32-ai-monitor/">
+  <link rel="alternate" hreflang="en" href="https://tobymarks.github.io/esp32-ai-monitor/?lang=en">
+  <link rel="alternate" hreflang="x-default" href="https://tobymarks.github.io/esp32-ai-monitor/">
   <meta property="og:title" content="AI Monitor">
   <meta property="og:description" content="Ein kleines USB-Desk-Display für AI-Limits, gesteuert über CodexBar und die AI Monitor Mac App.">
   <meta property="og:type" content="website">
@@ -18,16 +22,16 @@
   <style>
     :root {
       --card: #f5f5f4;
-      --ring: #6366f1;
+      --ring: #5f62ef;
       --input: #d6d3d1;
       --muted-surface: #e7e5e4;
       --accent: #f3e5f5;
       --border: #d6d3d1;
-      --primary: #6366f1;
+      --primary: #5f62ef;
       --primary-deep: #4f46e5;
       --background: #e7e5e4;
       --foreground: #1e293b;
-      --muted-foreground: #6b7280;
+      --muted-foreground: #5a6472;
       --secondary-foreground: #4b5563;
       --primary-foreground: #ffffff;
       --bg: var(--background);
@@ -679,90 +683,170 @@
       }
 
     }
+
+    .hero-note {
+      margin: 14px 0 0;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .hero-note strong { color: var(--ink); font-weight: 600; }
+
+    /* --- Tap-Targets: WCAG 2.5.5 / mind. 44px Hoehe --- */
+    .topbar nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding-inline: 2px;
+    }
+    .skip-link { min-height: 44px; display: inline-flex; align-items: center; }
+    .tag, .text-link, .footer-row a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+    }
+    .plain-card ul li { min-height: 32px; display: flex; align-items: center; }
+    .plain-card ul li a { padding-block: 6px; }
+
+    /* --- Externe Links kennzeichnen (nicht bei Buttons/Tags/Cards) --- */
+    a[target="_blank"]:not(.button):not(.tag):not(.case-link):not(.brand)::after {
+      content: "↗";
+      font-size: 0.78em;
+      margin-left: 0.28em;
+      opacity: 0.65;
+      line-height: 1;
+    }
+
+    /* --- "You are here": aktive Sektion in der Navigation --- */
+    .topbar nav a.is-active {
+      color: var(--primary-deep);
+      font-weight: 600;
+    }
+
+    /* --- Sprachumschalter --- */
+    .topbar { gap: 12px; }
+    .lang-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      margin-left: 10px;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--paper-strong);
+    }
+    .lang-switch button {
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1;
+      color: var(--muted);
+      background: none;
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 14px;
+      min-height: 44px;
+      cursor: pointer;
+    }
+    .lang-switch button[aria-pressed="true"] {
+      background: var(--primary);
+      color: var(--primary-foreground);
+    }
+    .lang-switch button:focus-visible {
+      outline: 2px solid var(--ring);
+      outline-offset: 2px;
+    }
+    @media (max-width: 720px) {
+      .lang-switch { margin-left: 0; }
+    }
   </style>
 </head>
 <body>
-  <a class="skip-link" href="#main">Zum Inhalt springen</a>
+  <a class="skip-link" href="#main" data-i18n="skip">Zum Inhalt springen</a>
 
   <header class="shell topbar">
     <a class="brand" href="#top" aria-label="AI Monitor Start">
       <span class="mark">AI</span>
       <span>AI Monitor</span>
     </a>
-    <nav aria-label="Hauptnavigation">
-      <a href="#download">Download</a>
-      <a href="#hardware">Hardware</a>
-      <a href="#hilfe">Hilfe</a>
+    <nav aria-label="Hauptnavigation" data-i18n-aria="nav.label">
+      <a href="#download" data-i18n="nav.download">Download</a>
+      <a href="#hardware" data-i18n="nav.hardware">Hardware</a>
+      <a href="#hilfe" data-i18n="nav.help">Hilfe</a>
       <a href="https://github.com/tobymarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a>
     </nav>
+    <div class="lang-switch" role="group" aria-label="Sprache / Language">
+      <button type="button" data-lang="de" aria-pressed="true" lang="de">DE</button>
+      <button type="button" data-lang="en" aria-pressed="false" lang="en">EN</button>
+    </div>
   </header>
 
   <main id="main">
     <section class="shell hero" id="top">
       <div>
-        <p class="eyebrow">CodexBar -> Mac App -> USB Display</p>
+        <p class="eyebrow">CodexBar -&gt; Mac App -&gt; USB Display</p>
         <h1>AI Monitor</h1>
-        <p class="hero-copy">Ein kleines USB-Display für Claude, ChatGPT und Antigravity. CodexBar liefert die Daten, die Mac App verbindet, flasht und steuert das ESP32-Display.</p>
+        <p class="hero-copy" data-i18n="hero.copy">Ein kleines USB-Display für Claude, ChatGPT und Antigravity. CodexBar liefert die Daten, die Mac App verbindet, flasht und steuert das ESP32-Display.</p>
         <div class="hero-actions">
-          <a class="button primary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.25.0/AIMonitor.dmg">AI Monitor App laden</a>
-          <a class="button secondary" href="https://github.com/steipete/CodexBar/releases/latest" target="_blank" rel="noopener">CodexBar laden</a>
-          <a class="text-link" href="#hardware">Hardware ansehen</a>
+          <a class="button primary" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.25.0/AIMonitor.dmg" data-i18n="hero.cta.app">AI Monitor App laden</a>
+          <a class="button secondary" href="https://github.com/steipete/CodexBar/releases/latest" target="_blank" rel="noopener" data-i18n="hero.cta.codexbar">CodexBar laden</a>
+          <a class="text-link" href="#hardware" data-i18n="hero.cta.hardware">Hardware ansehen</a>
         </div>
-        <div class="meta-strip" aria-label="Kurzinfos">
+        <p class="hero-note" data-i18n-html="hero.note"><strong>Zuerst CodexBar installieren.</strong> Es liefert die Usage-Daten — ohne CodexBar bleibt das Display leer.</p>
+        <div class="meta-strip" aria-label="Kurzinfos" data-i18n-aria="hero.meta.label">
           <div class="meta">
             <strong>macOS 13+</strong>
             <span>Apple Silicon</span>
           </div>
           <div class="meta">
             <strong>USB Serial</strong>
-            <span>kein ESP32-WiFi</span>
+            <span data-i18n="hero.meta.nowifi">ohne WLAN am ESP32</span>
           </div>
           <div class="meta">
-            <strong>FW v2.11.4</strong>
-            <span>App v1.17.1</span>
+            <strong><span data-i18n="hero.meta.fw">FW</span> <span data-v="fw">v2.16.0</span></strong>
+            <span><span data-i18n="hero.meta.app">App</span> <span data-v="app">v1.25.0</span></span>
           </div>
         </div>
       </div>
 
       <div class="hero-visual" aria-label="AI Monitor Display">
         <figure class="product-photo">
-          <img src="assets/display-codex-front.jpg" alt="AI Monitor Display im gedruckten Gehäuse mit ChatGPT-Limits">
+          <img src="assets/display-codex-front.jpg" alt="AI Monitor Display im gedruckten Gehäuse mit ChatGPT-Limits" data-i18n-alt="hero.img.alt">
         </figure>
       </div>
     </section>
 
     <section class="shell section" id="setup">
       <div class="section-header">
-        <p class="eyebrow">Setup</p>
-        <h2>Vier Schritte, dann läuft es nebenbei.</h2>
+        <p class="eyebrow" data-i18n="setup.eyebrow">Setup</p>
+        <h2 data-i18n="setup.title">Vier Schritte, dann läuft es nebenbei.</h2>
       </div>
-      <div class="flow" aria-label="Setup Schritte">
+      <div class="flow" aria-label="Setup Schritte" data-i18n-aria="setup.flow.label">
         <article class="flow-step">
           <div>
             <span class="num">01</span>
-            <h3>CodexBar installieren</h3>
-            <p>Die lokale Datenquelle für Claude, ChatGPT und Antigravity.</p>
+            <h3 data-i18n="setup.s1.h">CodexBar installieren</h3>
+            <p data-i18n="setup.s1.p">Die lokale Datenquelle für Claude, ChatGPT und Antigravity.</p>
           </div>
         </article>
         <article class="flow-step">
           <div>
             <span class="num">02</span>
-            <h3>AI Monitor App laden</h3>
-            <p>Die Mac App erkennt USB-Displays und merkt sich die Einstellungen.</p>
+            <h3 data-i18n="setup.s2.h">AI Monitor App laden</h3>
+            <p data-i18n="setup.s2.p">Die Mac App erkennt USB-Displays und merkt sich die Einstellungen.</p>
           </div>
         </article>
         <article class="flow-step">
           <div>
             <span class="num">03</span>
-            <h3>Display verbinden</h3>
-            <p>ESP32 per USB-Datenkabel anschließen.</p>
+            <h3 data-i18n="setup.s3.h">Display verbinden</h3>
+            <p data-i18n="setup.s3.p">ESP32 per USB-Datenkabel anschließen.</p>
           </div>
         </article>
         <article class="flow-step">
           <div>
             <span class="num">04</span>
-            <h3>Firmware in der App flashen</h3>
-            <p>Panel auswählen, Firmware schreiben, Provider wählen.</p>
+            <h3 data-i18n="setup.s4.h">Firmware in der App flashen</h3>
+            <p data-i18n="setup.s4.p">Panel auswählen, Firmware schreiben, Provider wählen.</p>
           </div>
         </article>
       </div>
@@ -770,28 +854,28 @@
 
     <section class="shell section" id="download">
       <div class="section-header">
-        <p class="eyebrow">Downloads</p>
-        <h2>Alles startet auf dem Mac.</h2>
-        <p>CodexBar liest die Usage-Daten. AI Monitor sendet sie ans Display und übernimmt Firmware-Updates direkt in der App.</p>
+        <p class="eyebrow" data-i18n="dl.eyebrow">Downloads</p>
+        <h2 data-i18n="dl.title">Alles startet auf dem Mac.</h2>
+        <p data-i18n="dl.sub">CodexBar liest die Usage-Daten. AI Monitor sendet sie ans Display und übernimmt Firmware-Updates direkt in der App.</p>
       </div>
 
       <div class="download-list">
         <article class="plain-card">
           <h3>CodexBar</h3>
-          <p>Datenquelle für Claude, ChatGPT und Antigravity.</p>
+          <p data-i18n="dl.cb.p">Datenquelle für Claude, ChatGPT und Antigravity.</p>
           <div class="tag-list">
             <a class="tag" href="https://codexbar.app/" target="_blank" rel="noopener">codexbar.app</a>
-            <a class="tag" href="https://github.com/steipete/CodexBar" target="_blank" rel="noopener">Repository</a>
-            <a class="tag" href="https://github.com/steipete/CodexBar/releases/latest" target="_blank" rel="noopener">Download</a>
+            <a class="tag" href="https://github.com/steipete/CodexBar" target="_blank" rel="noopener" data-i18n="dl.repo">Repository</a>
+            <a class="tag" href="https://github.com/steipete/CodexBar/releases/latest" target="_blank" rel="noopener" data-i18n="dl.download">Download</a>
           </div>
         </article>
         <article class="plain-card">
           <h3>AI Monitor App</h3>
-          <p>Menüleisten-App für USB-Verbindung, Anzeige-Einstellungen und Firmware-Flash.</p>
+          <p data-i18n="dl.app.p">Menüleisten-App für USB-Verbindung, Anzeige-Einstellungen und Firmware-Flash.</p>
           <div class="tag-list">
             <a class="tag" href="https://github.com/tobymarks/esp32-ai-monitor/releases/download/app-v1.25.0/AIMonitor.dmg">AIMonitor.dmg</a>
-            <a class="tag" href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/app-v1.17.1" target="_blank" rel="noopener">App Release</a>
-            <span class="tag">App v1.17.1</span>
+            <a class="tag" href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/app-v1.25.0" target="_blank" rel="noopener" data-i18n="dl.release">App Release</a>
+            <span class="tag"><span data-i18n="dl.apptag">App</span> <span data-v="app">v1.25.0</span></span>
           </div>
         </article>
       </div>
@@ -799,19 +883,19 @@
 
     <section class="shell section" id="hardware">
       <div class="section-header">
-        <p class="eyebrow">Hardware</p>
-        <h2>Ein günstiges CYD reicht.</h2>
-        <p>Unterstützt werden ESP32-2432S028 und ESP32-2432S028R. Die passende Firmware wählst du in der Mac App.</p>
+        <p class="eyebrow" data-i18n="hw.eyebrow">Hardware</p>
+        <h2 data-i18n="hw.title">Ein günstiges CYD reicht.</h2>
+        <p data-i18n="hw.sub">Unterstützt werden ESP32-2432S028 und ESP32-2432S028R. Die passende Firmware wählst du in der Mac App.</p>
       </div>
 
       <div class="hardware-grid">
         <article class="board-card">
           <figure class="hardware-photo">
-            <img src="assets/display-codex-angle.jpg" alt="AI Monitor Display neben dem Mac im transparenten Gehäuse">
+            <img src="assets/display-codex-angle.jpg" alt="AI Monitor Display neben dem Mac im transparenten Gehäuse" data-i18n-alt="hw.img.alt">
           </figure>
           <div class="board-copy">
             <h3>ESP32-2432S028 / ESP32-2432S028R</h3>
-            <p>2.8-Zoll-TFT, Touch, ESP32-WROOM-32 und USB-Serial.</p>
+            <p data-i18n="hw.board.p">2.8-Zoll-TFT, Touch, ESP32-WROOM-32 und USB-Serial.</p>
             <div class="tag-list">
               <span class="tag">R-Board: ILI9341</span>
               <span class="tag">Non-R: ST7789</span>
@@ -822,23 +906,23 @@
 
         <div class="support-stack">
           <article class="plain-card">
-            <h3>Was du brauchst</h3>
+            <h3 data-i18n="hw.need.h">Was du brauchst</h3>
             <ul>
-              <li><a href="https://de.aliexpress.com/item/1005007731775734.html" target="_blank" rel="noopener">ESP32-2432S028 Display bei AliExpress</a></li>
-              <li>USB-Datenkabel, kein reines Ladekabel</li>
-              <li>Mac mit macOS 13 oder neuer</li>
-              <li>CodexBar mit mindestens einem eingerichteten Provider</li>
+              <li><a href="https://de.aliexpress.com/item/1005007731775734.html" target="_blank" rel="noopener" data-i18n="hw.need.1">ESP32-2432S028 Display bei AliExpress</a></li>
+              <li data-i18n="hw.need.2">USB-Datenkabel, kein reines Ladekabel</li>
+              <li data-i18n="hw.need.3">Mac mit macOS 13 oder neuer</li>
+              <li data-i18n="hw.need.4">CodexBar mit mindestens einem eingerichteten Provider</li>
             </ul>
           </article>
           <article class="plain-card">
-            <h3>Empfohlene Gehäuse</h3>
+            <h3 data-i18n="hw.case.h">Empfohlene Gehäuse</h3>
             <div class="case-links">
               <a class="case-link" href="https://makerworld.com/de/models/2583102-weather-station-pro-anemometer-esp32-2432s028-cyd#profileId-2849155" target="_blank" rel="noopener">
-                <span>Landscape</span>
+                <span data-i18n="hw.case.landscape">Landscape</span>
                 <strong>Weather Station Pro für ESP32-2432S028 CYD</strong>
               </a>
               <a class="case-link" href="https://makerworld.com/de/models/1382304-aura-smart-weather-forecast-display?from=search#profileId-1430951" target="_blank" rel="noopener">
-                <span>Portrait</span>
+                <span data-i18n="hw.case.portrait">Portrait</span>
                 <strong>Aura Smart Weather Forecast Display</strong>
               </a>
             </div>
@@ -849,26 +933,26 @@
 
     <section class="shell section split" id="hilfe">
       <div class="section-header">
-        <p class="eyebrow">Hilfe</p>
-        <h2>Wenn etwas nicht sofort auftaucht.</h2>
-        <p>Die häufigsten Probleme liegen bei Kabel, USB-Treiber oder der falschen Display-Variante. Die App führt durch den Flash-Prozess, aber diese Checks helfen beim Einordnen.</p>
+        <p class="eyebrow" data-i18n="help.eyebrow">Hilfe</p>
+        <h2 data-i18n="help.title">Wenn etwas nicht sofort auftaucht.</h2>
+        <p data-i18n="help.sub">Die häufigsten Probleme liegen bei Kabel, USB-Treiber oder der falschen Display-Variante. Die App führt durch den Flash-Prozess, aber diese Checks helfen beim Einordnen.</p>
       </div>
       <div class="support-stack">
         <details open>
-          <summary>Die App sieht keinen Port</summary>
-          <p>Prüfe zuerst das USB-Kabel. Viele Kabel laden nur. Bei CH340-Boards kann der <a href="https://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank" rel="noopener">CH340-Treiber</a> helfen, bei CP2102-Boards der <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">Silicon-Labs-Treiber</a>.</p>
+          <summary data-i18n="help.q1">Die App sieht keinen Port</summary>
+          <p data-i18n-html="help.a1">Prüfe zuerst das USB-Kabel. Viele Kabel laden nur. Bei CH340-Boards kann der <a href="https://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank" rel="noopener">CH340-Treiber</a> helfen, bei CP2102-Boards der <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">Silicon-Labs-Treiber</a>.</p>
         </details>
         <details>
-          <summary>Display bleibt weiß oder zeigt falsche Farben</summary>
-          <p>Dann wurde sehr wahrscheinlich die falsche Firmware-Variante geflasht. In der App beim Firmware-Flash zwischen ILI9341 und ST7789 wechseln.</p>
+          <summary data-i18n="help.q2">Display bleibt weiß oder zeigt falsche Farben</summary>
+          <p data-i18n="help.a2">Dann wurde sehr wahrscheinlich die falsche Firmware-Variante geflasht. In der App beim Firmware-Flash zwischen ILI9341 und ST7789 wechseln.</p>
         </details>
         <details>
-          <summary>CodexBar-Daten fehlen</summary>
-          <p>CodexBar muss laufen und für den gewählten Provider Daten schreiben. In AI Monitor kannst du Claude, ChatGPT oder Antigravity danach als Anzeigequelle wählen.</p>
+          <summary data-i18n="help.q3">CodexBar-Daten fehlen</summary>
+          <p data-i18n="help.a3">CodexBar muss laufen und für den gewählten Provider Daten schreiben. In AI Monitor kannst du Claude, ChatGPT oder Antigravity danach als Anzeigequelle wählen.</p>
         </details>
         <details>
-          <summary>Manueller Firmware-Download</summary>
-          <p>Die aktuellen Firmware-Binaries liegen im Release <a href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/v2.11.4" target="_blank" rel="noopener">v2.11.4</a>. Der normale Weg bleibt der Flash aus der Mac App.</p>
+          <summary data-i18n="help.q4">Manueller Firmware-Download</summary>
+          <p data-i18n-html="help.a4">Die aktuellen Firmware-Binaries liegen im Release <a href="https://github.com/tobymarks/esp32-ai-monitor/releases/tag/v2.16.0" target="_blank" rel="noopener" data-v="fw-link">v2.16.0</a>. Der normale Weg bleibt der Flash aus der Mac App.</p>
         </details>
       </div>
     </section>
@@ -877,15 +961,203 @@
 
   <footer>
     <div class="shell footer-row">
-      <span>AI Monitor · Firmware v2.11.4 · App v1.17.1</span>
+      <span>AI Monitor · <span data-i18n="footer.fw">Firmware</span> <span data-v="fw">v2.16.0</span> · <span data-i18n="footer.app">App</span> <span data-v="app">v1.25.0</span></span>
       <span>
         <a href="https://github.com/tobymarks/esp32-ai-monitor" target="_blank" rel="noopener">GitHub</a>
         &nbsp;/&nbsp;
         <a href="https://codexbar.app/" target="_blank" rel="noopener">CodexBar</a>
         &nbsp;/&nbsp;
-        <a href="https://www.flaticon.com/free-icons/chatbot" title="chatbot icons" target="_blank" rel="noopener">Icon attribution</a>
+        <a href="https://www.flaticon.com/free-icons/chatbot" title="chatbot icons" target="_blank" rel="noopener" data-i18n="footer.icons">Icon-Attribution</a>
       </span>
     </div>
   </footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var FW = (document.querySelector('[data-v="fw"]') || {}).textContent || "";
+
+  var EN = {
+    "skip": "Skip to content",
+    "nav.label": "Main navigation",
+    "nav.download": "Download",
+    "nav.hardware": "Hardware",
+    "nav.help": "Help",
+
+    "hero.copy": "A small USB display for Claude, ChatGPT and Antigravity. CodexBar supplies the data; the Mac app connects, flashes and drives the ESP32 display.",
+    "hero.cta.app": "Download AI Monitor",
+    "hero.cta.codexbar": "Get CodexBar",
+    "hero.cta.hardware": "See the hardware",
+    "hero.note": "<strong>Install CodexBar first.</strong> It supplies the usage data \u2014 without it the display stays empty.",
+    "hero.meta.label": "Key facts",
+    "hero.meta.nowifi": "no Wi-Fi on the ESP32",
+    "hero.meta.fw": "FW",
+    "hero.meta.app": "App",
+    "hero.img.alt": "AI Monitor display in a printed case showing ChatGPT limits",
+
+    "setup.eyebrow": "Setup",
+    "setup.title": "Four steps, then it just runs.",
+    "setup.flow.label": "Setup steps",
+    "setup.s1.h": "Install CodexBar",
+    "setup.s1.p": "The local data source for Claude, ChatGPT and Antigravity.",
+    "setup.s2.h": "Download the AI Monitor app",
+    "setup.s2.p": "The Mac app detects USB displays and remembers your settings.",
+    "setup.s3.h": "Connect the display",
+    "setup.s3.p": "Plug in the ESP32 with a USB data cable.",
+    "setup.s4.h": "Flash the firmware from the app",
+    "setup.s4.p": "Pick the panel, write the firmware, choose a provider.",
+
+    "dl.eyebrow": "Downloads",
+    "dl.title": "It all starts on the Mac.",
+    "dl.sub": "CodexBar reads the usage data. AI Monitor sends it to the display and handles firmware updates right inside the app.",
+    "dl.cb.p": "Data source for Claude, ChatGPT and Antigravity.",
+    "dl.repo": "Repository",
+    "dl.download": "Download",
+    "dl.app.p": "Menu bar app for the USB connection, display settings and firmware flashing.",
+    "dl.release": "App release",
+    "dl.apptag": "App",
+
+    "hw.eyebrow": "Hardware",
+    "hw.title": "One cheap CYD is all it takes.",
+    "hw.sub": "ESP32-2432S028 and ESP32-2432S028R are supported. You pick the matching firmware in the Mac app.",
+    "hw.img.alt": "AI Monitor display next to the Mac in a transparent case",
+    "hw.board.p": "2.8-inch TFT, touch, ESP32-WROOM-32 and USB serial.",
+    "hw.need.h": "What you need",
+    "hw.need.1": "ESP32-2432S028 display on AliExpress",
+    "hw.need.2": "A USB data cable, not a charge-only one",
+    "hw.need.3": "A Mac running macOS 13 or newer",
+    "hw.need.4": "CodexBar with at least one provider set up",
+    "hw.case.h": "Recommended cases",
+    "hw.case.landscape": "Landscape",
+    "hw.case.portrait": "Portrait",
+
+    "help.eyebrow": "Help",
+    "help.title": "When something doesn\u2019t show up.",
+    "help.sub": "Most problems come down to the cable, the USB driver or the wrong display variant. The app walks you through flashing, but these checks help you narrow it down.",
+    "help.q1": "The app doesn\u2019t see a port",
+    "help.a1": "Check the USB cable first \u2014 many cables only charge. For CH340 boards the <a href=\"https://www.wch-ic.com/downloads/CH341SER_ZIP.html\" target=\"_blank\" rel=\"noopener\">CH340 driver</a> can help; for CP2102 boards use the <a href=\"https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers\" target=\"_blank\" rel=\"noopener\">Silicon Labs driver</a>.",
+    "help.q2": "The display stays white or shows wrong colours",
+    "help.a2": "Then the wrong firmware variant was almost certainly flashed. Switch between ILI9341 and ST7789 when flashing in the app.",
+    "help.q3": "CodexBar data is missing",
+    "help.a3": "CodexBar has to be running and writing data for the selected provider. After that you can pick Claude, ChatGPT or Antigravity as the display source in AI Monitor.",
+    "help.q4": "Manual firmware download",
+    "help.a4": "The current firmware binaries live in release <a href=\"https://github.com/tobymarks/esp32-ai-monitor/releases/tag/__FW__\" target=\"_blank\" rel=\"noopener\" data-v=\"fw-link\">__FW__</a>. The normal route is still flashing from the Mac app.",
+
+    "footer.fw": "Firmware",
+    "footer.app": "App",
+    "footer.icons": "Icon attribution",
+
+    "_title": "AI Monitor \u2014 Claude, ChatGPT and Antigravity on your desk display",
+    "_desc": "AI Monitor shows Claude, ChatGPT and Antigravity limits on a small ESP32 display. CodexBar supplies the data; the Mac app connects and flashes the display."
+  };
+
+  // Deutsch = was im HTML steht. Snapshot beim Start, kein zweites Woerterbuch.
+  var DE = {};
+  function snapshot() {
+    document.querySelectorAll("[data-i18n]").forEach(function (el) {
+      DE[el.getAttribute("data-i18n")] = el.textContent;
+    });
+    document.querySelectorAll("[data-i18n-html]").forEach(function (el) {
+      DE[el.getAttribute("data-i18n-html")] = el.innerHTML;
+    });
+    document.querySelectorAll("[data-i18n-alt]").forEach(function (el) {
+      DE[el.getAttribute("data-i18n-alt")] = el.getAttribute("alt");
+    });
+    document.querySelectorAll("[data-i18n-aria]").forEach(function (el) {
+      DE[el.getAttribute("data-i18n-aria")] = el.getAttribute("aria-label");
+    });
+    DE._title = document.title;
+    var m = document.querySelector('meta[name="description"]');
+    DE._desc = m ? m.getAttribute("content") : "";
+  }
+
+  function val(dict, key) {
+    var v = dict === EN ? EN[key] : DE[key];
+    if (v == null) return null;
+    return String(v).split("__FW__").join(FW);
+  }
+
+  function apply(lang) {
+    var dict = lang === "en" ? EN : DE;
+
+    document.querySelectorAll("[data-i18n]").forEach(function (el) {
+      var v = val(dict, el.getAttribute("data-i18n"));
+      if (v != null) el.textContent = v;
+    });
+    document.querySelectorAll("[data-i18n-html]").forEach(function (el) {
+      var v = val(dict, el.getAttribute("data-i18n-html"));
+      if (v != null) el.innerHTML = v;
+    });
+    document.querySelectorAll("[data-i18n-alt]").forEach(function (el) {
+      var v = val(dict, el.getAttribute("data-i18n-alt"));
+      if (v != null) el.setAttribute("alt", v);
+    });
+    document.querySelectorAll("[data-i18n-aria]").forEach(function (el) {
+      var v = val(dict, el.getAttribute("data-i18n-aria"));
+      if (v != null) el.setAttribute("aria-label", v);
+    });
+
+    var t = val(dict, "_title");
+    if (t) document.title = t;
+    var m = document.querySelector('meta[name="description"]');
+    var d = val(dict, "_desc");
+    if (m && d) m.setAttribute("content", d);
+
+    document.documentElement.lang = lang;
+
+    document.querySelectorAll(".lang-switch button").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-lang") === lang));
+    });
+
+    try { localStorage.setItem("aimonitor-lang", lang); } catch (e) {}
+
+    var url = new URL(window.location.href);
+    if (lang === "en") { url.searchParams.set("lang", "en"); }
+    else { url.searchParams.delete("lang"); }
+    history.replaceState(null, "", url.toString().replace(/\?$/, ""));
+  }
+
+  function initialLang() {
+    var q = new URLSearchParams(window.location.search).get("lang");
+    if (q === "en" || q === "de") return q;
+    var saved = null;
+    try { saved = localStorage.getItem("aimonitor-lang"); } catch (e) {}
+    if (saved === "en" || saved === "de") return saved;
+    return (navigator.language || "de").toLowerCase().indexOf("de") === 0 ? "de" : "en";
+  }
+
+  snapshot();
+
+  document.querySelectorAll(".lang-switch button").forEach(function (b) {
+    b.addEventListener("click", function () { apply(b.getAttribute("data-lang")); });
+  });
+
+  var start = initialLang();
+  if (start !== "de") apply(start);
+
+  // --- "You are here": aktive Sektion in der Navigation markieren ---
+  var links = [].slice.call(document.querySelectorAll('.topbar nav a[href^="#"]'));
+  var targets = links
+    .map(function (a) {
+      var el = document.querySelector(a.getAttribute("href"));
+      return el ? { a: a, el: el } : null;
+    })
+    .filter(Boolean);
+
+  if (targets.length && "IntersectionObserver" in window) {
+    var visible = new Set();
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) visible.add(en.target); else visible.delete(en.target);
+      });
+      var active = targets.filter(function (t) { return visible.has(t.el); })[0];
+      links.forEach(function (a) { a.classList.remove("is-active"); });
+      if (active) active.a.classList.add("is-active");
+    }, { rootMargin: "-45% 0px -45% 0px" });
+    targets.forEach(function (t) { io.observe(t.el); });
+  }
+})();
+</script>
 </body>
 </html>

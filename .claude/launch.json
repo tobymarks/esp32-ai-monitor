@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8090", "--directory", "/Users/tobiasmarks/Library/Mobile Documents/com~apple~CloudDocs/PKA/Projekte/esp32-ai-monitor/installer"],
       "port": 8090
+    },
+    {
+      "name": "installer-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4173", "--directory", "installer"],
+      "port": 4173
     }
   ]
 }

@@ -41,6 +41,12 @@ jobs:
           fi
           echo "Version OK: $CODE"
 
+      # Die Versionsangaben auf der Installer-Seite werden nicht automatisch
+      # mitgezogen. Dieser Check verhindert, dass ein Release mit veralteten
+      # Versionsnummern auf der Seite live geht.
+      - name: Verify site versions are in sync
+        run: ./scripts/sync_site_versions.sh --check
+
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
