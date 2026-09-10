@@ -1,0 +1,77 @@
+AI Monitor
+Copyright (c) 2026 Tobias Marks
+
+This product is licensed under the MIT License (see LICENSE), with the
+exception of the third-party material listed below.
+
+================================================================================
+1. Icon assets — NOT covered by the MIT License
+================================================================================
+
+The application and menu bar icons are derived from chatbot icons created by
+LAFS and obtained from Flaticon:
+
+    https://www.flaticon.com/free-icons/chatbot
+
+Affected files:
+
+    companion/Resources/AppIcon.icns
+    companion/Resources/AppIcon.icon/
+    companion/Resources/IconLayers/
+    companion/Resources/MenuBarIconTemplate.png
+    companion/Resources/MenuBarIconTemplate@2x.png
+
+These assets are used under the Flaticon Free License and are explicitly
+EXCLUDED from the MIT License granted for this project. The MIT License covers
+the source code only. It does NOT grant any right to reuse, redistribute or
+sublicense the icon assets.
+
+If you fork this project and distribute your own builds, you must either:
+
+  a) comply with the Flaticon license terms yourself, including the required
+     attribution ("Chatbot icons created by LAFS - Flaticon"), or
+  b) replace the icon assets with your own artwork.
+
+The Flaticon Free License is available at:
+
+    https://www.freepikcompany.com/legal#nav-flaticon
+
+The photographs in installer/assets/ are original work by the project author
+and ARE covered by the MIT License.
+
+================================================================================
+2. Bundled and linked third-party software
+================================================================================
+
+The ESP32 firmware depends on the following libraries. They are fetched at
+build time by PlatformIO and are not vendored into this repository. Each
+remains under its own license:
+
+  TFT_eSPI 2.5.43 — Bodmer
+    https://github.com/Bodmer/TFT_eSPI
+    MIT and BSD. Derived from Adafruit_ILI9341 (MIT) and Adafruit_GFX (BSD);
+    see the library's license.txt for the full breakdown.
+
+  LVGL 9.5.0 — LVGL Kft
+    https://github.com/lvgl/lvgl
+    MIT License
+
+  ArduinoJson 7.4.3 — Benoit Blanchon
+    https://github.com/bblanchon/ArduinoJson
+    MIT License
+
+The firmware is built against the Arduino-ESP32 core via PlatformIO platform
+espressif32@6.13.0. The Arduino-ESP32 core is licensed under LGPL-2.1-or-later,
+and the underlying ESP-IDF components are primarily Apache-2.0. Because the
+complete source of this firmware is published, users are able to relink it
+against a modified version of that core, as LGPL-2.1 requires.
+
+================================================================================
+3. Related projects
+================================================================================
+
+AI Monitor reads provider limits through the CodexBar CLI, which is a separate
+program invoked at runtime. CodexBar is not bundled with, derived from, or
+covered by this project's license.
+
+    https://github.com/steipete/CodexBar
