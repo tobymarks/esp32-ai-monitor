@@ -67,6 +67,22 @@ Aufwand: 2 bis 3 Tage.
    die Mac-App, da Win-CodexBar für Claude Browser-Cookies bevorzugt.
 7. Entscheidungen 1 bis 7 bestätigen.
 
+### Stand Phase 0 (10. September 2026)
+
+| Punkt | Status | Ergebnis |
+|---|---|---|
+| 1 Testumgebung | offen | Braucht einen Windows-Rechner oder eine VM mit USB-Passthrough. |
+| 2 Fixtures | vorbereitet | `companion-windows/fixtures/codexbar/` mit README und `collect_fixtures.ps1`. Das Skript findet die CLI, nimmt alle sechs Provider plus Fehlerfälle auf, maskiert Konto-E-Mail und Organisation und legt die CLI-Version ab. Aufnahme selbst steht aus (Windows). |
+| 3 Protokoll-Spezifikation | **erledigt** | `docs/serial-protocol.md`, 780 Zeilen, jede Aussage mit Zeilenverweis auf Swift- oder Firmware-Code. Enthält Transportparameter, AIM1-Framing und Legacy-Modus, alle Nachrichten in beide Richtungen mit Beispielen, sechs Abläufe, Timeout-Tabelle, Versionsmatrix und zwölf offene Punkte. Wichtigste Befunde für Windows: `time` muss exakt `YYYY-MM-DDTHH:MM:SSZ` sein, `usedPercent` trägt im Modus „remaining“ die Restprozente, `ok`-Antworten werden vom Mac nie gelesen und müssen jederzeit toleriert werden, Zeilentitel gehen ohne Transliteration ans Gerät. |
+| 4 Flashen mit `espflash` | **bestätigt** | espflash 4.6.0 gegen das Board „Home“ (ESP32 rev. 3.1, 4 MB, CH340): `board-info` verbindet in rund 7 s, `write-bin 0x0` schreibt das gemergte Release-Image (1,34 MB) bei 460800 Baud in rund 26 s, danach Hard-Reset, die Mac-App verbindet sich wieder und meldet 2.17.0. Bibliotheks-API: `Flasher::connect`, `write_bin_to_flash(addr, data, progress)` mit `ProgressCallbacks`, Crate-Feature `serialport`. Der esptool-Sidecar ist damit nicht nötig. |
+| 5 Port-Öffnen ohne Reset | analysiert, Windows-Test offen | Die CYD nutzt CH340 (VID `1A86`, PID `7523`) mit der üblichen Auto-Reset-Schaltung: Reset nur, wenn DTR und RTS verschieden sind. `serialport-rs` setzt unter Windows beim Öffnen `DTR_CONTROL_DISABLE` und bei `FlowControl::None` auch `RTS_CONTROL_DISABLE`, beide Leitungen sind also gleich. Rezept: `serialport::new(port, 115200).flow_control(FlowControl::None)` ohne `dtr_on_open`, nach dem Öffnen DTR/RTS nicht anfassen, 200 ms warten, dann `get_info`. Empirisch auf Windows bestätigen, sobald Punkt 1 steht. |
+| 6 Claude-Quelle | offen | Braucht Windows mit eingerichtetem Claude-Konto. |
+| 7 Entscheidungen | teilweise | 1 entschieden. 2 bis 5 und 7 unverändert als Annahme. Punkt 4 der Spikes bestätigt den espflash-Teil von Entscheidung 1. |
+
+Nebenbefund: `installer/bin/` ist nicht versioniert, CI baut die Binaries selbst. Ein lokaler
+Stand kann veraltet sein (hier: 2.12.4 von Juni). Die Windows-App lädt Firmware wie geplant
+aus GitHub Releases, nie aus dem Arbeitsverzeichnis.
+
 ## Phase 1 – Grundgerüst und Datenquelle
 
 Aufwand: 4 bis 5 Tage.
