@@ -2,6 +2,7 @@
 //! Der CLI-Aufruf läuft in `spawn_blocking`, die Sperren werden davor und
 //! danach jeweils nur kurz gehalten.
 
+use crate::serial_service;
 use crate::state::{current_snapshot, AppState};
 use crate::tray;
 use aimonitor_core::{source, POLL_INTERVAL};
@@ -9,13 +10,15 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub const SNAPSHOT_EVENT: &str = "snapshot-changed";
 
-/// Snapshot ans Frontend schicken und Tray-Tooltip nachziehen.
+/// Snapshot ans Frontend schicken, Tray-Tooltip nachziehen und dem Gerät
+/// einen Datenframe über den Debounce anbieten.
 pub fn emit_snapshot(app: &AppHandle) {
     let snap = current_snapshot(app);
     if let Err(e) = app.emit(SNAPSHOT_EVENT, &snap) {
         eprintln!("[aimonitor] Event nicht gesendet: {e}");
     }
     tray::refresh(app);
+    serial_service::request_resend(app);
 }
 
 /// Abruf starten, falls keiner läuft (sonst wird er in der Quelle vorgemerkt).

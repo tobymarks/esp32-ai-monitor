@@ -1,14 +1,22 @@
 //! Tauri-Commands für das Einstellungsfenster.
 
 use crate::poll;
+use crate::registry;
+use crate::serial_service::{self, ConnectionSnapshot, Job};
 use crate::settings::Settings;
 use crate::state::{current_snapshot, AppState};
+use crate::timezone::{self, TimeZoneOption};
 use crate::window;
-use aimonitor_core::{Provider, Snapshot};
+use aimonitor_core::protocol::{Language as DisplayLanguage, Orientation, ThemeSetting};
+use aimonitor_core::{DeviceProfile, Provider, Snapshot};
+use aimonitor_serial::PortCandidate;
 use chrono::Utc;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
+
+/// Längste erlaubte Gerätebezeichnung (SettingsWindow+Display.swift).
+const MAX_DEVICE_NAME: usize = 30;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +95,15 @@ pub fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, Stri
         // Prozentmodus oder Sprache: Snapshot und Tray neu aufbauen.
         poll::emit_snapshot(&app);
     }
+    if next.percent_mode != previous.percent_mode {
+        serial_service::request_resend(&app);
+    }
+    if next.manual_port != previous.manual_port {
+        serial_service::send(&app, Job::SetManualPort(next.manual_port.clone()));
+    }
+    if next.timezone != previous.timezone {
+        serial_service::request_resend(&app);
+    }
 
     match error {
         Some(e) => Err(e),
@@ -115,4 +132,149 @@ pub fn rescan_cli(app: AppHandle) {
 #[tauri::command]
 pub fn open_settings(app: AppHandle) {
     window::open_settings(&app);
+}
+
+// ---------------------------------------------------------------------------
+// Verbindung und Display (Phase 2)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_connection(state: State<'_, AppState>) -> ConnectionSnapshot {
+    state.connection.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn list_ports() -> Vec<PortCandidate> {
+    aimonitor_serial::list_ports()
+}
+
+/// `None` oder leerer String heißt automatische Portwahl.
+#[tauri::command]
+pub fn set_manual_port(app: AppHandle, port: Option<String>) {
+    let port = port.filter(|p| !p.trim().is_empty());
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.settings.lock().unwrap();
+        if settings.manual_port == port {
+            return;
+        }
+        settings.manual_port = port.clone();
+        settings.save(&app);
+    }
+    serial_service::send(&app, Job::SetManualPort(port));
+}
+
+#[tauri::command]
+pub fn get_devices(state: State<'_, AppState>) -> Vec<DeviceProfile> {
+    state.registry.lock().unwrap().devices.values().cloned().collect()
+}
+
+/// Gerät umbenennen. Fehler kommen als i18n-Schlüssel zurück (disp.name.err.*).
+#[tauri::command]
+pub fn rename_device(app: AppHandle, mac: String, name: String) -> Result<DeviceProfile, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("disp.name.err.empty".into());
+    }
+    if name.chars().count() > MAX_DEVICE_NAME {
+        return Err("disp.name.err.long".into());
+    }
+    let profile = {
+        let state = app.state::<AppState>();
+        let mut registry = state.registry.lock().unwrap();
+        if registry.is_name_taken(&name, Some(&mac)) {
+            return Err("disp.name.err.dup".into());
+        }
+        let profile = registry.profile_mut(&mac).ok_or_else(|| "disp.profile.none".to_string())?;
+        profile.friendly_name = name;
+        let profile = profile.clone();
+        registry::save(&app, &registry);
+        profile
+    };
+    serial_service::send(&app, Job::RefreshProfile);
+    Ok(profile)
+}
+
+/// Theme, Orientierung und Sprache eines Profils setzen. Ist das Gerät
+/// verbunden, gehen nur die geänderten `set_*`-Kommandos raus.
+#[tauri::command]
+pub fn update_profile(
+    app: AppHandle,
+    mac: String,
+    theme: ThemeSetting,
+    orientation: Orientation,
+    language: DisplayLanguage,
+) -> Result<DeviceProfile, String> {
+    let (profile, job) = {
+        let state = app.state::<AppState>();
+        let mut registry = state.registry.lock().unwrap();
+        let is_current = registry.current_mac.as_deref() == Some(mac.as_str());
+        let profile = registry.profile_mut(&mac).ok_or_else(|| "disp.profile.none".to_string())?;
+        let job = Job::ApplyProfile {
+            theme: (profile.theme != theme).then_some(theme),
+            orientation: (profile.orientation != orientation).then_some(orientation),
+            language: (profile.language != language).then_some(language),
+        };
+        profile.theme = theme;
+        profile.orientation = orientation;
+        profile.language = language;
+        let profile = profile.clone();
+        registry::save(&app, &registry);
+        let job = if is_current { job } else { Job::RefreshProfile };
+        (profile, job)
+    };
+    serial_service::send(&app, job);
+    Ok(profile)
+}
+
+/// Helligkeit 5..100. `persist:false` ist die Vorschau während des Ziehens,
+/// `persist:true` schreibt ins Profil und ins NVS des Geräts.
+#[tauri::command]
+pub fn set_brightness(app: AppHandle, value: i64, persist: bool) {
+    let value = value.clamp(5, 100);
+    if persist {
+        let state = app.state::<AppState>();
+        let mut registry = state.registry.lock().unwrap();
+        if let Some(profile) = registry.current_profile_mut() {
+            profile.brightness = value;
+            registry::save(&app, &registry);
+        }
+    }
+    serial_service::send(&app, Job::SetBrightness { value, persist });
+}
+
+#[tauri::command]
+pub fn get_timezones(state: State<'_, AppState>) -> Vec<TimeZoneOption> {
+    let current = state.settings.lock().unwrap().timezone.clone();
+    timezone::options(&current)
+}
+
+#[tauri::command]
+pub fn set_timezone(app: AppHandle, timezone: String) -> Result<(), String> {
+    if !timezone::is_valid(&timezone) {
+        return Err(format!("Unbekannte Zeitzone: {timezone}"));
+    }
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.settings.lock().unwrap();
+        if settings.timezone == timezone {
+            return Ok(());
+        }
+        settings.timezone = timezone;
+        settings.save(&app);
+    }
+    serial_service::request_resend(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn send_diagnostic_frame(app: AppHandle) {
+    serial_service::send(&app, Job::SendDiagnostic);
+}
+
+/// Entwicklung: Startseite des Fensters aus AIMONITOR_OPEN_PAGE
+/// (overview, connection, display, updates, diagnostics). Sonst leer.
+#[tauri::command]
+pub fn get_initial_page() -> String {
+    std::env::var("AIMONITOR_OPEN_PAGE").unwrap_or_default()
 }

@@ -1,12 +1,16 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  getConnection,
   getSettings,
   getSnapshot,
   listProviders,
+  onConnection,
   onSnapshot,
   refresh,
   setProvider,
   setSettings,
+  type ConnectionSnapshot,
   type ProviderInfo,
   type ProviderKey,
   type Settings,
@@ -14,6 +18,8 @@ import {
 } from "./api";
 import { makeTranslate, resolveLocale } from "./i18n";
 import Overview from "./pages/Overview";
+import Connection from "./pages/Connection";
+import Display from "./pages/Display";
 import Diagnostics from "./pages/Diagnostics";
 import Placeholder from "./pages/Placeholder";
 
@@ -29,7 +35,14 @@ const NAV: { id: Page; key: string }[] = [
 
 export default function App() {
   const [page, setPage] = useState<Page>("overview");
+  // Entwicklung: Startseite per Umgebungsvariable, siehe get_initial_page.
+  useEffect(() => {
+    invoke<string>("get_initial_page").then((p) => {
+      if (NAV.some((n) => n.id === p)) setPage(p as Page);
+    }).catch(() => {});
+  }, []);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [connection, setConnection] = useState<ConnectionSnapshot | null>(null);
   const [settings, setSettingsState] = useState<Settings | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [now, setNow] = useState(() => Date.now());
@@ -37,18 +50,22 @@ export default function App() {
   // Initialzustand laden und Live-Updates abonnieren.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenConn: (() => void) | undefined;
     let cancelled = false;
     (async () => {
       unlisten = await onSnapshot((snap) => setSnapshot(snap));
-      const [snap, cfg, list] = await Promise.all([getSnapshot(), getSettings(), listProviders()]);
+      unlistenConn = await onConnection((conn) => setConnection(conn));
+      const [snap, cfg, list, conn] = await Promise.all([getSnapshot(), getSettings(), listProviders(), getConnection()]);
       if (cancelled) return;
       setSnapshot(snap);
       setSettingsState(cfg);
       setProviders(list);
+      setConnection(conn);
     })().catch((e) => console.error("init", e));
     return () => {
       cancelled = true;
       unlisten?.();
+      unlistenConn?.();
     };
   }, []);
 
@@ -80,6 +97,11 @@ export default function App() {
     },
     [settings],
   );
+
+  // Nach Änderungen, die das Backend selbst speichert (Zeitzone, Port).
+  const reloadSettings = useCallback(() => {
+    getSettings().then(setSettingsState).catch((e) => console.error("get_settings", e));
+  }, []);
 
   const chooseProvider = useCallback(
     async (key: ProviderKey) => {
@@ -123,8 +145,8 @@ export default function App() {
             onSettings={updateSettings}
           />
         )}
-        {page === "connection" && <Placeholder title={t("nav.connection")} text={t("ph.connection")} />}
-        {page === "display" && <Placeholder title={t("nav.display")} text={t("ph.display")} />}
+        {page === "connection" && <Connection t={t} now={now} connection={connection} />}
+        {page === "display" && <Display t={t} connection={connection} settings={settings} onSettingsChanged={reloadSettings} />}
         {page === "updates" && <Placeholder title={t("nav.updates")} text={t("ph.updates")} />}
         {page === "diagnostics" && <Diagnostics t={t} snapshot={snapshot} />}
       </main>

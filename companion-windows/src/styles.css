@@ -121,3 +121,28 @@ p { margin: 0 0 12px; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; word-break: break-all; }
 .output { margin: 0 0 8px; padding: 10px 12px; max-height: 220px; overflow: auto; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; white-space: pre-wrap; word-break: break-word; user-select: text; cursor: text; }
+
+/* Verbindung und Display. */
+.pill-conn-connected { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.pill-conn-probing { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.pill-conn-foreignFirmware { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.pill-conn-disconnected { color: var(--muted); background: var(--line); }
+.page-head .pill { margin-left: 2px; }
+
+.select, .input { min-height: 28px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font: inherit; }
+.select { min-width: 220px; }
+.input { min-width: 220px; user-select: text; cursor: text; }
+.select:disabled, .input:disabled, .slider:disabled, .segmented button:disabled { opacity: .5; }
+.slider { width: 240px; accent-color: var(--primary); }
+.slider-value { min-width: 44px; text-align: right; font-size: var(--fs-sm); }
+.error-text { color: var(--bad); font-size: var(--fs-xs); margin: -6px 0 12px 124px; }
+.notice { padding: 8px 12px; border-radius: 6px; background: var(--tint); color: var(--primary); }
+.notice-bad { padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+
+.table-wrap { overflow-x: auto; }
+.table { border-collapse: collapse; width: 100%; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; }
+.table th, .table td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.table tr:last-child th, .table tr:last-child td { border-bottom: 0; }
+.table th { color: var(--muted); font-weight: 500; width: 150px; }
+.table td { user-select: text; }
+.log { max-height: 260px; }

@@ -23,7 +23,7 @@ pub enum LinkError {
 
 /// Ergebnis eines Datenframes (main.swift: SerialFrameReceipt).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum FrameReceipt {
     Ack { frame_id: i64, bytes: i64, rows: i64, provider: String },
     Error { frame_id: i64, message: String },

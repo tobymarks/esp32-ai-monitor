@@ -134,6 +134,23 @@ Aufwand: 5 bis 7 Tage.
 Ergebnis: Display zeigt dieselben Werte wie am Mac, Orientierung und Theme wechseln
 live.
 
+### Stand Phase 2 (11. September 2026)
+
+Auf dem Mac gegen das Board „Home" (Firmware 2.17.0, CH340) gebaut und getestet.
+
+| Teil | Status | Ergebnis |
+|---|---|---|
+| Protokoll im Core | erledigt | `semver`, `protocol` (DeviceInfo/DeviceMessage-Parser, Kommandos, AIM1-Framing, Textregeln, alle Timeouts als Konstanten), `envelope` (Usage-, Notice-, Diagnose-Frame als Port von `buildUsageEnvelope`), `device` (Profile je MAC, Registry mit Legacy-Migration und Auto-Namen). 45 Tests. |
+| Serial-Crate | erledigt | `crates/serial`: Port-Suche über `serialport::available_ports` mit VID/PID-Filter (CH340, CH9102, CP2102, FT232), natürliche Sortierung, Auswahlregel wie Mac; `Link` mit Öffnen nach dem Rezept aus Phase 0, Zeilenleser, drain, Handshake, Frame mit ACK, Kommando mit Antwort. `examples/probe` gegen das Gerät: Handshake in 285 ms, Diagnose-Frame 832 Bytes mit ACK in 117 ms. |
+| Zustandsmaschine in der App | erledigt | `serial_service.rs`: Scan 3 s, Reconnect-Sperre, Handshake mit spätem info-Fenster, Profilauflösung, vier `set_*` nach Connect, Frames über 120-ms-Debounce, Heartbeat 60 s, ACK-Buchführung mit Auto-Reparatur, Diagnose-Frame mit Rückkehr, `standby` beim Beenden. Geräteregistry als `devices.json`, Zeitzone über `chrono-tz`, System-Theme über `dark-light`. |
+| Seiten Verbindung und Display | gebaut | Verbindung: Zustand, Port-Auswahl, Gerätetabelle, letzter Frame, Zähler, Testframe, Protokoll. Display: Name, Orientierung, Theme, Sprache, Helligkeit mit Vorschau und Persist, Zeitzone. |
+| Abnahme | teilweise | Log der App gegen das Gerät: Handshake 2.17.0, `set_theme/language/orientation/brightness` mit `ok`, Usage-Frame 746 Bytes mit ACK und 3 Zeilen, Heartbeat, `standby` beim Beenden, Port danach frei. Die Mac-App verbindet sich anschließend wieder normal. Nicht geprüft: die Seiten Verbindung und Display visuell (Bildschirmschoner aktiv), Legacy-Zeilenmodus mit Firmware unter 2.12.3, Fremd-Firmware-Pfad, COM-Enumeration unter Windows. |
+
+Hinweis: Die Windows-App führt eine eigene Geräteregistry. Beim ersten Connect legt sie ein
+neues Profil mit Standardwerten an und sendet `set_orientation portrait`; die Mac-App stellt
+beim nächsten Connect ihre Werte wieder her. Entwickler-Schalter `AIMONITOR_OPEN_PAGE`
+öffnet direkt eine Seite (overview, connection, display, updates, diagnostics).
+
 ## Phase 3 – Firmware-Flash und Updates
 
 Aufwand: 3 bis 4 Tage.

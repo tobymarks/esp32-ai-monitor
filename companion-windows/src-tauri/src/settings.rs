@@ -44,6 +44,16 @@ pub struct Settings {
     pub language: Language,
     #[serde(default)]
     pub autostart: bool,
+    /// Fest gewählter serieller Port; `None` heißt automatische Wahl.
+    #[serde(default)]
+    pub manual_port: Option<String>,
+    /// `auto` (Systemzeitzone) oder ein IANA-Name wie `Europe/Berlin`.
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
+}
+
+fn default_timezone() -> String {
+    "auto".into()
 }
 
 fn default_provider() -> Provider {
@@ -57,6 +67,8 @@ impl Default for Settings {
             percent_mode: PercentMode::Used,
             language: Language::System,
             autostart: false,
+            manual_port: None,
+            timezone: default_timezone(),
         }
     }
 }
