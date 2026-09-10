@@ -44,7 +44,13 @@ jobs:
       # Die Versionsangaben auf der Installer-Seite werden nicht automatisch
       # mitgezogen. Dieser Check verhindert, dass ein Release mit veralteten
       # Versionsnummern auf der Seite live geht.
+      #
+      # Bewusst nur bei Release-Tags: die Seite zeigt die veroeffentlichte
+      # Version. Zwischen einer Versionsanhebung im Code und dem Release darf
+      # sie also legitim hinterherhinken — sonst wuerde sie auf ein Release
+      # verlinken, das es noch gar nicht gibt.
       - name: Verify site versions are in sync
+        if: startsWith(github.ref, 'refs/tags/')
         run: ./scripts/sync_site_versions.sh --check
 
       - name: Setup Python

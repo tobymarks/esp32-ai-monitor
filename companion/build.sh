@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.25.0"
+APP_VERSION="1.26.0"
 
 # Developer ID Signing (ab v1.13.0) — optional. Wenn die Identity nicht im
 # Keychain ist (z.B. CI-Runner ohne Cert-Import), fallen wir auf Ad-hoc-Sign
@@ -274,5 +274,6 @@ echo "2. Update CFBundleVersion + CFBundleShortVersionString in Resources/Info.p
 echo "3. Update APP_VERSION in build.sh (this file)"
 echo "4. Run: NOTARIZE=1 ./build.sh  (signed + notarized + stapled)"
 echo "   oder: ./build.sh             (ad-hoc-signed, lokal testen)"
-echo "5. Create GitHub Release with tag 'app-vX.Y.Z'"
-echo "6. Upload build/AIMonitor.zip AND build/AIMonitor.dmg as release assets"
+echo "5. Run: ../scripts/sync_site_versions.sh   (Installer-Seite nachziehen)"
+echo "6. Create GitHub Release with tag 'app-vX.Y.Z'"
+echo "7. Upload build/AIMonitor.zip AND build/AIMonitor.dmg as release assets"
