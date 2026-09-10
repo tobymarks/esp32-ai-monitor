@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.26.0"
+APP_VERSION="1.27.0"
 
 # Developer ID Signing (ab v1.13.0) — optional. Wenn die Identity nicht im
 # Keychain ist (z.B. CI-Runner ohne Cert-Import), fallen wir auf Ad-hoc-Sign
@@ -35,26 +35,58 @@ echo "Compiling AI Monitor v${APP_VERSION}..."
 mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
 
-# Kompiliere mit swiftc — mehrere Swift-Dateien
-swiftc \
-  Sources/main.swift \
-  Sources/CodexBarSource.swift \
-  Sources/StatusIndicator.swift \
-  Sources/NotificationBanner.swift \
-  Sources/Typography.swift \
-  Sources/Localization.swift \
-  Sources/SettingsWindow.swift \
-  Sources/SettingsWindow+Overview.swift \
-  Sources/SettingsWindow+Display.swift \
-  Sources/SettingsWindow+Connection.swift \
-  Sources/SettingsWindow+Updates.swift \
-  Sources/SettingsWindow+Diagnostics.swift \
-  -framework Cocoa \
-  -framework Security \
-  -framework ServiceManagement \
-  -target arm64-apple-macosx15.0 \
-  -O \
-  -o "$APP/Contents/MacOS/AIMonitor"
+# Universal Binary (ab v1.27.0): arm64 + x86_64.
+#
+# Intel wird bewusst weiter bedient — CodexBar, die Pflicht-Datenquelle, ist
+# selbst universal und liefert eine x86_64-CLI. Ein Ausschluss waere allein
+# ein Nebeneffekt des Build-Targets, kein technischer Zwang.
+#
+# MACOS_MIN richtet sich nach CodexBar (macOS 14+); tiefer brachte nichts,
+# weil ohne CodexBar keine Daten kommen. Der Swift-Code selbst kompiliert
+# auch gegen 13.0 — die frueheren 15.0 waren nicht durch APIs begruendet.
+MACOS_MIN="14.0"
+SWIFT_SOURCES=(
+  Sources/main.swift
+  Sources/CodexBarSource.swift
+  Sources/StatusIndicator.swift
+  Sources/NotificationBanner.swift
+  Sources/Typography.swift
+  Sources/Localization.swift
+  Sources/SettingsWindow.swift
+  Sources/SettingsWindow+Overview.swift
+  Sources/SettingsWindow+Display.swift
+  Sources/SettingsWindow+Connection.swift
+  Sources/SettingsWindow+Updates.swift
+  Sources/SettingsWindow+Diagnostics.swift
+)
+
+SLICES=()
+for ARCH in arm64 x86_64; do
+  echo "Compiling slice: $ARCH (macOS $MACOS_MIN)"
+  swiftc \
+    "${SWIFT_SOURCES[@]}" \
+    -framework Cocoa \
+    -framework Security \
+    -framework ServiceManagement \
+    -target "$ARCH-apple-macosx$MACOS_MIN" \
+    -O \
+    -o "$BUILD_DIR/AIMonitor-$ARCH"
+  SLICES+=("$BUILD_DIR/AIMonitor-$ARCH")
+done
+
+lipo -create -output "$APP/Contents/MacOS/AIMonitor" "${SLICES[@]}"
+rm -f "${SLICES[@]}"
+
+# Gegenprobe: beide Slices muessen drin sein, sonst waere der Universal-Build
+# still zu einem Single-Arch-Build degradiert.
+ARCHS_BUILT=$(lipo -archs "$APP/Contents/MacOS/AIMonitor")
+echo "Universal binary: $ARCHS_BUILT"
+for NEED in arm64 x86_64; do
+  case " $ARCHS_BUILT " in
+    *" $NEED "*) ;;
+    *) echo "ERROR: slice $NEED fehlt im finalen Binary"; exit 1 ;;
+  esac
+done
 
 # Info.plist + Resources
 cp Resources/Info.plist "$APP/Contents/"
