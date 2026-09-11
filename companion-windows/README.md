@@ -1,11 +1,12 @@
 # AI Monitor für Windows (companion-windows)
 
 Tauri-2-App mit Rust-Backend und React/TypeScript-Frontend. Stand nach
-Phase 2 von `docs/windows-app-plan.md`: Tray-Icon mit Provider-Menü,
-Einstellungsfenster mit Übersicht, Verbindung, Display und Diagnose,
+Phase 3 von `docs/windows-app-plan.md`: Tray-Icon mit Provider-Menü,
+Einstellungsfenster mit Übersicht, Verbindung, Display, Updates und Diagnose,
 CodexBar-Abruf über das Core-Crate, USB-Serial-Verbindung zur CYD mit
-Handshake, Datenframes mit ACK, Geräteprofilen und Display-Einstellungen.
-Firmware-Flash und Updates folgen in Phase 3.
+Handshake, Datenframes mit ACK, Geräteprofilen und Display-Einstellungen,
+Release-Prüfung gegen GitHub, Firmware-Download und Flash über `espflash`,
+App-Update mit SHA-256-Prüfung.
 
 ## Voraussetzungen
 
@@ -35,6 +36,8 @@ Umgebungsvariablen für die Entwicklung:
 |---|---|
 | `AIMONITOR_OPEN_SETTINGS=1` | Öffnet das Einstellungsfenster sofort beim Start. |
 | `AIMONITOR_CODEXBAR_FIXTURE_DIR=<dir>` | Provider aus `<provider>.json` bedienen statt über das CLI (siehe Fixture-Modus). |
+| `AIMONITOR_OPEN_PAGE=<seite>` | Startseite des Fensters: `overview`, `connection`, `display`, `updates`, `diagnostics`. |
+| `AIMONITOR_DEV_ACTION=check\|download\|flash` | Führt beim Start einmal `check_updates`, `download_firmware` oder `flash_firmware` aus und schreibt das Ergebnis ins Log (`flash` wartet bis zu 60 s auf ein Gerät). Variante über `AIMONITOR_DEV_VARIANT=ili9341\|st7789`. |
 
 Strg+C oder SIGTERM beenden die App wie „Beenden" im Tray: `standby` ans
 Gerät, Port schließen, dann Exit.
@@ -71,6 +74,34 @@ Commands fürs Frontend (`src-tauri/src/commands.rs`):
 | `set_brightness(value, persist)` | 5..100; `persist:false` als Vorschau beim Ziehen |
 | `get_timezones`, `set_timezone(timezone)` | `auto` oder IANA-Name, mit aktuellem Offset |
 | `send_diagnostic_frame` | Testframe, nach 20 s wieder der echte Snapshot |
+| `check_updates(force)` | Releases von GitHub laden (`force:false` nimmt den Cache); Ergebnis `UpdateStatus` |
+| `get_update_status` | `UpdateStatus` aus dem Cache ohne Netzzugriff |
+| `download_firmware(variant)` | Firmware-Asset nach `app_data_dir()/firmware/` laden, Event `firmware-download` |
+| `flash_firmware(variant)` | Serial-Service anhalten, Image mit `aimonitor-flash` schreiben, fortsetzen; Event `flash-progress` |
+| `install_app_update` | `AIMonitor-Setup.exe` laden, SHA-256 prüfen, mit `/SILENT` starten; sonst Browser. Event `update-progress` |
+| `open_release_page` | Release-Seite im Browser |
+
+## Updates und Firmware-Flash
+
+`src-tauri/src/updates.rs` lädt die Releases über `ureq` (User-Agent
+`AI-Monitor-Windows/<Version>`, Timeout 15 s), 10 s nach dem Start und
+danach alle 6 h, dazu auf Knopfdruck. Parallele Prüfungen warten auf die
+laufende. Der Kanal (`updateChannel`: stable oder beta) liegt in den
+Einstellungen; die Auswahl je Kanal macht `aimonitor_core::release`.
+Nach jeder Prüfung geht `updates-changed` mit dem `UpdateStatus` ans Frontend.
+
+`src-tauri/src/flash.rs` setzt Spec 6.4 um: Port der aktiven Verbindung
+merken, `Job::Pause` an den Serial-Thread (trennen, Scan stoppen, Port
+schließen, Bestätigung), 500 ms warten, `flash_image` mit 460800 Baud in
+`spawn_blocking`, dann `Job::Resume { diagnostic_after_connect }`. Nach dem
+nächsten Connect geht 1 s später der Diagnose-Frame raus, nach 20 s wieder
+der echte Snapshot. Bei Erfolg landen Variante im Geräteprofil und
+`installedFirmwareVersion` in den Einstellungen. Fehler kommen als Event mit
+`phase:"failed"` und den Schlüsseln `flash.err.*`. Gemessen an der CYD:
+1,34 MB in 31 s inklusive Bootloader-Connect.
+
+Firmware-Dateien liegen unter `app_data_dir()/firmware/<asset>-<tag>.bin`,
+der Installer wird nach `%TEMP%\ai-monitor-update\` geladen.
 
 ## Fixture-Modus
 
@@ -91,13 +122,13 @@ camelCase-Fixtures der Mac-App. Echte Windows-Aufnahmen gehören nach
 
 ```
 companion-windows/
-  Cargo.toml            Workspace: crates/core und src-tauri
+  Cargo.toml            Workspace: crates/core, crates/serial, crates/flash und src-tauri
   package.json          Frontend (Vite, React 18, TypeScript)
   index.html, vite.config.ts, tsconfig.json
   src/                  Frontend
     api.ts              Typen und invoke-Aufrufe gegen das Backend
     App.tsx             Navigation und Zustand (Snapshot, Settings, Event)
-    pages/              Übersicht, Verbindung, Display, Diagnose, Platzhalter
+    pages/              Übersicht, Verbindung, Display, Updates, Diagnose
     i18n/               de.json, en.json (Schlüssel aus companion/Resources)
     format.ts           Countdown und „aktualisiert vor"
     styles.css          Tokens aus installer/assets/site.css, Light und Dark
@@ -107,7 +138,9 @@ companion-windows/
     src/settings.rs     settings.json unter app_config_dir()
     src/poll.rs         Abrufzyklus (POLL_INTERVAL, spawn_blocking)
     src/commands.rs     Tauri-Commands fürs Frontend
-    src/serial_service.rs Serial-Thread: Scan, Handshake, Frames, ACK-Buchführung
+    src/serial_service.rs Serial-Thread: Scan, Handshake, Frames, ACK-Buchführung, Pause/Resume
+    src/updates.rs      Release-Abfrage, Firmware-Download, App-Update
+    src/flash.rs        Flash-Ablauf mit Pause/Resume des Serial-Threads
     src/registry.rs     devices.json (Geräteprofile) unter app_config_dir()
     src/timezone.rs     Zeitzonenliste und Offset für displayTime
     src/tray.rs         Tray-Icon, Menü, Tooltip mit Verbindungszustand
@@ -115,6 +148,7 @@ companion-windows/
     tauri.conf.json, capabilities/default.json, icons/
   crates/core/          aimonitor-core: Provider, CodexBar-Parsing, Zeilenregeln, Protokoll
   crates/serial/        aimonitor-serial: Port-Suche, Link, Handshake, Frames
+  crates/flash/         aimonitor-flash: Image über espflash schreiben
   fixtures/codexbar/    Win-CodexBar-Fixtures (Aufnahme unter Windows)
 ```
 

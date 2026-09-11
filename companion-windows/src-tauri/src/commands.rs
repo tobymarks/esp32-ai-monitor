@@ -1,13 +1,15 @@
 //! Tauri-Commands für das Einstellungsfenster.
 
+use crate::flash::{self, FlashOutcome};
 use crate::poll;
 use crate::registry;
 use crate::serial_service::{self, ConnectionSnapshot, Job};
 use crate::settings::Settings;
 use crate::state::{current_snapshot, AppState};
 use crate::timezone::{self, TimeZoneOption};
+use crate::updates::{self, FirmwareFile, InstallOutcome, UpdateStatus};
 use crate::window;
-use aimonitor_core::protocol::{Language as DisplayLanguage, Orientation, ThemeSetting};
+use aimonitor_core::protocol::{DisplayVariant, Language as DisplayLanguage, Orientation, ThemeSetting};
 use aimonitor_core::{DeviceProfile, Provider, Snapshot};
 use aimonitor_serial::PortCandidate;
 use chrono::Utc;
@@ -103,6 +105,10 @@ pub fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, Stri
     }
     if next.timezone != previous.timezone {
         serial_service::request_resend(&app);
+    }
+    if next.update_channel != previous.update_channel {
+        // Anderer Kanal, andere Auswahl aus demselben Cache: Status neu melden.
+        updates::emit_status(&app);
     }
 
     match error {
@@ -270,6 +276,53 @@ pub fn set_timezone(app: AppHandle, timezone: String) -> Result<(), String> {
 #[tauri::command]
 pub fn send_diagnostic_frame(app: AppHandle) {
     serial_service::send(&app, Job::SendDiagnostic);
+}
+
+// ---------------------------------------------------------------------------
+// Updates und Firmware-Flash (Phase 3)
+// ---------------------------------------------------------------------------
+
+/// Releases prüfen. `force:false` liefert den Cache, wenn schon geprüft wurde.
+#[tauri::command]
+pub async fn check_updates(app: AppHandle, force: bool) -> Result<UpdateStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || updates::check(&app, force))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Status ohne Netzzugriff, z. B. beim Öffnen der Seite.
+#[tauri::command]
+pub fn get_update_status(app: AppHandle) -> UpdateStatus {
+    updates::status(&app)
+}
+
+/// Firmware-Asset der Variante in den Cache laden (Event `firmware-download`).
+#[tauri::command]
+pub async fn download_firmware(app: AppHandle, variant: DisplayVariant) -> Result<FirmwareFile, String> {
+    tauri::async_runtime::spawn_blocking(move || updates::download_firmware(&app, variant))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Firmware flashen (Event `flash-progress`). Fehler als Schlüssel flash.err.*.
+#[tauri::command]
+pub async fn flash_firmware(app: AppHandle, variant: DisplayVariant) -> Result<FlashOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || flash::run(&app, variant))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Installer laden, prüfen, starten (Event `update-progress`); sonst Browser.
+#[tauri::command]
+pub async fn install_app_update(app: AppHandle) -> Result<InstallOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || updates::install_app_update(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn open_release_page(app: AppHandle) -> Result<(), String> {
+    updates::open_release_page(&app)
 }
 
 /// Entwicklung: Startseite des Fensters aus AIMONITOR_OPEN_PAGE

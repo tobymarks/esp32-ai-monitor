@@ -21,7 +21,7 @@ import Overview from "./pages/Overview";
 import Connection from "./pages/Connection";
 import Display from "./pages/Display";
 import Diagnostics from "./pages/Diagnostics";
-import Placeholder from "./pages/Placeholder";
+import Updates from "./pages/Updates";
 
 type Page = "overview" | "connection" | "display" | "updates" | "diagnostics";
 
@@ -147,7 +147,7 @@ export default function App() {
         )}
         {page === "connection" && <Connection t={t} now={now} connection={connection} />}
         {page === "display" && <Display t={t} connection={connection} settings={settings} onSettingsChanged={reloadSettings} />}
-        {page === "updates" && <Placeholder title={t("nav.updates")} text={t("ph.updates")} />}
+        {page === "updates" && <Updates t={t} connection={connection} settings={settings} onSettings={updateSettings} />}
         {page === "diagnostics" && <Diagnostics t={t} snapshot={snapshot} />}
       </main>
     </div>

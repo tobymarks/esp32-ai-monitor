@@ -1,6 +1,8 @@
 //! Persistente Einstellungen der App als JSON unter `app_config_dir()/settings.json`.
 
+use aimonitor_core::release::UpdateChannel;
 use aimonitor_core::{PercentMode, Provider};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -50,6 +52,15 @@ pub struct Settings {
     /// `auto` (Systemzeitzone) oder ein IANA-Name wie `Europe/Berlin`.
     #[serde(default = "default_timezone")]
     pub timezone: String,
+    /// Release-Kanal für App und Firmware (Phase 3).
+    #[serde(default)]
+    pub update_channel: UpdateChannel,
+    /// Version der zuletzt aus dieser App geflashten Firmware (Tag ohne Präfix).
+    #[serde(default)]
+    pub installed_firmware_version: Option<String>,
+    /// Zeitpunkt der letzten erfolgreichen Release-Abfrage.
+    #[serde(default)]
+    pub last_update_check: Option<DateTime<Utc>>,
 }
 
 fn default_timezone() -> String {
@@ -69,6 +80,9 @@ impl Default for Settings {
             autostart: false,
             manual_port: None,
             timezone: default_timezone(),
+            update_channel: UpdateChannel::Stable,
+            installed_firmware_version: None,
+            last_update_check: None,
         }
     }
 }

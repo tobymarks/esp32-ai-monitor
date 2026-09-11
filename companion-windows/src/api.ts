@@ -7,6 +7,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 export type ProviderKey = "claude" | "codex" | "antigravity" | "gemini" | "copilot" | "cursor";
 export type PercentMode = "used" | "remaining";
 export type Language = "system" | "de" | "en";
+export type UpdateChannel = "stable" | "beta";
 
 export type Status =
   | { kind: "ok" }
@@ -60,6 +61,10 @@ export interface Settings {
   manualPort: string | null;
   /** "auto" oder IANA-Name. */
   timezone: string;
+  updateChannel: UpdateChannel;
+  /** Version der zuletzt aus dieser App geflashten Firmware. */
+  installedFirmwareVersion: string | null;
+  lastUpdateCheck: string | null;
 }
 
 export interface ProviderInfo {
@@ -128,6 +133,8 @@ export type FrameReceipt =
 
 export interface ConnectionSnapshot {
   state: ConnectionState;
+  /** Scan angehalten, weil gerade geflasht wird. */
+  paused: boolean;
   port: string | null;
   manualPort: string | null;
   info: DeviceInfo | null;
@@ -170,4 +177,105 @@ export const sendDiagnosticFrame = () => invoke<void>("send_diagnostic_frame");
 
 export function onConnection(handler: (snapshot: ConnectionSnapshot) => void): Promise<UnlistenFn> {
   return listen<ConnectionSnapshot>("connection-changed", (event) => handler(event.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Updates und Firmware-Flash (Phase 3). Typen spiegeln updates.rs und flash.rs.
+// ---------------------------------------------------------------------------
+
+export interface AppUpdate {
+  currentVersion: string;
+  latestVersion: string | null;
+  latestTag: string | null;
+  hasUpdate: boolean;
+  htmlUrl: string | null;
+  assetAvailable: boolean;
+}
+
+export interface FirmwareUpdate {
+  latestTag: string | null;
+  latestVersion: string | null;
+  deviceVersion: string | null;
+  deviceVariant: DisplayVariant | null;
+  installedVersion: string | null;
+  hasUpdate: boolean;
+  missingAssets: string[];
+  cached: { ili9341: boolean; st7789: boolean };
+}
+
+export interface UpdateStatus {
+  checkedAt: string | null;
+  error: string | null;
+  channel: UpdateChannel;
+  checking: boolean;
+  app: AppUpdate;
+  firmware: FirmwareUpdate;
+}
+
+export interface DownloadProgress {
+  asset: string;
+  received: number;
+  total: number | null;
+  done: boolean;
+}
+
+export interface FirmwareFile {
+  path: string;
+  tag: string;
+  version: string;
+  asset: string;
+  fallback: boolean;
+  fromCache: boolean;
+  bytes: number;
+}
+
+export type FlashPhase =
+  | "downloading"
+  | "connecting"
+  | "connected"
+  | "erasing"
+  | "writing"
+  | "verifying"
+  | "rebooting"
+  | "done"
+  | "failed";
+
+export interface FlashProgress {
+  phase: FlashPhase;
+  variant: DisplayVariant;
+  percent: number | null;
+  message: string | null;
+  /** Nur bei failed: Schlüssel flash.err.* */
+  summary: string | null;
+  detail: string | null;
+}
+
+export interface FlashOutcome {
+  variant: DisplayVariant;
+  version: string;
+  tag: string;
+  port: string;
+  seconds: number;
+}
+
+export type InstallOutcome = "installerStarted" | "openedBrowser";
+
+export const checkUpdates = (force: boolean) => invoke<UpdateStatus>("check_updates", { force });
+export const getUpdateStatus = () => invoke<UpdateStatus>("get_update_status");
+export const downloadFirmware = (variant: DisplayVariant) => invoke<FirmwareFile>("download_firmware", { variant });
+export const flashFirmware = (variant: DisplayVariant) => invoke<FlashOutcome>("flash_firmware", { variant });
+export const installAppUpdate = () => invoke<InstallOutcome>("install_app_update");
+export const openReleasePage = () => invoke<void>("open_release_page");
+
+export function onUpdates(handler: (status: UpdateStatus) => void): Promise<UnlistenFn> {
+  return listen<UpdateStatus>("updates-changed", (event) => handler(event.payload));
+}
+export function onFirmwareDownload(handler: (progress: DownloadProgress) => void): Promise<UnlistenFn> {
+  return listen<DownloadProgress>("firmware-download", (event) => handler(event.payload));
+}
+export function onFlashProgress(handler: (progress: FlashProgress) => void): Promise<UnlistenFn> {
+  return listen<FlashProgress>("flash-progress", (event) => handler(event.payload));
+}
+export function onUpdateProgress(handler: (progress: DownloadProgress) => void): Promise<UnlistenFn> {
+  return listen<DownloadProgress>("update-progress", (event) => handler(event.payload));
 }

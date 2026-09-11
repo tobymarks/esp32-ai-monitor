@@ -13,9 +13,9 @@ use crate::timezone;
 use crate::tray;
 use aimonitor_core::envelope::{diagnostic_envelope, notice_envelope, usage_envelope, FrameContext};
 use aimonitor_core::protocol::{
-    Command, FrameIdCounter, Language, Orientation, ThemeSetting, DIAGNOSTIC_RESTORE, GET_INFO_TIMEOUT,
-    HEARTBEAT_INTERVAL, LATE_INFO_WINDOW, RECONNECT_BLOCK_WINDOW, REPAIR_COOLDOWN, REPAIR_RECONNECT_DELAY,
-    REPAIR_THRESHOLD, SCAN_INTERVAL, SEND_DEBOUNCE,
+    Command, FrameIdCounter, Language, Orientation, ThemeSetting, DIAGNOSTIC_AFTER_CONNECT, DIAGNOSTIC_RESTORE,
+    GET_INFO_TIMEOUT, HEARTBEAT_INTERVAL, LATE_INFO_WINDOW, RECONNECT_BLOCK_WINDOW, REPAIR_COOLDOWN,
+    REPAIR_RECONNECT_DELAY, REPAIR_THRESHOLD, SCAN_INTERVAL, SEND_DEBOUNCE,
 };
 use aimonitor_core::{DeviceInfo, DeviceProfile, Snapshot};
 use aimonitor_serial::{list_ports, ports::choose_port, FrameReceipt, Link, LinkError};
@@ -62,6 +62,12 @@ pub enum Job {
     Standby,
     /// `standby` senden, Port schließen, dann den Sender benachrichtigen.
     Shutdown(Sender<()>),
+    /// Für den Flash (Spec 6.4): trennen, Scan stoppen, Port schließen,
+    /// dann den Sender benachrichtigen. Bis `Resume` passiert nichts mehr.
+    Pause(Sender<()>),
+    /// Scan wieder an. Mit `diagnostic_after_connect` geht nach dem nächsten
+    /// Connect verzögert der Diagnose-Frame raus, danach der echte Snapshot.
+    Resume { diagnostic_after_connect: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
@@ -78,6 +84,8 @@ pub enum ConnectionState {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionSnapshot {
     pub state: ConnectionState,
+    /// Scan angehalten, weil gerade geflasht wird.
+    pub paused: bool,
     pub port: Option<String>,
     pub manual_port: Option<String>,
     pub info: Option<DeviceInfo>,
@@ -172,6 +180,12 @@ struct Service {
     manual_port: Option<String>,
     profile: Option<DeviceProfile>,
     frame_ids: FrameIdCounter,
+    /// Während des Flashs: kein Scan, kein Port.
+    paused: bool,
+    /// Nach dem nächsten Connect den Diagnose-Frame einplanen (nach Flash).
+    diagnostic_after_connect: bool,
+    /// Fälligkeit des Diagnose-Frames nach dem Connect.
+    diagnostic_due: Option<Instant>,
 
     next_scan: Instant,
     last_disconnect: Option<Instant>,
@@ -202,6 +216,9 @@ impl Service {
             manual_port,
             profile: None,
             frame_ids: FrameIdCounter::new(),
+            paused: false,
+            diagnostic_after_connect: false,
+            diagnostic_due: None,
             next_scan: Instant::now(),
             last_disconnect: None,
             late_info_until: None,
@@ -278,6 +295,7 @@ impl Service {
         let skip = self.log.len().saturating_sub(LOG_LINES);
         ConnectionSnapshot {
             state,
+            paused: self.paused,
             port: self.link.as_ref().map(|l| l.name().to_string()),
             manual_port: self.manual_port.clone(),
             info,
@@ -310,6 +328,7 @@ impl Service {
             self.send_due,
             self.heartbeat_due,
             self.diagnostic_until,
+            self.diagnostic_due,
             self.late_info_until,
         ]
         .into_iter()
@@ -320,6 +339,9 @@ impl Service {
     fn tick(&mut self) {
         let now = Instant::now();
 
+        if self.paused {
+            return;
+        }
         if now >= self.next_scan {
             self.next_scan = now + SCAN_INTERVAL;
             match self.state {
@@ -350,6 +372,13 @@ impl Service {
             return;
         }
         let now = Instant::now();
+        if let Some(due) = self.diagnostic_due {
+            if now >= due {
+                self.diagnostic_due = None;
+                self.log_event("Diagnose-Frame nach Flash und Reconnect");
+                self.send_diagnostic_frame();
+            }
+        }
         if let Some(until) = self.diagnostic_until {
             if now >= until {
                 self.diagnostic_until = None;
@@ -467,6 +496,11 @@ impl Service {
         self.unacked = 0;
         self.late_info_until = None;
         self.diagnostic_until = None;
+        if self.diagnostic_after_connect {
+            self.diagnostic_after_connect = false;
+            self.diagnostic_due = Some(Instant::now() + DIAGNOSTIC_AFTER_CONNECT);
+            self.log_event(format!("Diagnose-Frame in {DIAGNOSTIC_AFTER_CONNECT:?} eingeplant"));
+        }
         self.publish();
 
         // Spec 6.1: vier set_*-Kommandos ohne Antwortauswertung, dann ein Frame.
@@ -520,6 +554,7 @@ impl Service {
         self.send_due = None;
         self.heartbeat_due = None;
         self.diagnostic_until = None;
+        self.diagnostic_due = None;
         self.unacked = 0;
         {
             let state = self.app.state::<AppState>();
@@ -711,6 +746,24 @@ impl Service {
                     self.send_command(&Command::standby());
                     self.publish();
                 }
+            }
+            Job::Pause(done) => {
+                self.paused = true;
+                self.disconnect("Pause für Flash");
+                self.log_event("Angehalten: Scan gestoppt, Port frei");
+                self.publish();
+                let _ = done.send(());
+            }
+            Job::Resume { diagnostic_after_connect } => {
+                self.paused = false;
+                self.diagnostic_after_connect = diagnostic_after_connect;
+                self.last_disconnect = None;
+                self.next_scan = Instant::now();
+                self.log_event(format!(
+                    "Fortgesetzt: Scan läuft wieder{}",
+                    if diagnostic_after_connect { ", Diagnose-Frame nach dem nächsten Connect" } else { "" }
+                ));
+                self.publish();
             }
             Job::Shutdown(done) => {
                 if self.link.is_some() {

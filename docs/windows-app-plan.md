@@ -167,6 +167,20 @@ Aufwand: 3 bis 4 Tage.
 Ergebnis: Beide Firmware-Varianten aus der App flashbar, Update von Beta zu Beta
 funktioniert.
 
+### Stand Phase 3 (11. September 2026)
+
+| Teil | Status | Ergebnis |
+|---|---|---|
+| Release-Auswahl im Core | erledigt | `release.rs`: GitHub-Modelle, Auswahl je Kanal für Firmware (`v*`, `fw-beta-v*`) und Windows-App (`win-v*`, `win-beta-v*`), Asset-Zuordnung mit Fallback auf das Standard-Asset, Cache-Namen, SHA-256-Sidecar. |
+| Flash-Crate | erledigt | `crates/flash`: `flash_image` über die espflash-Bibliothek, Fortschritt als Ereignisse (Connecting, Connected, Erasing, Writing mit Prozent, Verifying, Rebooting, Done). Gegen das Gerät: Bootloader-Connect rund 7 s, Schreiben 21 s, gesamt 31 s für 1,34 MB. Kein esptool-Sidecar nötig, damit entfällt auch die Defender-Frage. |
+| Updates in der App | erledigt | `updates.rs`: Releases über `ureq`, Cache, Prüfung 10 s nach Start und alle 6 h, Kanal stable/beta in den Settings, Firmware-Download in den App-Datenordner mit Fortschritt, App-Update mit SHA-256-Prüfung gegen die Sidecar-Datei und Start von `AIMonitor-Setup.exe /SILENT` unter Windows, sonst Release-Seite im Browser. |
+| Flash in der App | erledigt | `flash.rs`: Serial-Service anhalten und Port freigeben, 500 ms, Flash im Worker mit Ereignissen, danach Wiederaufnahme mit Diagnose-Frame nach dem nächsten Connect und Rückkehr zum echten Snapshot nach 20 s. Bei Erfolg Board-Variante im Profil und installierte Version gespeichert. Flash-Sperre gegen Doppelstart. |
+| Seite Updates | gebaut | App-Box mit Version, Kanal, Prüfen, Installieren; Firmware-Box mit installierter Version, Variante, Update-Zeile und Inline-Flash-Dialog wie auf dem Mac (Variante, Vorprüfung, Fortschritt, Fehler mit Wiederholen und anderer Variante). |
+| Abnahme | teilweise | Log gegen das Gerät: Update-Prüfung gegen die echte GitHub-API (v2.17.0, beide Assets, für die Windows-App noch kein Release), Firmware-Download 1,34 MB, Flash mit allen Phasen, Reconnect mit 2.17.0, Diagnose-Frame mit ACK, Rückkehr zum Snapshot, `standby` beim Beenden. 55 Tests grün. Nicht geprüft: App-Update-Installation (kein Windows, kein `win-v`-Release, kommt mit Phase 4), Flash der ST7789-Variante (kein solches Board angeschlossen), Seite Updates visuell (Bildschirm aus). |
+
+Entwickler-Schalter: `AIMONITOR_DEV_ACTION=check|download|flash` löst die jeweilige Aktion beim
+Start aus, `AIMONITOR_DEV_VARIANT` wählt die Variante.
+
 ## Phase 4 – Installer, Signierung, CI
 
 Aufwand: 3 bis 4 Tage.

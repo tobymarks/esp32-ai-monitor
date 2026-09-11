@@ -146,3 +146,21 @@ p { margin: 0 0 12px; }
 .table th { color: var(--muted); font-weight: 500; width: 150px; }
 .table td { user-select: text; }
 .log { max-height: 260px; }
+
+/* Updates: Kasten für den Flash-Dialog, Vorprüfung, Fortschritt. */
+.card { margin-top: 14px; padding: 16px 18px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
+.card h3 { font-size: var(--fs-md); font-weight: 600; margin: 0 0 4px; }
+.card h4 { font-size: var(--fs-sm); font-weight: 600; margin: 16px 0 6px; }
+.preflight { margin: 0; padding-left: 18px; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); line-height: 1.7; }
+.preflight-warn { color: var(--warn); }
+.radio-group { display: flex; flex-direction: column; gap: 6px; }
+.radio-row { display: flex; align-items: center; gap: 8px; }
+.radio-row input { margin: 0; accent-color: var(--primary); }
+.progress-block { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; max-width: 420px; }
+.bar-indeterminate .bar-fill { animation: slide 1.2s ease-in-out infinite; }
+@keyframes slide { 0% { margin-left: 0; } 50% { margin-left: 70%; } 100% { margin-left: 0; } }
+.btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-deep); color: #fff; }
+.notice-warn { padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.error-text-plain { margin: 0 0 12px; font-size: var(--fs-sm); }
+.small { font-size: var(--fs-xs); }

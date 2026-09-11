@@ -4,9 +4,11 @@
 
 use crate::serial_service::{ConnectionSnapshot, Job};
 use crate::settings::Settings;
+use crate::updates::ReleaseCache;
 use aimonitor_core::{DeviceRegistry, Snapshot, Source};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use tauri::{tray::TrayIcon, AppHandle, Manager};
 
 pub struct AppState {
@@ -18,6 +20,15 @@ pub struct AppState {
     pub connection: Mutex<ConnectionSnapshot>,
     /// Aufträge an den Serial-Thread.
     pub serial: Sender<Job>,
+    /// Zuletzt geladene GitHub-Releases mit Zeitstempel (Phase 3).
+    pub releases: Mutex<ReleaseCache>,
+    /// `true`, solange eine Release-Abfrage läuft; parallele Aufrufe warten
+    /// über die Condvar auf das Ergebnis, statt selbst zu laden.
+    pub release_check: (Mutex<bool>, Condvar),
+    /// Ein Flash-Vorgang läuft; ein zweiter wird abgewiesen.
+    pub flashing: AtomicBool,
+    /// Ein App-Update wird gerade geladen oder installiert.
+    pub installing: AtomicBool,
 }
 
 impl AppState {
@@ -29,6 +40,10 @@ impl AppState {
             registry: Mutex::new(registry),
             connection: Mutex::new(ConnectionSnapshot::default()),
             serial,
+            releases: Mutex::new(ReleaseCache::default()),
+            release_check: (Mutex::new(false), Condvar::new()),
+            flashing: AtomicBool::new(false),
+            installing: AtomicBool::new(false),
         }
     }
 }

@@ -16,6 +16,7 @@ tauri-build = { version = "2.6", features = [] }
 [dependencies]
 aimonitor-core = { path = "../crates/core" }
 aimonitor-serial = { path = "../crates/serial" }
+aimonitor-flash = { path = "../crates/flash" }
 tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2.5"
 serde.workspace = true
@@ -25,3 +26,5 @@ sys-locale = "0.3"
 chrono-tz = "0.10"
 dark-light = "2"
 ctrlc = { version = "3", features = ["termination"] }
+ureq.workspace = true
+open = "5"

@@ -2,6 +2,7 @@
 //! Die Fachlogik liegt in `aimonitor-core`.
 
 mod commands;
+mod flash;
 mod poll;
 mod registry;
 mod serial_service;
@@ -9,12 +10,53 @@ mod settings;
 mod state;
 mod timezone;
 mod tray;
+mod updates;
 mod window;
 
 use aimonitor_core::Source;
 use settings::Settings;
 use state::AppState;
 use tauri::Manager;
+
+/// Entwicklungsschalter AIMONITOR_DEV_ACTION (siehe README). `flash` wartet
+/// zuerst bis zu 60 s auf eine Verbindung; Variante über
+/// AIMONITOR_DEV_VARIANT (Default ili9341).
+fn dev_action(app: tauri::AppHandle, action: String) {
+    use aimonitor_core::protocol::DisplayVariant;
+    std::thread::Builder::new()
+        .name("aimonitor-dev-action".into())
+        .spawn(move || {
+            let variant = std::env::var("AIMONITOR_DEV_VARIANT")
+                .ok()
+                .and_then(|v| DisplayVariant::parse(&v))
+                .unwrap_or(DisplayVariant::Ili9341);
+            match action.as_str() {
+                "check" => {
+                    let status = updates::check(&app, true);
+                    println!("[dev] check_updates: {}", serde_json::to_string_pretty(&status).unwrap_or_default());
+                }
+                "download" => match updates::download_firmware(&app, variant) {
+                    Ok(f) => println!("[dev] download_firmware: {}", serde_json::to_string_pretty(&f).unwrap_or_default()),
+                    Err(e) => eprintln!("[dev] download_firmware fehlgeschlagen: {e}"),
+                },
+                "flash" => {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    while std::time::Instant::now() < deadline {
+                        if app.state::<AppState>().connection.lock().unwrap().port.is_some() {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                    match flash::run(&app, variant) {
+                        Ok(o) => println!("[dev] flash_firmware: {}", serde_json::to_string_pretty(&o).unwrap_or_default()),
+                        Err(e) => eprintln!("[dev] flash_firmware fehlgeschlagen: {e}"),
+                    }
+                }
+                other => eprintln!("[dev] Unbekannte AIMONITOR_DEV_ACTION: {other}"),
+            }
+        })
+        .expect("Dev-Thread");
+}
 
 pub fn run() {
     tauri::Builder::default()
@@ -51,6 +93,13 @@ pub fn run() {
             if std::env::var("AIMONITOR_OPEN_SETTINGS").map(|v| v == "1").unwrap_or(false) {
                 window::open_settings(&handle);
             }
+            updates::start_timer(handle.clone());
+            // Entwicklung: AIMONITOR_DEV_ACTION=check|download|flash führt den
+            // jeweiligen Command einmal beim Start aus und protokolliert das
+            // Ergebnis; für Gerätetests ohne Klicks im Fenster.
+            if let Ok(action) = std::env::var("AIMONITOR_DEV_ACTION") {
+                dev_action(handle.clone(), action);
+            }
             poll::start_timer(handle);
             Ok(())
         })
@@ -74,6 +123,12 @@ pub fn run() {
             commands::get_timezones,
             commands::set_timezone,
             commands::send_diagnostic_frame,
+            commands::check_updates,
+            commands::get_update_status,
+            commands::download_firmware,
+            commands::flash_firmware,
+            commands::install_app_update,
+            commands::open_release_page,
         ])
         .build(tauri::generate_context!())
         .expect("Tauri-App konnte nicht gebaut werden")
