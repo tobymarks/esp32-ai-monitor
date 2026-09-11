@@ -1,15 +1,15 @@
 # AI Monitor
 
-A macOS background app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
+A macOS background app (plus a Windows companion app in beta) and an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
 
 No WiFi on the ESP32, no display-side cloud credentials, no browser tab to keep open.
 
 ## How It Works
 
-The **AI Monitor** Mac app periodically asks the locally installed CodexBar CLI for the selected provider, applies your display settings, and sends a compact JSON frame over USB serial to the ESP32. The ESP32 renders the dashboard on the 2.8" color display.
+The **AI Monitor** app on your Mac or Windows PC periodically asks the locally installed CodexBar CLI for the selected provider, applies your display settings, and sends a compact JSON frame over USB serial to the ESP32. The ESP32 renders the dashboard on the 2.8" color display.
 
 ```text
-AI providers -> CodexBar CLI -> AI Monitor.app -> USB serial -> ESP32 CYD display
+AI providers -> CodexBar CLI -> AI Monitor app (macOS / Windows) -> USB serial -> ESP32 CYD display
 ```
 
 The Mac app can also flash firmware, check GitHub Releases for app and firmware updates, and remember per-device display settings.
@@ -34,14 +34,15 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 
 1. **Buy** an [ESP32-2432S028 / ESP32-2432S028R board](https://de.aliexpress.com/item/1005007731775734.html), also known as a Cheap Yellow Display.
 2. **Install [CodexBar](https://codexbar.app/)** so its local CLI is available.
-3. **Download** the AI Monitor Mac app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases).
-4. **Plug** the ESP32 into your Mac via a USB data cable.
+3. **Download** the AI Monitor app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases): the Mac app (`app-v*`), or the Windows app (`win-v*`, currently beta under `win-beta-v*`).
+4. **Plug** the ESP32 into your computer via a USB data cable.
 5. **Flash** the right firmware variant and choose the provider in the AI Monitor settings window.
 
 ## Requirements
 
-- macOS 14+ on Apple Silicon or Intel (the app ships as a universal binary)
-- [CodexBar](https://codexbar.app/) installed with its local CLI
+- macOS 14+ on Apple Silicon or Intel (the app ships as a universal binary), or Windows 10/11 x64 for the Windows app (beta)
+- [CodexBar](https://codexbar.app/) installed with its local CLI; on Windows [Win-CodexBar](https://github.com/nesszer/Win-CodexBar) (`winget install Finesssee.Win-CodexBar`), whose `codexbar-cli.exe` provides the same data
+- Windows only: a driver for the CYD's CH340 USB-serial chip if Windows does not install it automatically
 - At least one of Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor set up in CodexBar
 - ESP32-2432S028 / ESP32-2432S028R CYD board
 - USB data cable, not a charge-only cable
@@ -116,13 +117,25 @@ cd companion
 
 The supported Mac app source lives in `companion/` and is built with Swift, AppKit, POSIX serial I/O, and GitHub Releases update checks.
 
+### Windows Companion App (beta)
+
+```bash
+cd companion-windows
+pnpm install
+cargo tauri dev
+```
+
+The Windows app lives in `companion-windows/` and is built with Tauri 2 (Rust backend, React frontend). The Rust workspace holds the shared logic (`crates/core`), the serial link (`crates/serial`) and the firmware flasher over the espflash library (`crates/flash`); everything builds and runs on macOS too for development. See `companion-windows/README.md` for the fixture mode and developer switches, and `docs/windows-app-plan.md` for the implementation plan and status.
+
 ## Release Flow
 
 - Firmware releases use tags like `v2.11.4`.
 - Mac app releases use tags like `app-v1.17.1`.
+- Windows app releases use tags like `win-v1.0.0`; betas use `win-beta-v*` and are marked as prereleases.
 - Pushes to `main` that touch firmware or installer files build and deploy the GitHub Pages installer.
 - Firmware tags build release assets for both ILI9341 and ST7789 variants.
 - App tags build `AIMonitor.zip` and `AIMonitor.dmg` via the macOS workflow.
+- Windows tags build `AIMonitor-Setup.exe` plus a `.sha256` sidecar via the Windows workflow (Tauri NSIS bundler, silent install smoke test).
 - App release assets are signed with a Developer ID, notarized by Apple and stapled,
   so they open without a Gatekeeper warning. The workflow creates the release and
   attaches both files; no local build is required.
@@ -133,7 +146,8 @@ The supported Mac app source lives in `companion/` and is built with Swift, AppK
 |-----------|-------|
 | ESP32 Firmware | PlatformIO, Arduino-ESP32, TFT_eSPI, LVGL v9, ArduinoJson |
 | Mac App | Swift, AppKit, POSIX serial, GitHub Releases API |
-| Data Source | Local CodexBar CLI |
+| Windows App | Tauri 2, Rust (serialport, espflash), React, GitHub Releases API |
+| Data Source | Local CodexBar CLI (macOS), Win-CodexBar CLI (Windows) |
 | Website | GitHub Pages |
 
 ## License

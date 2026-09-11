@@ -75,6 +75,12 @@ jobs:
           [ "$fail" = 0 ] && echo "Version OK: $TAG"
           exit $fail
 
+      # Die Seite zeigt die veröffentlichte Windows-Version. Bei einem Release-Tag
+      # muss sie zum Code passen, sonst verlinkt sie auf ein falsches Setup.
+      - name: Verify site versions are in sync
+        if: startsWith(github.ref, 'refs/tags/win-v') || startsWith(github.ref, 'refs/tags/win-beta-v')
+        run: ./scripts/sync_site_versions.sh --check
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:

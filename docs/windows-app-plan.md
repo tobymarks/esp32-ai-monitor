@@ -223,6 +223,16 @@ Aufwand: 2 Tage.
 - README: Abschnitt Windows mit Anforderungen und Build from Source.
 - Release 1.0.0 als Beta, dann stable.
 
+### Stand Phase 5 (11. September 2026)
+
+| Teil | Status | Ergebnis |
+|---|---|---|
+| Installer-Seite | erledigt | Windows-Download als zweiter Button in der AI-Monitor-Karte mit Versionshinweisen und Versions-Tag, Hinweis im Hero, Win-CodexBar-Link in der CodexBar-Karte, Anforderungen und Einrichtung sprachlich für beide Plattformen, neuer Hilfe-Eintrag „Gibt es AI Monitor auch für Windows?" mit winget-Befehl und CH340-Hinweis, Fußzeile mit Windows-Version. Alle Texte auch auf Englisch. |
+| Versions-Sync | erledigt | `scripts/sync_site_versions.sh` liest die Windows-Version aus `tauri.conf.json` und ersetzt `data-v="win"` sowie die `win-v`/`win-beta-v`-Links. Der Windows-Workflow prüft die Seite bei jedem Release-Tag. |
+| README | erledigt | Windows in Überblick, Quick Start, Anforderungen (Win-CodexBar, CH340-Treiber), Build from Source, Release Flow und Tech Stack. |
+| Erstes Release | siehe unten | Tag `win-beta-v1.0.0` als Prerelease. Die Versionsnummer bleibt numerisch `1.0.0`, weil der NSIS-Bundler von Tauri Prerelease-Suffixe wie `-beta.1` nicht zuverlässig verarbeitet; der Beta-Status steckt im Tag und im Prerelease-Flag. Der Weg zu stable: Tag `win-v1.0.0` auf demselben Stand oder `win-v1.0.1` nach Fixes. |
+
+
 ## Gesamtaufwand
 
 Etwa 19 bis 25 Personentage netto, ohne Wartezeiten für Signierung und Hardware.
