@@ -156,14 +156,15 @@ jobs:
             pnpm tauri build --bundles nsis
           fi
 
-      # Tauri benennt das Setup "AI Monitor_<version>_x64-setup.exe". Der
+      # Tauri benennt das Setup "AI Monitor_<version>_x64-setup.exe" und legt es im
+      # Workspace-Zielordner target/ ab, nicht unter src-tauri/. Der
       # In-App-Updater sucht das Asset unter dem festen Namen AIMonitor-Setup.exe
       # und prüft es gegen die .sha256-Sidecar-Datei.
       - name: Collect release assets
         working-directory: ${{ env.APP_DIR }}
         run: |
           set -euo pipefail
-          SRC=$(ls src-tauri/target/release/bundle/nsis/*-setup.exe | head -1)
+          SRC=$(ls target/release/bundle/nsis/*-setup.exe | head -1)
           [ -f "$SRC" ] || { echo "::error::Kein NSIS-Setup gefunden"; exit 1; }
           mkdir -p release
           cp "$SRC" "release/$SETUP_NAME"
