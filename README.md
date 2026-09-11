@@ -1,6 +1,6 @@
 # AI Monitor
 
-A macOS background app (plus a Windows companion app in beta) and an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
+A macOS or Windows companion app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
 
 No WiFi on the ESP32, no display-side cloud credentials, no browser tab to keep open.
 
@@ -34,13 +34,13 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 
 1. **Buy** an [ESP32-2432S028 / ESP32-2432S028R board](https://de.aliexpress.com/item/1005007731775734.html), also known as a Cheap Yellow Display.
 2. **Install [CodexBar](https://codexbar.app/)** so its local CLI is available.
-3. **Download** the AI Monitor app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases): the Mac app (`app-v*`), or the Windows app (`win-v*`, currently beta under `win-beta-v*`).
+3. **Download** the AI Monitor app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases): the Mac app (`app-v*`), or the Windows app (`win-v*`).
 4. **Plug** the ESP32 into your computer via a USB data cable.
 5. **Flash** the right firmware variant and choose the provider in the AI Monitor settings window.
 
 ## Requirements
 
-- macOS 14+ on Apple Silicon or Intel (the app ships as a universal binary), or Windows 10/11 x64 for the Windows app (beta)
+- macOS 14+ on Apple Silicon or Intel (the app ships as a universal binary), or Windows 10/11 x64 for the Windows app
 - [CodexBar](https://codexbar.app/) installed with its local CLI; on Windows [Win-CodexBar](https://github.com/nesszer/Win-CodexBar) (`winget install Finesssee.Win-CodexBar`), whose `codexbar-cli.exe` provides the same data
 - Windows only: a driver for the CYD's CH340 USB-serial chip if Windows does not install it automatically
 - At least one of Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor set up in CodexBar
@@ -117,7 +117,7 @@ cd companion
 
 The supported Mac app source lives in `companion/` and is built with Swift, AppKit, POSIX serial I/O, and GitHub Releases update checks.
 
-### Windows Companion App (beta)
+### Windows Companion App
 
 ```bash
 cd companion-windows
