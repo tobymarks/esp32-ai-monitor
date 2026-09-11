@@ -42,9 +42,11 @@ sed -E \
 # dort ist nichts zu ersetzen — der Platzhalter zieht sich den Wert aus dem DOM.
 
 if [ "$CHECK" = "1" ]; then
-  if ! diff -q "$PAGE" "$tmp" >/dev/null; then
+  # Zeilenenden ignorieren: auf Windows-Runnern liegt die Seite mit CRLF vor,
+  # die sed-Ausgabe hat LF; ohne Normalisierung meldet diff jede Zeile.
+  if ! diff -q <(tr -d "\r" < "$PAGE") <(tr -d "\r" < "$tmp") >/dev/null; then
     echo "Versionen auf der Seite weichen ab (erwartet: FW v${FW}, App v${APP}, Windows v${WIN}):"
-    diff "$PAGE" "$tmp" | head -20 || true
+    diff <(tr -d "\r" < "$PAGE") <(tr -d "\r" < "$tmp") | head -20 || true
     echo
     echo "Fix: scripts/sync_site_versions.sh"
     rm -f "$tmp"
