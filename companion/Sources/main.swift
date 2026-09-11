@@ -1652,6 +1652,10 @@ struct SerialFrameReceipt {
 class SerialPortManager {
     private var fileDescriptor: Int32 = -1
     private(set) var connectedPort: String?
+    /// Port, dessen letzter Öffnungsversuch mit EBUSY scheiterte (ein anderer
+    /// Prozess hält ihn exklusiv, siehe `TIOCEXCL` in `connect(to:)`). Nur
+    /// Anzeige-Zustand: der Scan-Timer versucht es beim nächsten Tick erneut.
+    private(set) var busyPort: String?
     private var scanTimer: Timer?
     private var lastDisconnectAt: Date?
     private let ioLock = NSLock()
@@ -1787,7 +1791,36 @@ class SerialPortManager {
     private func connect(to port: String) {
         NSLog("[Serial] Connecting to %@...", port)
         let fd = Darwin.open(port, O_RDWR | O_NOCTTY | O_NONBLOCK)
-        guard fd >= 0 else { NSLog("[Serial] Failed to open %@: errno %d", port, errno); return }
+        guard fd >= 0 else {
+            let err = errno
+            if err == EBUSY {
+                // Ein anderer Prozess hält den Port exklusiv (z.B. esptool oder
+                // die Windows-Companion-App im Dev-Modus). Kein Dauerfehler:
+                // `connectedPort` bleibt nil, der Scan-Timer probiert es beim
+                // nächsten Tick wieder. Nur beim ersten Treffer loggen, sonst
+                // füllt der 3-s-Scan das Log.
+                if busyPort != port {
+                    NSLog("[Serial] Port %@ is busy (EBUSY) — held by another process, retrying on next scan", port)
+                    busyPort = port
+                }
+                return
+            }
+            busyPort = nil
+            NSLog("[Serial] Failed to open %@: errno %d", port, err)
+            return
+        }
+
+        // Exklusives Lock: Ohne TIOCEXCL kann ein zweiter Prozess denselben
+        // /dev/cu.* gleichzeitig öffnen und ebenfalls Frames ans Gerät schreiben
+        // (beobachtet mit der Windows-Companion-App im Dev-Modus). Mit dem Lock
+        // scheitern weitere open()-Aufrufe mit EBUSY. close() gibt das Lock
+        // wieder frei, ein TIOCNXCL vor dem Schließen ist daher nicht nötig —
+        // der Flash-Pfad ruft `stopScanning()`/`disconnect()` auf, bevor
+        // esptool den Port selbst öffnet.
+        if ioctl(fd, TIOCEXCL) != 0 {
+            NSLog("[Serial] TIOCEXCL on %@ failed: errno %d (continuing without exclusive lock)", port, errno)
+        }
+        busyPort = nil
 
         var options = termios()
         tcgetattr(fd, &options)
@@ -1947,8 +1980,10 @@ class SerialPortManager {
     }
 
     func disconnect() {
+        // close() hebt das TIOCEXCL-Lock aus `connect(to:)` auf.
         if fileDescriptor >= 0 { Darwin.close(fileDescriptor); fileDescriptor = -1 }
         connectedPort = nil
+        busyPort = nil
         deviceFirmwareVersion = nil
         deviceSerialTransport = nil
         deviceMaxFrameBytes = nil
