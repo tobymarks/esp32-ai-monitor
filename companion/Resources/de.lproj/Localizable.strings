@@ -201,6 +201,7 @@
 "serial.testframe.sending" = "Testbild nach Firmware-Update wird gesendet";
 "serial.testframe.waiting" = "Testbild wartet auf die Verbindung";
 "state.disconnected" = "nicht verbunden";
+"state.portBusy" = "Port belegt durch anderen Prozess (%@)";
 "status.checking" = "Status: wird geprüft";
 "status.error" = "Status: Fehler";
 "upd.channel.intro" = "Stable nutzt veröffentlichte Releases. Beta zeigt zusätzlich Vorabversionen für App und Firmware.";

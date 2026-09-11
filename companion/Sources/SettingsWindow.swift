@@ -688,6 +688,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 portStatusLabel.stringValue = L("state.disconnected")
                 portStatusLabel.textColor = .secondaryLabelColor
             }
+        } else if let busy = sp.busyPort {
+            // Ein anderer Prozess hält den Port exklusiv (TIOCEXCL/EBUSY).
+            // Kein Fehlerzustand: der Scan-Timer versucht es weiter.
+            let short = (busy as NSString).lastPathComponent
+            portStatusDot.state = .attention
+            portStatusLabel.stringValue = L("state.portBusy", short)
+            portStatusLabel.textColor = .systemOrange
         } else {
             portStatusDot.state = .inactive
             portStatusLabel.stringValue = L("state.disconnected")

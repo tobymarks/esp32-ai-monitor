@@ -201,6 +201,7 @@
 "serial.testframe.sending" = "Sending a test image after the firmware update";
 "serial.testframe.waiting" = "Test image is waiting for the connection";
 "state.disconnected" = "not connected";
+"state.portBusy" = "Port in use by another process (%@)";
 "status.checking" = "Status: checking";
 "status.error" = "Status: error";
 "upd.channel.intro" = "Stable uses published releases. Beta additionally shows pre-releases for the app and firmware.";
