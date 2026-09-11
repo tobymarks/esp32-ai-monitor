@@ -78,7 +78,7 @@ Commands fürs Frontend (`src-tauri/src/commands.rs`):
 | `get_update_status` | `UpdateStatus` aus dem Cache ohne Netzzugriff |
 | `download_firmware(variant)` | Firmware-Asset nach `app_data_dir()/firmware/` laden, Event `firmware-download` |
 | `flash_firmware(variant)` | Serial-Service anhalten, Image mit `aimonitor-flash` schreiben, fortsetzen; Event `flash-progress` |
-| `install_app_update` | `AIMonitor-Setup.exe` laden, SHA-256 prüfen, mit `/SILENT` starten; sonst Browser. Event `update-progress` |
+| `install_app_update` | `AIMonitor-Setup.exe` laden, SHA-256 prüfen, mit `/S /UPDATE /R` starten (Tauri-NSIS); sonst Browser. Event `update-progress` |
 | `open_release_page` | Release-Seite im Browser |
 
 ## Updates und Firmware-Flash
