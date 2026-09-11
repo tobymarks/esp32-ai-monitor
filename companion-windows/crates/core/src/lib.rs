@@ -17,6 +17,7 @@
 //! - [`protocol`]: Drahtformat zum Gerät: Nachrichten, Kommandos, Framing, Textregeln
 //! - [`envelope`]: Usage-, Notice- und Diagnose-Frames
 //! - [`device`]: Geräteprofile je MAC und ihre Registry
+//! - [`release`]: GitHub-Releases auswählen, Assets zuordnen, SHA-256 prüfen
 
 pub mod codexbar;
 pub mod device;
@@ -24,6 +25,7 @@ pub mod envelope;
 pub mod model;
 pub mod protocol;
 pub mod provider;
+pub mod release;
 pub mod rows;
 pub mod runner;
 pub mod semver;

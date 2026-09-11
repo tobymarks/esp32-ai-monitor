@@ -1,0 +1,16 @@
+[package]
+name = "aimonitor-flash"
+description = "Firmware auf die CYD schreiben, über die espflash-Bibliothek statt eines Fremdbinaries"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+espflash = { version = "4.6", default-features = false, features = ["serialport"] }
+serialport.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[[example]]
+name = "flash"
