@@ -17,7 +17,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -27,8 +29,22 @@
     ],
     "windows": {
       "webviewInstallMode": {
-        "type": "downloadBootstrapper"
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "German",
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "AI Monitor"
       }
-    }
+    },
+    "publisher": "Tobias Marks",
+    "shortDescription": "AI-Nutzungslimits auf dem ESP32-Display",
+    "longDescription": "Liest Provider-Limits über die Win-CodexBar-CLI und zeigt sie auf einem USB-verbundenen ESP32-Display (CYD) an."
   }
 }

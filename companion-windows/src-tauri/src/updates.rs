@@ -528,7 +528,8 @@ fn install_inner(app: &AppHandle) -> Result<InstallOutcome, String> {
     }
 
     std::process::Command::new(&target)
-        .args(["/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
+        // Tauri-NSIS: /S still, /UPDATE Update-Modus, /R App danach neu starten.
+        .args(["/S", "/UPDATE", "/R"])
         .spawn()
         .map_err(|e| format!("update.err.start: {e}"))?;
     println!("[updates] Installer gestartet, App wird beendet");

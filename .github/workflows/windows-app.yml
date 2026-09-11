@@ -1,0 +1,222 @@
+name: Windows App Build
+
+# Baut die Windows-Companion-App (companion-windows/, Tauri 2) als NSIS-Setup.
+# Trigger nur auf Windows-App-Tags (win-v1.x.x, win-beta-v*), damit der
+# Runner nicht bei jedem Commit läuft. Manuell per Dispatch startbar; dann
+# wird nur gebaut und als Workflow-Artefakt abgelegt, außer upload_to_release
+# ist gesetzt.
+#
+# Signierung: optional über Azure Trusted Signing (Secrets AZURE_*) oder ein
+# PFX-Zertifikat (WINDOWS_CERTIFICATE_BASE64 + WINDOWS_CERTIFICATE_PASSWORD).
+# Fehlen beide, entsteht ein unsigniertes Setup; SmartScreen warnt dann.
+
+on:
+  push:
+    tags:
+      - 'win-v*.*.*'
+      - 'win-beta-v*'
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: 'Setup + SHA-256 zum vorhandenen Release hochladen (Tag angeben)'
+        required: false
+        default: 'false'
+      tag:
+        description: 'Release-Tag (nur bei upload_to_release=true)'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-app-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  APP_DIR: companion-windows
+  SETUP_NAME: AIMonitor-Setup.exe
+  # Exponiert, damit Steps per `if: env.X != ''` erkennen, ob Signing-Secrets da sind.
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Die Version steht an drei Stellen: tauri.conf.json, package.json und
+      # der Workspace-Cargo.toml. Bei einem Release-Tag müssen alle drei zum
+      # Tag passen, sonst meldet der In-App-Updater eine andere Version als
+      # ausgeliefert wird.
+      - name: Verify app version matches tag
+        if: startsWith(github.ref, 'refs/tags/win-v') || startsWith(github.ref, 'refs/tags/win-beta-v')
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          set -euo pipefail
+          REF="${GITHUB_REF#refs/tags/}"
+          if [[ "$REF" == win-beta-v* ]]; then TAG="${REF#win-beta-v}"; else TAG="${REF#win-v}"; fi
+          CONF=$(python3 -c 'import json;print(json.load(open("src-tauri/tauri.conf.json"))["version"])')
+          PKG=$(python3 -c 'import json;print(json.load(open("package.json"))["version"])')
+          CARGO=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          fail=0
+          for pair in "tauri.conf.json:$CONF" "package.json:$PKG" "Cargo.toml:$CARGO"; do
+            name="${pair%%:*}"; val="${pair#*:}"
+            if [ "$val" != "$TAG" ]; then
+              echo "::error::Tag $REF passt nicht zu $name '$val' (erwartet Version $TAG)"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] && echo "Version OK: $TAG"
+          exit $fail
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ${{ env.APP_DIR }}/pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.APP_DIR }} -> target
+
+      - name: Install frontend dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: pnpm install --frozen-lockfile
+
+      # Erster echter Windows-Build der Crates: serialport (COMPort), espflash,
+      # dark-light und der CLI-Aufruf ohne Konsolenfenster laufen nur hier
+      # durch ihren Windows-Zweig.
+      - name: Run tests (Windows)
+        working-directory: ${{ env.APP_DIR }}
+        run: cargo test --workspace --locked
+
+      # ------------------------------------------------------------------
+      # Signierung, Variante A: Azure Trusted Signing
+      # Secrets: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET,
+      #          AZURE_SIGNING_ENDPOINT (z. B. https://weu.codesigning.azure.net),
+      #          AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE
+      # ------------------------------------------------------------------
+      - name: Prepare Azure Trusted Signing
+        if: env.AZURE_CLIENT_ID != ''
+        run: |
+          set -euo pipefail
+          cargo install trusted-signing-cli --locked
+          ENDPOINT="${{ secrets.AZURE_SIGNING_ENDPOINT }}"
+          ACCOUNT="${{ secrets.AZURE_SIGNING_ACCOUNT }}"
+          PROFILE="${{ secrets.AZURE_SIGNING_PROFILE }}"
+          echo "TAURI_SIGN_CONFIG={\"bundle\":{\"windows\":{\"signCommand\":\"trusted-signing-cli -e $ENDPOINT -a $ACCOUNT -c $PROFILE -d \\\"AI Monitor\\\" %1\"}}}" >> "$GITHUB_ENV"
+          echo "Signierung: Azure Trusted Signing"
+
+      # ------------------------------------------------------------------
+      # Signierung, Variante B: PFX-Zertifikat im Zertifikatsspeicher
+      # Secrets: WINDOWS_CERTIFICATE_BASE64, WINDOWS_CERTIFICATE_PASSWORD
+      # ------------------------------------------------------------------
+      - name: Import PFX certificate
+        if: env.AZURE_CLIENT_ID == '' && env.WINDOWS_CERTIFICATE_BASE64 != ''
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+          $pw = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+          Remove-Item $pfx
+          $cfg = @{ bundle = @{ windows = @{ certificateThumbprint = $cert.Thumbprint; digestAlgorithm = "sha256"; timestampUrl = "http://timestamp.digicert.com" } } } | ConvertTo-Json -Compress -Depth 5
+          "TAURI_SIGN_CONFIG=$cfg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Signierung: PFX-Zertifikat $($cert.Thumbprint)"
+
+      - name: Build NSIS setup
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TAURI_SIGN_CONFIG:-}" ]; then
+            pnpm tauri build --bundles nsis --config "$TAURI_SIGN_CONFIG"
+          else
+            echo "Unsignierter Build (keine Signing-Secrets hinterlegt)."
+            pnpm tauri build --bundles nsis
+          fi
+
+      # Tauri benennt das Setup "AI Monitor_<version>_x64-setup.exe". Der
+      # In-App-Updater sucht das Asset unter dem festen Namen AIMonitor-Setup.exe
+      # und prüft es gegen die .sha256-Sidecar-Datei.
+      - name: Collect release assets
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          set -euo pipefail
+          SRC=$(ls src-tauri/target/release/bundle/nsis/*-setup.exe | head -1)
+          [ -f "$SRC" ] || { echo "::error::Kein NSIS-Setup gefunden"; exit 1; }
+          mkdir -p release
+          cp "$SRC" "release/$SETUP_NAME"
+          (cd release && sha256sum "$SETUP_NAME" > "$SETUP_NAME.sha256")
+          ls -la release
+          cat "release/$SETUP_NAME.sha256"
+
+      # Der stille Modus ist genau der Pfad, den der In-App-Updater nimmt.
+      - name: Smoke test silent install
+        working-directory: ${{ env.APP_DIR }}
+        shell: pwsh
+        run: |
+          $setup = Resolve-Path "release\$env:SETUP_NAME"
+          $p = Start-Process -FilePath $setup -ArgumentList "/S" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer Exit-Code $($p.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA "AI Monitor\aimonitor.exe"
+          if (-not (Test-Path $exe)) { throw "aimonitor.exe nicht unter $exe" }
+          $sig = Get-AuthenticodeSignature $exe
+          Write-Host "Installiert: $exe, Signatur: $($sig.Status)"
+          $uninst = Join-Path $env:LOCALAPPDATA "AI Monitor\uninstall.exe"
+          if (Test-Path $uninst) { Start-Process -FilePath $uninst -ArgumentList "/S" -Wait }
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: AIMonitor-Setup
+          path: |
+            ${{ env.APP_DIR }}/release/${{ env.SETUP_NAME }}
+            ${{ env.APP_DIR }}/release/${{ env.SETUP_NAME }}.sha256
+          if-no-files-found: error
+
+      - name: Attach assets to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/win-v') || startsWith(github.ref, 'refs/tags/win-beta-v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true' && github.event.inputs.tag != '')
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          # Release anlegen, falls es noch nicht existiert. Beta-Tags werden als
+          # prerelease markiert, damit der Updater sie nur im Beta-Kanal anbietet.
+          # Vorhandene Notes bleiben unverändert, es werden nur Assets angehängt.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if [[ "$TAG" == win-beta-v* ]]; then
+              gh release create "$TAG" --prerelease --title "$TAG" \
+                --notes "Automatisierter Beta-Build der Windows-App."
+            else
+              gh release create "$TAG" --title "$TAG" --generate-notes
+            fi
+          fi
+          gh release upload "$TAG" "release/$SETUP_NAME" "release/$SETUP_NAME.sha256" --clobber
+          echo "Assets an $TAG angehängt."
