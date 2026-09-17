@@ -25,8 +25,8 @@ unverändert.
 
 ## Entscheidungen
 
-Punkt 1 ist entschieden (10. September 2026). Die Punkte 2 bis 5 und 7 sind als Annahme
-gesetzt und werden in Phase 0 bestätigt. Punkt 6 ist offen.
+Punkt 1 ist entschieden (10. September 2026), Punkt 6 am 17. September 2026. Die Punkte 2 bis 5
+und 7 sind als Annahme gesetzt und in den Phasen 0 bis 5 bestätigt.
 
 | Nr. | Thema | Entscheidung |
 |---|---|---|
@@ -35,7 +35,7 @@ gesetzt und werden in Phase 0 bestätigt. Punkt 6 ist offen.
 | 3 | Versionierung | Eigene Linie ab 1.0.0. Tags `win-v*` und `win-beta-v*`. Der Mac-Updater filtert auf `app-v`/`app-beta-v` und ignoriert Windows-Releases damit automatisch. |
 | 4 | Release-Assets | `AIMonitor-Setup.exe` plus `.sha256`. Portable-Variante später, falls gewünscht. |
 | 5 | Datenquelle | Win-CodexBar-CLI per Prozessaufruf, Suchreihenfolge: Installationspfad, dann `PATH`. Mapping-Schicht snake_case auf internes Modell. |
-| 6 | Signierung | **Offen.** Optionen: Azure Trusted Signing (kostenpflichtig, Identitätsprüfung, kein SmartScreen-Aufbau nötig), SignPath Foundation (kostenlos für Open Source, Antrag), unsigniert mit SHA-256 (SmartScreen warnt). Empfehlung: Azure Trusted Signing beantragen, erste Betas unsigniert. |
+| 6 | Signierung | **Entschieden (17. September 2026): vorerst unsigniert**, Wiederbewerbung bei SignPath nach mehr Reichweite; Certum als Rückfall. Ursprüngliche Optionen: Azure Trusted Signing (kostenpflichtig, Identitätsprüfung, kein SmartScreen-Aufbau nötig), SignPath Foundation (kostenlos für Open Source, Antrag), unsigniert mit SHA-256 (SmartScreen warnt). Empfehlung: Azure Trusted Signing beantragen, erste Betas unsigniert. |
 | 7 | Systemvoraussetzungen | Windows 10 1809+ oder 11, x64. WebView2 wird vom Installer nachgezogen. ARM64 nicht im ersten Release. |
 
 ## Phase 0 – Vorarbeiten und Spikes
