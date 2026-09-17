@@ -10,3 +10,9 @@ installer/bin/*.bin
 
 # Mac companion app build output
 companion/build/
+
+# Hardware-Test: Artefakte des IDF-Builds (werden neu erzeugt)
+hardware-test/**/.dummy/
+hardware-test/**/managed_components/
+hardware-test/**/dependencies.lock
+hardware-test/**/sdkconfig*
