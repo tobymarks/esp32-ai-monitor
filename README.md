@@ -2,7 +2,7 @@
 
 A macOS or Windows companion app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
 
-No WiFi on the ESP32, no display-side cloud credentials, no browser tab to keep open.
+Usage data travels only over USB: the ESP32 needs no Wi-Fi, never sees cloud credentials, and there is no browser tab to keep open.
 
 ## How It Works
 
@@ -29,6 +29,7 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 - Portrait plus left/right landscape layouts
 - Firmware flashing for ILI9341 and ST7789 CYD variants
 - Optional menu bar quick menu for provider switching
+- Optional Wi-Fi on the display, used only to keep the standby clock accurate via NTP while the app is not connected
 
 ## Quick Start
 
