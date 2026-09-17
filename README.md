@@ -39,6 +39,8 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 4. **Plug** the ESP32 into your computer via a USB data cable.
 5. **Flash** the right firmware variant and choose the provider in the AI Monitor settings window.
 
+A step-by-step build guide with photos is on [Hackster.io](https://www.hackster.io/toby-marks/esp32-desk-display-for-claude-and-chatgpt-usage-limits-71d7e3).
+
 ## Requirements
 
 - macOS 14+ on Apple Silicon or Intel (the app ships as a universal binary), or Windows 10/11 x64 for the Windows app

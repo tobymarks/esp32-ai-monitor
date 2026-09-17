@@ -157,6 +157,8 @@ a.tag:hover { background: white; color: var(--primary); }
 .plain-card li:last-child { border-bottom: 0; }
 .plain-card li::before { content: '✓'; position: absolute; left: 0; color: var(--primary); }
 .plain-card li a { display: inline-block; padding-block: 4px; }
+.plain-card p.need-guide { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.need-guide a { display: inline-block; padding-block: 4px; font-weight: 600; }
 .case-photo { margin: 18px 0 6px; overflow: hidden; border-radius: 8px; background: #cfd4dc; }
 .case-photo img { display: block; width: 100%; height: auto; aspect-ratio: 5 / 4; object-fit: cover; }
 .case-links { display: grid; gap: 0; }
