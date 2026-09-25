@@ -97,13 +97,16 @@ static void ensure_ntp_started() {
 
 void wifi_time_init() {
     load_credentials();
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
 
+    // v2.18.1: Funkmodul nur mit Zugangsdaten starten. Nach einem Flash sind
+    // keine gespeichert, und der erste Start des Moduls kalibriert komplett
+    // neu. Der Stromstoss liess auf CYD-Boards den USB-Chip kurz abfallen;
+    // die Companion-App verlor den Port und meldete „keine Firmware".
+    // start_connect() und wifi_time_print_scan() setzen den Modus selbst.
     if (has_credentials) {
         start_connect();
     } else {
-        Serial.println("[WiFi] No stored credentials");
+        Serial.println("[WiFi] No stored credentials — radio stays off");
     }
 }
 
