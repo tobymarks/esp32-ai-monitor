@@ -1,10 +1,12 @@
 # USB-Serial-Protokoll zwischen Companion-App und ESP32-Firmware
 
-Stand: 10. September 2026. Bezug: Mac-App 1.28.0 `(main.swift:33)`, Firmware 2.17.0 `(config.h:11)`.
+Basisstand: 10. September 2026. Bezug: Mac-App 1.28.0 `(main.swift:33)`, Firmware 2.17.0 `(config.h:11)`. Die Windows-Erweiterung vom 25. September 2026 steht in Abschnitt 10.
 
 Diese Spezifikation beschreibt das Protokoll implementierungsunabhängig. Jede Aussage trägt einen Quellverweis in der Form `(main.swift:1706)` oder `(serial_receiver.cpp:120)`, damit sie gegen den Code prüfbar bleibt. Zeilenangaben beziehen sich auf `companion/Sources/main.swift`, `companion/Sources/CodexBarSource.swift`, `companion/Sources/SettingsWindow+*.swift` sowie `src/*.cpp` und `src/*.h` im Stand des oben genannten Commits.
 
 Was im Code nicht eindeutig ist, steht in Abschnitt 9 als offener Punkt. Nichts in diesem Dokument ist erfunden oder aus anderen Quellen ergänzt.
+
+Die Quellenverweise und Zeilenangaben der Abschnitte 1 bis 9 beschreiben den damaligen Basisstand. Abschnitt 10 beschreibt die aktuelle Windows-App und Firmware 2.19.0-dev.
 
 ---
 
@@ -804,3 +806,23 @@ Beide sind auf dem Gerät implementiert `(serial_receiver.cpp:392-396)`, `(seria
 ### 9.12 Thread-Modell
 
 Die Mac-App serialisiert Datenframes über eine eigene Queue und schützt alle Zugriffe auf den Port mit einem Lock `(main.swift:2224-2230)`, `(main.swift:1657)`. `get_info` beim Connect wird ohne diesen Lock geschrieben `(main.swift:1823-1826)`. Eine Windows-Implementierung braucht eine äquivalente Serialisierung, damit ein Kommando nicht in das Warten auf ein ACK hineinschreibt.
+
+---
+
+## 10. Windows-Fensterverwaltung ab Firmware 2.19.0-dev
+
+Die Windows-App speichert eine geordnete Liste von 1 bis 8 Fenstern. Ein Fenster enthält genau einen der sechs bekannten Provider oder `clock`. Ein Inhalt darf mehrfach verwendet werden. Fenster 1 bleibt bestehen, sein Inhalt kann geändert werden. Alte `settings.json` ohne `views` werden mit dem zuletzt gewählten Provider als Fenster 1 übernommen. Quelle: `companion-windows/src-tauri/src/settings.rs`.
+
+Nach dem Handshake sendet die Windows-App ab Firmware 2.19.0-dev zusätzlich zu Theme, Sprache, Orientierung und Helligkeit dieses Zeilenkommando. Bei Änderungen sendet sie es erneut:
+
+```json
+{"cmd":"set_views","views":["codex","clock","claude"],"mode":"automatic","interval":10,"active":0}
+```
+
+`views` enthält 1 bis 8 Einträge aus `claude`, `codex`, `antigravity`, `gemini`, `copilot`, `cursor`, `clock`. `active` ist der nullbasierte Index. `mode` ist `manual` oder `automatic`; `interval` liegt zwischen 2 und 3600 Sekunden. Das Gerät bestätigt mit `{"type":"ok","cmd":"set_views","count":3}` oder lehnt die gesamte ungültige Konfiguration mit `type:error` ab. Die gültige Konfiguration liegt auch im NVS und bleibt nach einem Neustart erhalten. Ein kurzer Touch auf der linken Displayhälfte wählt das vorherige Fenster, rechts das nächste; ein langer Touch öffnet die Einstellungen und schließt sie dort wieder. Im automatischen Modus wechselt die Firmware selbst nach dem Intervall. Quelle: `src/serial_receiver.cpp`, `src/ui_dashboard.cpp`, `src/ui_settings.cpp`.
+
+Jeder Provider erhält weiterhin einen eigenen Datenframe im bestehenden Schema 1. Zusätzlich steht in `data[0]` der Index des Fensters, z. B. `"viewIndex":2`. Die Firmware prüft, ob Index und Provider zur Konfiguration passen, und speichert den Zustand pro Fenster. Für `clock` geht kein Usage-Frame raus; die Uhr nutzt die Systemzeit aus den anderen Frames beziehungsweise NTP. Weil die Frames einzeln übertragen werden, gilt die Grenze von 4095 Bytes weiterhin pro Datenquelle. Quelle: `companion-windows/src-tauri/src/serial_service.rs`, `src/serial_receiver.cpp`.
+
+Fenster-Konfiguration und Datenframes werden nur an Firmware ab 2.19.0-dev geschickt. Ältere Firmware erhält weiterhin den einzelnen Datenframe des in der Übersicht gewählten Providers. Ein Datenframe ohne `viewIndex` aktiviert auf neuer Firmware zur Laufzeit eine einzelne Provider-Ansicht, unabhängig von der gespeicherten Fensterliste. Diese Liste bleibt im NVS erhalten und wird beim nächsten `set_views` oder Neustart wiederhergestellt. Quelle: `companion-windows/crates/core/src/protocol.rs`, `companion-windows/src-tauri/src/serial_service.rs`, `src/serial_receiver.cpp`.
+
+Die Windows-App fragt nach dem Verbinden mit `{"cmd":"get_views"}` die Geräteauswahl ab. Das Gerät antwortet mit einer Zeile wie `{"type":"view_state","views":["codex","clock"],"mode":"manual","interval":10,"active":1}`. Nach einem kurzen Touch sendet es dieselbe Nachricht unaufgefordert. Stimmen Liste, Modus und Intervall mit den App-Einstellungen überein, übernimmt die App den aktiven Index und speichert ihn. Dadurch bleibt die Touch-Auswahl nach Reconnect und Neustart erhalten. Quelle: `src/serial_receiver.cpp`, `companion-windows/src-tauri/src/serial_service.rs`.

@@ -4,7 +4,7 @@
 //! Öffnen nach dem Rezept aus Spec 9.1: 115200 8N1, keine Flusskontrolle,
 //! DTR und RTS beim Öffnen nicht anfassen, 200 ms Boot-Delay, dann `get_info`.
 
-use aimonitor_core::protocol::{self, Command, DeviceInfo, DeviceMessage};
+use aimonitor_core::protocol::{self, Command, DeviceInfo, DeviceMessage, ViewState};
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
@@ -46,6 +46,7 @@ pub struct Link {
     port: Box<dyn SerialPort>,
     name: String,
     pending: Vec<u8>,
+    view_events: Vec<ViewState>,
     /// Alle empfangenen JSON-Zeilen, die nicht an einen Wartenden gingen, für die Diagnose.
     pub log: Vec<String>,
     /// Erster Lesefehler außer Timeout; danach gilt der Port als verloren.
@@ -68,13 +69,13 @@ impl Link {
             .timeout(protocol::READ_SLICE)
             .open()
             .map_err(|e| LinkError::Open(e.to_string()))?;
-        Ok(Self { port, name: name.to_string(), pending: Vec::new(), log: Vec::new(), lost: None, last_get_info: None })
+        Ok(Self { port, name: name.to_string(), pending: Vec::new(), view_events: Vec::new(), log: Vec::new(), lost: None, last_get_info: None })
     }
 
     /// Bereits geöffneten Port übernehmen (Tests mit Pseudo-Terminal).
     #[cfg(test)]
     fn from_port(port: Box<dyn SerialPort>, name: &str) -> Self {
-        Self { port, name: name.to_string(), pending: Vec::new(), log: Vec::new(), lost: None, last_get_info: None }
+        Self { port, name: name.to_string(), pending: Vec::new(), view_events: Vec::new(), log: Vec::new(), lost: None, last_get_info: None }
     }
 
     pub fn name(&self) -> &str {
@@ -124,17 +125,17 @@ impl Link {
         }
     }
 
-    /// Eingang leeren: liest, solange innerhalb von 10-ms-Fenstern etwas kommt (Spec 2.3).
+    /// Anstehende Zeilen einlesen; Touch-Ereignisse dürfen vor einem Frame nicht verloren gehen.
     pub fn drain(&mut self) {
-        self.pending.clear();
-        let mut buf = [0u8; 512];
-        let _ = self.port.set_timeout(protocol::DRAIN_SLICE);
-        loop {
-            match self.port.read(&mut buf) {
-                Ok(n) if n > 0 => continue,
-                _ => break,
-            }
+        while let Some(line) = self.read_line(Instant::now() + protocol::DRAIN_SLICE) {
+            self.remember(&line);
         }
+    }
+
+    pub fn poll_input(&mut self) { self.drain(); }
+
+    pub fn take_view_events(&mut self) -> Vec<ViewState> {
+        std::mem::take(&mut self.view_events)
     }
 
     /// Kommando ohne Antwortauswertung (Spec 6.3).
@@ -226,6 +227,9 @@ impl Link {
     }
 
     fn remember(&mut self, line: &str) {
+        if let Some(DeviceMessage::ViewState(state)) = DeviceMessage::parse_line(line) {
+            self.view_events.push(state);
+        }
         if self.log.len() >= 200 {
             self.log.remove(0);
         }

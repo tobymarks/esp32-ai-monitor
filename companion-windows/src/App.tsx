@@ -7,6 +7,7 @@ import {
   listProviders,
   onConnection,
   onSnapshot,
+  onSettingsChanged,
   refresh,
   setProvider,
   setSettings,
@@ -51,10 +52,12 @@ export default function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let unlistenConn: (() => void) | undefined;
+    let unlistenSettings: (() => void) | undefined;
     let cancelled = false;
     (async () => {
       unlisten = await onSnapshot((snap) => setSnapshot(snap));
       unlistenConn = await onConnection((conn) => setConnection(conn));
+      unlistenSettings = await onSettingsChanged((cfg) => setSettingsState(cfg));
       const [snap, cfg, list, conn] = await Promise.all([getSnapshot(), getSettings(), listProviders(), getConnection()]);
       if (cancelled) return;
       setSnapshot(snap);
@@ -66,6 +69,7 @@ export default function App() {
       cancelled = true;
       unlisten?.();
       unlistenConn?.();
+      unlistenSettings?.();
     };
   }, []);
 
@@ -146,7 +150,7 @@ export default function App() {
           />
         )}
         {page === "connection" && <Connection t={t} now={now} connection={connection} />}
-        {page === "display" && <Display t={t} connection={connection} settings={settings} onSettingsChanged={reloadSettings} />}
+        {page === "display" && <Display t={t} connection={connection} settings={settings} providers={providers} onSettings={updateSettings} onSettingsChanged={reloadSettings} />}
         {page === "updates" && <Updates t={t} connection={connection} settings={settings} onSettings={updateSettings} />}
         {page === "diagnostics" && <Diagnostics t={t} snapshot={snapshot} />}
       </main>

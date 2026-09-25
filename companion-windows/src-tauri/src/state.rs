@@ -6,6 +6,8 @@ use crate::serial_service::{ConnectionSnapshot, Job};
 use crate::settings::Settings;
 use crate::updates::ReleaseCache;
 use aimonitor_core::{DeviceRegistry, Snapshot, Source};
+use aimonitor_core::Provider;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
 use std::sync::{Condvar, Mutex};
@@ -13,6 +15,11 @@ use tauri::{tray::TrayIcon, AppHandle, Manager};
 
 pub struct AppState {
     pub source: Mutex<Source>,
+    pub view_sources: Mutex<HashMap<Provider, Snapshot>>,
+    /// Dauerhafte Sources der Zusatzfenster, damit nicht jeder Abruf die CLI neu sucht.
+    pub view_clients: Mutex<HashMap<Provider, Source>>,
+    pub view_fetching: AtomicBool,
+    pub view_refresh_pending: AtomicBool,
     pub settings: Mutex<Settings>,
     pub tray: Mutex<Option<TrayIcon>>,
     pub registry: Mutex<DeviceRegistry>,
@@ -35,6 +42,10 @@ impl AppState {
     pub fn new(source: Source, settings: Settings, registry: DeviceRegistry, serial: Sender<Job>) -> Self {
         Self {
             source: Mutex::new(source),
+            view_sources: Mutex::new(HashMap::new()),
+            view_clients: Mutex::new(HashMap::new()),
+            view_fetching: AtomicBool::new(false),
+            view_refresh_pending: AtomicBool::new(false),
             settings: Mutex::new(settings),
             tray: Mutex::new(None),
             registry: Mutex::new(registry),

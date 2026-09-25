@@ -25,6 +25,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <esp_mac.h>
 #include <sys/time.h>
 #include <string.h>
@@ -61,6 +62,21 @@ static size_t serial_frame_received = 0;
 static unsigned long serial_frame_started_ms = 0;
 
 static MonitorState state;
+static const uint8_t VIEW_MAX = 8;
+// Außerhalb der Provider-IDs, damit ein neuer Provider nicht mit der Uhr kollidiert.
+static const uint8_t VIEW_CLOCK = 0xFF;
+static MonitorState view_states[VIEW_MAX];
+static uint8_t view_types[VIEW_MAX] = {PROVIDER_CLAUDE};
+static uint8_t view_count = 1;
+static uint8_t active_view = 0;
+static bool views_automatic = false;
+static uint16_t view_interval_seconds = 10;
+static unsigned long last_view_change = 0;
+static unsigned long last_host_frame_ms = 0;
+static bool host_frame_seen = false;
+// Erst ein Host mit set_views schaltet Wechsel per Timer und Touch frei. Ohne
+// ihn (Boot, alter Companion) bleibt die gespeicherte Auswahl stehen.
+static bool views_host_configured = false;
 static bool new_data_flag = false;
 static char display_time[6] = "--:--";
 static int16_t timezone_offset_minutes = 60;  // Default: Europe/Berlin winter time
@@ -73,6 +89,36 @@ static bool ui_rebuild_pending = false;
 // C3: Set once the Mac companion sends a TZ offset. While set, wifi_time must
 // not overwrite the TZ env var with its fixed NTP timezone — only sync UTC.
 static bool host_tz_set = false;
+
+static void print_view_state();
+static void persist_touch_view();
+
+uint8_t serial_view_count() { return view_count; }
+bool serial_is_clock_view() { return view_types[active_view] == VIEW_CLOCK; }
+
+void serial_select_view(uint8_t index) {
+    if (index >= view_count) return;
+    active_view = index;
+    state = view_states[index];
+    last_view_change = millis();
+    new_data_flag = true;
+    Serial.printf("[Views] Active %u/%u (%s)\n", (unsigned)(index + 1),
+                  (unsigned)view_count, serial_is_clock_view() ? "clock" : state.provider_label);
+}
+
+void serial_next_view() {
+    if (views_host_configured && view_count > 1) {
+        serial_select_view((active_view + 1) % view_count);
+        persist_touch_view();
+    }
+}
+
+void serial_previous_view() {
+    if (views_host_configured && view_count > 1) {
+        serial_select_view((active_view + view_count - 1) % view_count);
+        persist_touch_view();
+    }
+}
 
 void serial_request_ui_rebuild() {
     ui_rebuild_pending = true;
@@ -293,10 +339,16 @@ static void handle_wifi_forget() {
 // Sent by the Mac app during a clean quit. Cable pulls and sleep still use
 // the normal timeout fallback.
 static void handle_standby() {
-    if (state.usage.valid && state.usage.last_fetch > 0) {
-        state.usage.last_fetch = millis() - DATA_TIMEOUT_MS - 1;
+    // The companion is leaving intentionally, so do not wait five minutes
+    // for its last data frame to expire before showing the standby clock.
+    host_frame_seen = false;
+    for (uint8_t i = 0; i < view_count; ++i) {
+        if (view_states[i].usage.valid && view_states[i].usage.last_fetch > 0) {
+            view_states[i].usage.last_fetch = millis() - DATA_TIMEOUT_MS - 1;
+        }
+        strlcpy(view_states[i].status, "Standby", sizeof(view_states[i].status));
     }
-    strlcpy(state.status, "Standby", sizeof(state.status));
+    state = view_states[active_view];
     new_data_flag = true;
     Serial.println("{\"type\":\"ok\",\"cmd\":\"standby\"}");
 }
@@ -395,6 +447,106 @@ static void handle_reboot() {
     ESP.restart();
 }
 
+// Provider-Namen kommen aus der zentralen PROVIDERS[]-Tabelle, inklusive
+// Fallback auf Claude wie bei den bisherigen Frames.
+static int view_type_from_name(const char *name) {
+    if (!name) return -1;
+    if (strcasecmp(name, "clock") == 0) return VIEW_CLOCK;
+    return provider_from_string(name);
+}
+
+static bool view_type_valid(uint8_t type) {
+    return type == VIEW_CLOCK || provider_info_for_id(type)->id == type;
+}
+
+static const char *view_name_from_type(uint8_t type) {
+    return type == VIEW_CLOCK ? "clock" : provider_info_for_id(type)->wire_keys[0];
+}
+
+static void print_view_state() {
+    JsonDocument response;
+    response["type"] = "view_state";
+    response["mode"] = views_automatic ? "automatic" : "manual";
+    response["interval"] = view_interval_seconds;
+    response["active"] = active_view;
+    JsonArray views = response["views"].to<JsonArray>();
+    for (uint8_t i = 0; i < view_count; ++i) views.add(view_name_from_type(view_types[i]));
+    serializeJson(response, Serial);
+    Serial.println();
+}
+
+static void persist_touch_view() {
+    Preferences prefs;
+    if (prefs.begin(NVS_NAMESPACE, false)) {
+        prefs.putUChar("view_active", active_view);
+        prefs.end();
+    }
+    print_view_state();
+}
+
+static void handle_set_views(JsonDocument &doc) {
+    JsonArray views = doc["views"];
+    if (views.isNull() || views.size() == 0 || views.size() > VIEW_MAX) {
+        Serial.println("{\"type\":\"error\",\"message\":\"set_views: invalid count\"}");
+        return;
+    }
+    uint8_t types[VIEW_MAX] = {};
+    for (size_t i = 0; i < views.size(); ++i) {
+        int type = view_type_from_name(views[i].as<const char*>());
+        if (type < 0) {
+            Serial.println("{\"type\":\"error\",\"message\":\"set_views: invalid content\"}");
+            return;
+        }
+        types[i] = (uint8_t)type;
+    }
+    const char *mode = doc["mode"] | "manual";
+    if (strcmp(mode, "manual") != 0 && strcmp(mode, "automatic") != 0) {
+        Serial.println("{\"type\":\"error\",\"message\":\"set_views: invalid mode\"}");
+        return;
+    }
+    int interval = doc["interval"] | 10;
+    int active = doc["active"] | 0;
+    if (interval < 2 || interval > 3600 || active < 0 || active >= (int)views.size()) {
+        Serial.println("{\"type\":\"error\",\"message\":\"set_views: invalid interval or active\"}");
+        return;
+    }
+    bool layout_changed = view_count != views.size();
+    for (size_t i = 0; i < views.size(); ++i) layout_changed |= view_types[i] != types[i];
+    bool changed = layout_changed || views_automatic != (strcmp(mode, "automatic") == 0)
+                   || view_interval_seconds != interval || active_view != active;
+    view_count = (uint8_t)views.size();
+    memcpy(view_types, types, view_count);
+    views_automatic = strcmp(mode, "automatic") == 0;
+    view_interval_seconds = (uint16_t)interval;
+    if (layout_changed) {
+        memset(view_states, 0, sizeof(view_states));
+        for (uint8_t i = 0; i < view_count; ++i) {
+            view_states[i].provider = view_types[i] == VIEW_CLOCK ? PROVIDER_CLAUDE : view_types[i];
+            strlcpy(view_states[i].provider_label,
+                    view_types[i] == VIEW_CLOCK ? "CLOCK" : provider_label_from_id(view_types[i]),
+                    sizeof(view_states[i].provider_label));
+            if (view_types[i] != VIEW_CLOCK) {
+                view_states[i].usage.notice_only = true;
+                strlcpy(view_states[i].usage.error, g_language == LANG_DE ? "Lade Provider ..." : "Loading provider ...",
+                        sizeof(view_states[i].usage.error));
+            }
+        }
+    }
+    if (changed) {
+        Preferences prefs;
+        prefs.begin(NVS_NAMESPACE, false);
+        prefs.putUChar("view_count", view_count);
+        prefs.putBytes("view_types", view_types, view_count);
+        prefs.putBool("view_auto", views_automatic);
+        prefs.putUShort("view_secs", view_interval_seconds);
+        prefs.putUChar("view_active", (uint8_t)active);
+        prefs.end();
+    }
+    views_host_configured = true;
+    serial_select_view((uint8_t)active);
+    Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_views\",\"count\":%u}\n", (unsigned)view_count);
+}
+
 // Dispatch only — each command's logic lives in a focused handler above.
 static bool parse_command(JsonDocument &doc) {
     if (!doc["cmd"].is<const char*>()) return false;
@@ -422,6 +574,10 @@ static bool parse_command(JsonDocument &doc) {
         handle_set_language(doc);
     } else if (strcmp(cmd, "get_info") == 0) {
         handle_get_info();
+    } else if (strcmp(cmd, "set_views") == 0) {
+        handle_set_views(doc);
+    } else if (strcmp(cmd, "get_views") == 0) {
+        print_view_state();
     } else if (strcmp(cmd, "reboot") == 0) {
         handle_reboot();
     } else {
@@ -639,6 +795,7 @@ static void parse_json(const char *json_str) {
         strlcpy(state.status, "JSON Error", sizeof(state.status));
         strlcpy(state.usage.error, err.c_str(), sizeof(state.usage.error));
         state.usage.valid = false;
+        view_states[active_view] = state;  // sonst verwirft der nächste Frame den Fehler
         return;
     }
 
@@ -669,8 +826,41 @@ static void parse_json(const char *json_str) {
         strlcpy(state.status, "JSON Error", sizeof(state.status));
         strlcpy(state.usage.error, "Missing data[0]", sizeof(state.usage.error));
         state.usage.valid = false;
+        view_states[active_view] = state;
         return;
     }
+
+    // Jeder Frame aktualisiert genau einen Cache-Eintrag. Die sichtbare
+    // Anzeige bleibt bei Daten für andere Fenster unverändert.
+    const char *frame_provider = data0["provider"] | "claude";
+    int frame_type = view_type_from_name(frame_provider);
+    if (frame_type < 0 || frame_type == VIEW_CLOCK) {
+        print_frame_error(frame_id, schema_version, "invalid provider");
+        return;
+    }
+    int frame_view = data0["viewIndex"] | 0;
+    if (data0["viewIndex"].isNull()) {
+        // Alte Mac- und Windows-Companions kennen keine Fenster. Ihr Frame
+        // aktiviert zur Laufzeit eine einzelne Provider-Anzeige; die im NVS
+        // gespeicherte Fensterkonfiguration bleibt für neue Apps erhalten.
+        if (view_count != 1 || view_types[0] != frame_type || active_view != 0) {
+            view_count = 1;
+            view_types[0] = (uint8_t)frame_type;
+            views_automatic = false;
+            views_host_configured = false;
+            memset(view_states, 0, sizeof(view_states));
+            serial_select_view(0);
+            Serial.println("[Views] Legacy companion: single provider view");
+        }
+    } else if (frame_view < 0 || frame_view >= view_count || view_types[frame_view] == VIEW_CLOCK) {
+        print_frame_error(frame_id, schema_version, "invalid viewIndex");
+        return;
+    }
+    if (frame_type != view_types[frame_view]) {
+        print_frame_error(frame_id, schema_version, "provider does not match view");
+        return;
+    }
+    state = view_states[frame_view];
 
     // --- Provider label (v2.9.0+ envelope field) ---
     // Companion-App sendet "claude", "codex" oder "antigravity" pro Frame.
@@ -701,6 +891,11 @@ static void parse_json(const char *json_str) {
         strlcpy(state.status, notice, sizeof(state.status));
         print_frame_ack(frame_id, schema_version, 0, state.provider, 0);
         Serial.printf("[Serial] Notice frame: %s\n", notice);
+        view_states[frame_view] = state;
+        state = view_states[active_view];
+        last_host_frame_ms = millis();
+        host_frame_seen = true;
+        if (frame_view == active_view) new_data_flag = true;
         return;
     }
 
@@ -711,6 +906,9 @@ static void parse_json(const char *json_str) {
         strlcpy(state.status, "JSON Error", sizeof(state.status));
         strlcpy(state.usage.error, "Missing usage", sizeof(state.usage.error));
         state.usage.valid = false;
+        view_states[frame_view] = state;
+        state = view_states[active_view];
+        if (frame_view == active_view) new_data_flag = true;
         return;
     }
 
@@ -732,14 +930,17 @@ static void parse_json(const char *json_str) {
     state.usage.notice_only = false;
     state.token_valid = true;
     strlcpy(state.status, "OK (USB)", sizeof(state.status));
-    new_data_flag = true;
-
     Serial.printf("[Serial] Parsed: Session=%.0f%% Weekly=%.0f%% rows=%u provider=%s\n",
                   state.usage.five_hour_utilization * 100.0f,
                   state.usage.seven_day_utilization * 100.0f,
                   (unsigned)state.usage.row_count,
                   state.provider_label);
     print_frame_ack(frame_id, schema_version, frame_bytes, state.provider, state.usage.row_count);
+    view_states[frame_view] = state;
+    state = view_states[active_view];
+    last_host_frame_ms = millis();
+    host_frame_seen = true;
+    if (frame_view == active_view) new_data_flag = true;
 }
 
 // ============================================================
@@ -751,6 +952,8 @@ void serial_receiver_init() {
     serial_receiving_frame = false;
     serial_frame_expected = 0;
     serial_frame_received = 0;
+    host_frame_seen = false;
+    last_host_frame_ms = 0;
     memset(&state, 0, sizeof(state));
     usage_data_clear(state.usage);
     state.token_valid = false;
@@ -761,7 +964,39 @@ void serial_receiver_init() {
     state.provider = PROVIDER_CLAUDE;
     strlcpy(state.provider_label, "CLAUDE", sizeof(state.provider_label));
     strlcpy(state.status, L(STR_WAITING), sizeof(state.status));
-    new_data_flag = false;
+    memset(view_states, 0, sizeof(view_states));
+    view_states[0] = state;
+    Preferences prefs;
+    prefs.begin(NVS_NAMESPACE, true);
+    uint8_t stored_count = prefs.getUChar("view_count", 1);
+    if (stored_count >= 1 && stored_count <= VIEW_MAX &&
+        prefs.getBytesLength("view_types") == stored_count) {
+        uint8_t stored_types[VIEW_MAX] = {};
+        prefs.getBytes("view_types", stored_types, stored_count);
+        bool valid = true;
+        for (uint8_t i = 0; i < stored_count; ++i) valid &= view_type_valid(stored_types[i]);
+        if (valid) {
+            view_count = stored_count;
+            memcpy(view_types, stored_types, stored_count);
+        }
+    }
+    views_automatic = prefs.getBool("view_auto", false);
+    view_interval_seconds = prefs.getUShort("view_secs", 10);
+    if (view_interval_seconds < 2 || view_interval_seconds > 3600) view_interval_seconds = 10;
+    uint8_t stored_active = prefs.getUChar("view_active", 0);
+    prefs.end();
+    for (uint8_t i = 0; i < view_count; ++i) {
+        view_states[i].provider = view_types[i] == VIEW_CLOCK ? PROVIDER_CLAUDE : view_types[i];
+        strlcpy(view_states[i].provider_label,
+                view_types[i] == VIEW_CLOCK ? "CLOCK" : provider_label_from_id(view_types[i]),
+                sizeof(view_states[i].provider_label));
+        if (i > 0 && view_types[i] != VIEW_CLOCK) {
+            view_states[i].usage.notice_only = true;
+            strlcpy(view_states[i].usage.error, g_language == LANG_DE ? "Lade Provider ..." : "Loading provider ...",
+                    sizeof(view_states[i].usage.error));
+        }
+    }
+    serial_select_view(stored_active < view_count ? stored_active : 0);
     strlcpy(display_time, "--:--", sizeof(display_time));
 
     Serial.println("[Serial] Receiver initialized — waiting for USB data");
@@ -771,6 +1006,10 @@ void serial_receiver_init() {
 // Tick — call from loop()
 // ============================================================
 void serial_receiver_tick() {
+    if (views_host_configured && views_automatic && view_count > 1 &&
+        millis() - last_view_change >= (unsigned long)view_interval_seconds * 1000UL) {
+        serial_select_view((active_view + 1) % view_count);
+    }
     while (Serial.available()) {
         char c = Serial.read();
 
@@ -856,6 +1095,10 @@ MonitorState serial_get_state() {
 bool serial_has_recent_data() {
     if (!state.usage.valid || state.usage.last_fetch == 0) return false;
     return (millis() - state.usage.last_fetch) < DATA_TIMEOUT_MS;
+}
+
+bool serial_has_recent_host_frame() {
+    return host_frame_seen && (millis() - last_host_frame_ms) < DATA_TIMEOUT_MS;
 }
 
 // ============================================================

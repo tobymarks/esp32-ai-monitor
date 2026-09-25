@@ -8,7 +8,7 @@
 // ============================================================
 
 // App version
-#define APP_VERSION "2.18.1"
+#define APP_VERSION "2.19.0-dev"
 #define APP_NAME    "AI Usage Monitor"
 
 // Display-Controller-ID (aus Build-Flags abgeleitet, Compile-Zeit).
@@ -45,12 +45,10 @@
 #define PIN_TOUCH_IRQ  36
 
 // --- Pin-Konsistenz-Guard ---------------------------------------------------
-// Die TFT_eSPI-Library bekommt ihre Pins als Compile-Makros (TFT_*, TOUCH_*)
-// aus platformio.ini; unsere eigene LEDC-Backlight- und Touch-Logik nutzt die
-// PIN_*-Defines hier. Beide Quellen MUESSEN denselben physischen GPIO meinen.
-// Da config.h nach den -D-Build-Flags kompiliert, sind die TFT_eSPI-Makros
-// hier sichtbar — dieser Guard macht jede Divergenz zwischen den beiden
-// Pin-Quellen zu einem Compile-Fehler statt zu einem stillen Hardware-Bug.
+// Display-Pins und die dokumentierten Touch-Pins stehen zusätzlich als
+// Compile-Makros in platformio.ini. Der eigene Touch-Treiber nutzt die
+// PIN_*-Defines hier. Diese Guards halten beide Pin-Listen konsistent;
+// TFT_eSPI nutzt für Touch selbst nur TOUCH_CS und den Display-SPI-Bus.
 #if defined(TFT_MISO) && (PIN_TFT_MISO != TFT_MISO)
 #error "PIN_TFT_MISO (config.h) != TFT_MISO (platformio.ini)"
 #endif
