@@ -50,6 +50,8 @@ static bool landscape_layout = false;
 // Header
 static lv_obj_t *lbl_provider       = nullptr;
 static lv_obj_t *lbl_time           = nullptr;
+static lv_obj_t *pill_credits       = nullptr;   // v2.18.0: "+Cr" / "+238"
+static lv_obj_t *pill_reset_credits = nullptr;   // v2.18.0: Reset Credits
 
 // Session block — in portrait: bar; in landscape: arc
 static lv_obj_t *lbl_session_pct    = nullptr;
@@ -461,6 +463,120 @@ static void set_single_widgets_visible(bool visible) {
 }
 
 // ============================================================
+// Header pills (v2.18.0): Zusatz-Credits und Reset Credits als kleine
+// Kennzeichen rechts neben dem Providernamen. Kein Balken, weil der Stand fuer
+// Workspace-Mitglieder unbekannt ist.
+// ============================================================
+static const int16_t HEADER_H            = 36;
+static const int16_t HEADER_SIDE_RESERVE = 52;   // WLAN/Status links, Uhr rechts
+static const int16_t HEADER_PILL_GAP     = 6;
+static const int16_t HEADER_PILL_PAD_H   = 5;
+static const int16_t HEADER_PILL_PAD_V   = 2;
+
+static lv_obj_t *create_header_pill(lv_obj_t *parent, lv_color_t color) {
+    lv_obj_t *pill = lv_label_create(parent);
+    lv_label_set_text(pill, "");
+    lv_obj_set_style_text_font(pill, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(pill, color, LV_PART_MAIN);
+    lv_obj_set_style_border_color(pill, color, LV_PART_MAIN);
+    lv_obj_set_style_border_width(pill, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(pill, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(pill, HEADER_PILL_PAD_H, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(pill, HEADER_PILL_PAD_V, LV_PART_MAIN);
+    lv_obj_add_flag(pill, LV_OBJ_FLAG_HIDDEN);
+    return pill;
+}
+
+static int16_t text_width(const char *text, const lv_font_t *font) {
+    lv_point_t size;
+    lv_text_get_size(&size, text, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    return (int16_t)size.x;
+}
+
+static int16_t pill_width(const char *text) {
+    if (text[0] == '\0') return 0;
+    return text_width(text, &lv_font_montserrat_12) + 2 * HEADER_PILL_PAD_H + 2;
+}
+
+// "+238", "+2.5k", "+12k"; unbekannter Stand: "+Cr".
+static void format_credits_pill(const UsageData &usage, char *buf, size_t len) {
+    if (!usage.credits_has_balance) {
+        snprintf(buf, len, "+Cr");
+        return;
+    }
+    const float b = usage.credits_balance < 0.0f ? 0.0f : usage.credits_balance;
+    if (b < 1000.0f) {
+        snprintf(buf, len, "+%d", (int)(b + 0.5f));
+    } else if (b < 10000.0f) {
+        snprintf(buf, len, "+%.1fk", b / 1000.0f);
+    } else {
+        snprintf(buf, len, "+%dk", (int)(b / 1000.0f + 0.5f));
+    }
+}
+
+// Providername und Kennzeichen als Gruppe zentrieren. Reicht der Platz nicht
+// (Hochformat, 240 px), faellt zuerst das Reset-Kennzeichen weg, dann wird
+// die Schrift des Namens kleiner.
+static void layout_header_center(const MonitorState &state) {
+    if (lbl_provider == nullptr) return;
+
+    const char *label = state.provider_label[0] != '\0' ? state.provider_label : "CLAUDE";
+    lv_label_set_text(lbl_provider, label);
+    const lv_font_t *font = (strlen(label) > 8) ? &lv_font_montserrat_16 : &lv_font_montserrat_20;
+
+    char credits_txt[12] = "";
+    char reset_txt[12] = "";
+    if (state.usage.valid && state.usage.credits_state == CREDITS_AVAILABLE) {
+        format_credits_pill(state.usage, credits_txt, sizeof(credits_txt));
+    }
+    if (state.usage.valid && state.usage.reset_credits_count > 0) {
+        snprintf(reset_txt, sizeof(reset_txt), LV_SYMBOL_LOOP " %u",
+                 (unsigned)state.usage.reset_credits_count);
+    }
+
+    const int16_t sw = lv_obj_get_width(scr_dashboard);
+    const int16_t avail = sw - 2 * HEADER_SIDE_RESERVE;
+    int16_t w_credits = pill_width(credits_txt);
+    int16_t w_reset = pill_width(reset_txt);
+    auto total = [&](const lv_font_t *f) {
+        int16_t t = text_width(label, f);
+        if (w_credits) t += HEADER_PILL_GAP + w_credits;
+        if (w_reset) t += HEADER_PILL_GAP + w_reset;
+        return t;
+    };
+    if (total(font) > avail && w_reset) { reset_txt[0] = '\0'; w_reset = 0; }
+    if (total(font) > avail && font == &lv_font_montserrat_20) font = &lv_font_montserrat_16;
+    if (total(font) > avail && w_credits) { credits_txt[0] = '\0'; w_credits = 0; }
+
+    lv_obj_set_style_text_font(lbl_provider, font, LV_PART_MAIN);
+    const int16_t w_label = text_width(label, font);
+    int16_t x = (sw - total(font)) / 2;
+    const int16_t label_h = lv_font_get_line_height(font);
+    // TOP_LEFT ausdruecklich setzen: die Ausrichtung aus ui_dashboard_create()
+    // (TOP_MID) bliebe sonst bestehen und x waere ein Versatz von der Mitte.
+    lv_obj_align(lbl_provider, LV_ALIGN_TOP_LEFT, x, (HEADER_H - label_h) / 2);
+    x += w_label;
+
+    const int16_t pill_h = lv_font_get_line_height(&lv_font_montserrat_12) + 2 * HEADER_PILL_PAD_V + 2;
+    const int16_t pill_y = (HEADER_H - pill_h) / 2;
+    lv_obj_t *pills[2]      = { pill_credits, pill_reset_credits };
+    const char *texts[2]    = { credits_txt, reset_txt };
+    const int16_t widths[2] = { w_credits, w_reset };
+    for (uint8_t i = 0; i < 2; i++) {
+        if (pills[i] == nullptr) continue;
+        if (widths[i] == 0) {
+            set_obj_hidden(pills[i], true);
+            continue;
+        }
+        x += HEADER_PILL_GAP;
+        lv_label_set_text(pills[i], texts[i]);
+        lv_obj_align(pills[i], LV_ALIGN_TOP_LEFT, x, pill_y);
+        set_obj_hidden(pills[i], false);
+        x += widths[i];
+    }
+}
+
+// ============================================================
 // Create dashboard screen (call once)
 // ============================================================
 void ui_dashboard_create() {
@@ -507,9 +623,10 @@ void ui_dashboard_create() {
     lv_label_set_text(lbl_provider, "CLAUDE");
     lv_obj_set_style_text_color(lbl_provider, UI_COLOR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_provider, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_obj_set_pos(lbl_provider, 0, 8);
-    lv_obj_set_width(lbl_provider, sw);
-    lv_obj_set_style_text_align(lbl_provider, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(lbl_provider, LV_ALIGN_TOP_MID, 0, 8);   // Position setzt layout_header_center()
+
+    pill_credits       = create_header_pill(header, UI_COLOR_SUCCESS);
+    pill_reset_credits = create_header_pill(header, UI_COLOR_TEXT_SEC);
 
     lbl_time = lv_label_create(header);
     lv_label_set_text(lbl_time, "--:--");
@@ -714,14 +831,8 @@ void ui_dashboard_update(const MonitorState &state) {
     // v2.9.0+: Label kommt direkt aus dem Mac-Envelope (state.provider_label,
     // uppercase, z. B. "CLAUDE" oder "CHATGPT"). Fallback auf "CLAUDE" bei leerem
     // String (alter App-Version).
-    if (lbl_provider != nullptr) {
-        const char *label = state.provider_label[0] != '\0' ? state.provider_label : "CLAUDE";
-        lv_label_set_text(lbl_provider, label);
-        const lv_font_t *provider_font = (strlen(label) > 8)
-            ? &lv_font_montserrat_16
-            : &lv_font_montserrat_20;
-        lv_obj_set_style_text_font(lbl_provider, provider_font, LV_PART_MAIN);
-    }
+    // v2.18.0: zusammen mit den Credit-Kennzeichen als Gruppe zentriert.
+    layout_header_center(state);
 
     // ---- Clock (system time set via settimeofday + timezone offset from Mac) ----
     if (lbl_time != nullptr) {
@@ -959,6 +1070,8 @@ void ui_dashboard_recreate() {
         scr_dashboard      = nullptr;
         lbl_provider       = nullptr;
         lbl_time           = nullptr;
+        pill_credits       = nullptr;
+        pill_reset_credits = nullptr;
         lbl_session_title  = nullptr;
         lbl_session_pct    = nullptr;
         bar_session        = nullptr;

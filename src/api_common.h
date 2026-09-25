@@ -36,6 +36,13 @@ inline time_t timegm_compat(struct tm *tm) {
 // Shared data structures for AI provider API clients
 // ============================================================
 
+// v2.18.0: Zusatz-Credits (Codex) aus `usage.credits`.
+enum CreditsState : uint8_t {
+    CREDITS_UNKNOWN   = 0,   // Feld fehlt, Quelle sagt nichts dazu
+    CREDITS_AVAILABLE = 1,   // Pool gemeldet, Stand evtl. unbekannt
+    CREDITS_NONE      = 2,   // Quelle meldet ausdruecklich keinen Pool
+};
+
 struct UsageData {
     float  five_hour_utilization;    // 0.0 - 1.0 (Session)
     char   five_hour_resets_at[32];  // ISO 8601
@@ -67,6 +74,15 @@ struct UsageData {
     // nicht gestartet). Der Text landet in `error`, aber die Anzeige soll dann
     // nicht nach Defekt aussehen ("ERR"), sondern nach Hinweis.
     bool          notice_only;
+
+    // v2.18.0: Zusatz-Credits und Reset Credits, als Kennzeichen im Kopf
+    // statt als Balken. Den Workspace-Stand bekommen nur Owner/Admins; fuer
+    // Mitglieder ist `credits_has_balance` false.
+    uint8_t credits_state;           // CreditsState
+    bool    credits_has_balance;
+    float   credits_balance;
+    uint8_t reset_credits_count;     // 0 = keine
+    time_t  reset_credits_expiry;    // Ablauf des naechsten Reset Credits
 };
 
 // Overall monitor state
@@ -123,6 +139,12 @@ inline void usage_data_clear(UsageData &d) {
         d.row_resets_at[i][0] = '\0';
         d.row_reset_epoch[i] = 0;
     }
+
+    d.credits_state        = CREDITS_UNKNOWN;
+    d.credits_has_balance  = false;
+    d.credits_balance      = 0.0f;
+    d.reset_credits_count  = 0;
+    d.reset_credits_expiry = 0;
 
     d.valid      = false;
     d.notice_only = false;

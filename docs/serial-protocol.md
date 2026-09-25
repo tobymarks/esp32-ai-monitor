@@ -432,8 +432,8 @@ Der Vergleich ist case-insensitiv, der String wird auf 15 Zeichen gekürzt `(pro
 | `secondary` | Objekt | nein | Fenster 2 | `(main.swift:3014-3020)` |
 | `tertiary` | Objekt | nein | Fenster 3 | `(main.swift:3021-3027)` |
 | `providerCost` | Objekt | nein | `{"used":<Float>,"limit":<Float>}`; wird vom Gerät gelesen, von der Mac-App nie gesendet | `(serial_receiver.cpp:574-587)` |
-| `credits` | Objekt | nein | Zusatz-Credits (Codex), siehe unten. Fehlt, wenn die Quelle nichts dazu meldet. Wird ab der nächsten Mac-App-Version bzw. Windows-App 1.0.1 gesendet, das Gerät liest es noch nicht | `(CodexBarSource.swift, credits(from:))`, `(codexbar.rs, credits_from)` |
-| `resetCredits` | Objekt | nein | Einlösbare Limit-Zurücksetzungen (Codex „Reset credits"), siehe unten. Nur bei Anzahl > 0 | `(CodexBarSource.swift, resetCredits(from:))`, `(codexbar.rs)` |
+| `credits` | Objekt | nein | Zusatz-Credits (Codex), siehe unten. Fehlt, wenn die Quelle nichts dazu meldet. Gesendet ab Mac-App 1.28.3 bzw. Windows-App 1.0.1. Ab Firmware 2.18.0 zeigt das Gerät bei `available:true` ein grünes Kennzeichen im Header: `+Cr` ohne Stand, sonst den Betrag (`+238`, `+2.5k`) | `(CodexBarSource.swift, credits(from:))`, `(codexbar.rs, credits_from)`, `(serial_receiver.cpp, parse_credits)` |
+| `resetCredits` | Objekt | nein | Einlösbare Limit-Zurücksetzungen (Codex „Reset credits"), siehe unten. Nur bei Anzahl > 0. Ab Firmware 2.18.0 graues Kennzeichen `⟲ n` im Header; im Hochformat entfällt es, wenn der Platz nicht reicht | `(CodexBarSource.swift, resetCredits(from:))`, `(codexbar.rs)`, `(ui_dashboard.cpp, layout_header_center)` |
 
 Fenster-Objekte `primary`/`secondary`/`tertiary`:
 
@@ -729,6 +729,7 @@ Ist keine Geräteversion bekannt, fällt der Host für die ACK- und Brightness-P
 | 2.15.0 | `notice`-Frame wird gerendert; ältere Firmware ignoriert das Feld und zeigt leere Zeilen | `(serial_receiver.cpp:649-653)`, `(main.swift:2766-2768)` |
 | 2.15.0-beta.3 | `fetching` steuert das Refresh-Symbol | `(serial_receiver.cpp:654-657)` |
 | 2.17.0 | Provider `gemini`, `copilot`, `cursor` | `(config.h:138-143)`, `(providers.cpp:39-67)` |
+| 2.18.0 | `usage.credits` und `usage.resetCredits` als Kennzeichen im Header | `(serial_receiver.cpp, parse_credits)`, `(ui_dashboard.cpp, layout_header_center)` |
 
 Unbekannte Felder werden von der Firmware ignoriert (ArduinoJson-Zugriff per Schlüssel), unbekannte Provider fallen auf `claude` zurück `(providers.cpp:107)`.
 
@@ -742,6 +743,7 @@ Unbekannte Felder werden von der Firmware ignoriert (ArduinoJson-Zugriff per Sch
 | 1.15.0 | Board-Variante im Flash-Dialog aus `display` | `(main.swift:47-56)` |
 | 1.24.0 | Antigravity-Zeilen aus Zusatzfenstern | `(main.swift:2911-2914)` |
 | 1.28.0 | Provider `gemini`, `copilot`, `cursor` | `(CodexBarSource.swift:40-51)` |
+| 1.28.3 | `usage.credits` und `usage.resetCredits` (Windows-App ab 1.0.1) | `(CodexBarSource.swift, credits(from:))` |
 
 ---
 

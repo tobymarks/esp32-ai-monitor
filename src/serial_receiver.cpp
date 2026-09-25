@@ -593,6 +593,39 @@ static void parse_extra_usage(JsonObject usage) {
     }
 }
 
+// v2.18.0: Zusatz-Credits und Reset Credits (Codex). Fehlt ein Block,
+// gilt er als nicht gemeldet; Werte aus dem vorigen Frame bleiben nicht stehen.
+static void clear_credits(UsageData &usage) {
+    usage.credits_state        = CREDITS_UNKNOWN;
+    usage.credits_has_balance  = false;
+    usage.credits_balance      = 0.0f;
+    usage.reset_credits_count  = 0;
+    usage.reset_credits_expiry = 0;
+}
+
+static void parse_credits(JsonObject usage) {
+    clear_credits(state.usage);
+
+    JsonObject credits = usage["credits"];
+    if (!credits.isNull()) {
+        const bool available = credits["available"] | false;
+        state.usage.credits_state = available ? CREDITS_AVAILABLE : CREDITS_NONE;
+        if (available && credits["balance"].is<float>()) {
+            state.usage.credits_has_balance = true;
+            state.usage.credits_balance = credits["balance"].as<float>();
+        }
+    }
+
+    JsonObject reset = usage["resetCredits"];
+    if (!reset.isNull()) {
+        int count = reset["count"] | 0;
+        if (count < 0) count = 0;
+        if (count > 99) count = 99;
+        state.usage.reset_credits_count = (uint8_t)count;
+        state.usage.reset_credits_expiry = iso8601_to_epoch(reset["nextExpiresAt"] | "");
+    }
+}
+
 // ============================================================
 // Helper: parse JSON and update state
 // ============================================================
@@ -659,6 +692,7 @@ static void parse_json(const char *json_str) {
     const char *notice = data0["notice"];
     if (notice != nullptr && notice[0] != '\0') {
         clear_usage_rows(state.usage);
+        clear_credits(state.usage);
         strlcpy(state.usage.error, notice, sizeof(state.usage.error));
         state.usage.valid = false;
         state.usage.notice_only = true;
@@ -689,6 +723,7 @@ static void parse_json(const char *json_str) {
     parse_usage_windows(usage, primary, secondary, tertiary);
     parse_usage_rows(usage, primary, secondary, tertiary);
     parse_extra_usage(usage);
+    parse_credits(usage);
 
     // Mark data as valid
     state.usage.valid = true;
