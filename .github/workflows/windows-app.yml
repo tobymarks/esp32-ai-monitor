@@ -77,8 +77,10 @@ jobs:
 
       # Die Seite zeigt die veröffentlichte Windows-Version. Bei einem Release-Tag
       # muss sie zum Code passen, sonst verlinkt sie auf ein falsches Setup.
+      # Beta-Tags bleiben aussen vor: die Seite verlinkt nur Stable, und die
+      # Muster in sync_site_versions.sh kennen keine Versionen mit -beta.N.
       - name: Verify site versions are in sync
-        if: startsWith(github.ref, 'refs/tags/win-v') || startsWith(github.ref, 'refs/tags/win-beta-v')
+        if: startsWith(github.ref, 'refs/tags/win-v')
         run: ./scripts/sync_site_versions.sh --check
 
       - name: Setup pnpm
