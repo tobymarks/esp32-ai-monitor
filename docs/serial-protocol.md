@@ -63,7 +63,9 @@ Unmittelbar nach dem Öffnen `(main.swift:1811-1827)`:
 2. Ein einzelnes `\n` wird geschrieben.
 3. Der Host wartet 200 ms (`usleep(200_000)`).
 4. Auf einem Hintergrund-Thread: Eingangspuffer leeren (`drainInput`, liest alles, was innerhalb 10 ms Poll-Fenstern anliegt `(main.swift:2198-2206)`), dann `{"cmd":"get_info"}\n` schreiben.
-5. Bis zu `kGetInfoTimeout` = 5 s auf eine Zeile mit `"type":"info"` und einem String-Feld `version` warten `(main.swift:1667)`, `(main.swift:1832-1844)`. Andere Zeilen werden übersprungen.
+5. Bis zu `kGetInfoTimeout` = 5 s auf eine Zeile mit `"type":"info"` und einem String-Feld `version` warten `(main.swift:1667)`, `(main.swift:1832-1844)`. Andere Zeilen werden übersprungen. Ab App 1.28.4 wird `get_info` jede Sekunde wiederholt, bis eine Antwort kommt, auch im späteren Wartefenster nach `foreignFirmware`.
+
+Ab App 1.28.4 gilt ein Lesefehler auf dem offenen Port (`POLLHUP`/`POLLERR`, `read` mit `ENXIO`/`EIO` oder 0 Bytes) als Portverlust. Der nächste Scan trennt und öffnet den Port neu, auch wenn er unter demselben Namen wieder erscheint. Anlass: Bis Firmware 2.18.0 startete das Gerät beim ersten Boot nach einem Flash das Funkmodul, das komplett neu kalibrierte. Der Stromstoß ließ auf CYD-Boards den USB-Seriell-Chip kurz abfallen, und die App blieb auf `foreignFirmware` stehen. Ab Firmware 2.18.1 bleibt das Funkmodul ohne gespeicherte WLAN-Zugangsdaten aus.
 
 Erfolg führt in den Zustand `connected`, Timeout in `foreignFirmware` `(main.swift:1862)`, `(main.swift:1888)`. Nach `foreignFirmware` lauscht der Host noch bis zu 8 s weiter auf eine späte `info`-Antwort und stuft bei Erfolg auf `connected` hoch `(main.swift:1907-1946)`. In beiden Fällen wird anschließend der `onConnect`-Callback ausgelöst `(main.swift:1898)`, `(main.swift:1943)`.
 
@@ -730,6 +732,7 @@ Ist keine Geräteversion bekannt, fällt der Host für die ACK- und Brightness-P
 | 2.15.0-beta.3 | `fetching` steuert das Refresh-Symbol | `(serial_receiver.cpp:654-657)` |
 | 2.17.0 | Provider `gemini`, `copilot`, `cursor` | `(config.h:138-143)`, `(providers.cpp:39-67)` |
 | 2.18.0 | `usage.credits` und `usage.resetCredits` als Kennzeichen im Header | `(serial_receiver.cpp, parse_credits)`, `(ui_dashboard.cpp, layout_header_center)` |
+| 2.18.1 | Funkmodul startet nur mit gespeicherten WLAN-Zugangsdaten; kein USB-Abfall mehr beim ersten Boot nach einem Flash | `(wifi_time.cpp, wifi_time_init)` |
 
 Unbekannte Felder werden von der Firmware ignoriert (ArduinoJson-Zugriff per Schlüssel), unbekannte Provider fallen auf `claude` zurück `(providers.cpp:107)`.
 
@@ -744,6 +747,7 @@ Unbekannte Felder werden von der Firmware ignoriert (ArduinoJson-Zugriff per Sch
 | 1.24.0 | Antigravity-Zeilen aus Zusatzfenstern | `(main.swift:2911-2914)` |
 | 1.28.0 | Provider `gemini`, `copilot`, `cursor` | `(CodexBarSource.swift:40-51)` |
 | 1.28.3 | `usage.credits` und `usage.resetCredits` (Windows-App ab 1.0.1) | `(CodexBarSource.swift, credits(from:))` |
+| 1.28.4 | `get_info` wird im Handshake jede Sekunde wiederholt; Lesefehler lösen ein Neuöffnen des Ports aus | `(main.swift, sendGetInfo, markPortLost)` |
 
 ---
 

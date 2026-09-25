@@ -30,7 +30,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.28.3"
+let kAppVersion = "1.28.4"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -1679,6 +1679,11 @@ class SerialPortManager {
     /// Ab v1.14.2: Lebenszyklus-Status der aktuellen Verbindung. Die UI (und
     /// alle `set_*`-Sends) muessen hier draufhoeren, nicht nur auf `isConnected`.
     private(set) var state: DeviceConnectionState = .disconnected
+    /// Ab v1.28.4: Lesefehler auf dem offenen Port (Geraet hat sich kurz
+    /// abgemeldet, z. B. Spannungseinbruch beim ersten Start nach einem
+    /// Flash). Taucht der Port unter demselben Namen wieder auf, sieht
+    /// `scanForPort()` das an der Existenz des Pfads nicht, deshalb dieses Flag.
+    private var portLost = false
     private let framedTransportName = "aim1"
     private let framedTransportFirmwareVersion = "2.12.3"
 
@@ -1766,6 +1771,9 @@ class SerialPortManager {
             if !FileManager.default.fileExists(atPath: port) {
                 NSLog("[Serial] Port %@ disappeared, reconnecting...", port)
                 disconnect()
+            } else if portLost {
+                NSLog("[Serial] Port %@ lost (read error), reconnecting...", port)
+                disconnect()
             } else {
                 return
             }
@@ -1841,6 +1849,7 @@ class SerialPortManager {
 
         fileDescriptor = fd
         connectedPort = port
+        portLost = false
         state = .probing
         NSLog("[Serial] Connected to %@ at 115200 baud (state=probing)", port)
 
@@ -1851,22 +1860,26 @@ class SerialPortManager {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self, self.fileDescriptor >= 0 else { return }
             self.drainInput()
-            let cmd = "{\"cmd\":\"get_info\"}\n"
-            guard let cmdData = cmd.data(using: .utf8) else { return }
-            let writeResult = cmdData.withUnsafeBytes { rawBuffer -> Int in
-                guard let ptr = rawBuffer.baseAddress else { return -1 }
-                return Darwin.write(self.fileDescriptor, ptr, rawBuffer.count)
-            }
+            let writeResult = self.sendGetInfo()
             NSLog("[Serial] Sent get_info (%d bytes)", writeResult)
             var handled = false
             if writeResult > 0 {
                 // Hartes Gesamt-Timeout `kGetInfoTimeout`. readLine() nutzt
                 // intern ein eigenes Deadline-Fenster; wir begrenzen die Summe.
+                // Ab v1.28.4: get_info jede Sekunde wiederholen. Direkt nach
+                // einem Flash bootet das Board langsamer (Einstellungen neu
+                // angelegt); eine einzelne, zu frueh gesendete Anfrage ging
+                // verloren und die App meldete „keine AI-Monitor-Firmware".
                 let probeDeadline = Date().addingTimeInterval(self.kGetInfoTimeout)
+                var lastGetInfo = Date()
                 while Date() < probeDeadline && self.fileDescriptor >= 0 {
                     let remaining = probeDeadline.timeIntervalSinceNow
                     if remaining <= 0 { break }
-                    guard let line = self.readLine(timeout: min(remaining, 1.0)) else { continue }
+                    if Date().timeIntervalSince(lastGetInfo) >= self.kGetInfoRetryInterval {
+                        _ = self.sendGetInfo()
+                        lastGetInfo = Date()
+                    }
+                    guard let line = self.readLine(timeout: min(remaining, self.kGetInfoRetryInterval)) else { continue }
                     NSLog("[Serial] read: %@", line)
                     guard line.hasPrefix("{") else { continue }
                     guard let jsonData = line.data(using: .utf8),
@@ -1943,10 +1956,18 @@ class SerialPortManager {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             let deadline = Date().addingTimeInterval(kLateResponseWindow)
+            // Ab v1.28.4 weiter nachfragen statt nur zu lauschen: Bis v1.28.3
+            // kam eine spaete Antwort nur, wenn die erste Anfrage noch im
+            // Puffer lag, und die App blieb bis zum Neustart auf „Fremd-FW".
+            var lastGetInfo = Date.distantPast
             while Date() < deadline && self.fileDescriptor == probeFD && self.state == .foreignFirmware {
                 let remaining = deadline.timeIntervalSinceNow
                 if remaining <= 0 { break }
-                guard let line = self.readLine(timeout: min(remaining, 1.0)) else { continue }
+                if Date().timeIntervalSince(lastGetInfo) >= self.kGetInfoRetryInterval {
+                    _ = self.sendGetInfo()
+                    lastGetInfo = Date()
+                }
+                guard let line = self.readLine(timeout: min(remaining, self.kGetInfoRetryInterval)) else { continue }
                 guard line.hasPrefix("{") else { continue }
                 guard let jsonData = line.data(using: .utf8),
                       let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
@@ -1976,6 +1997,20 @@ class SerialPortManager {
                 DispatchQueue.main.async { self.onConnect?() }
                 return
             }
+        }
+    }
+
+    /// Abstand, in dem der Handshake `get_info` wiederholt, bis eine Antwort kommt.
+    private let kGetInfoRetryInterval: TimeInterval = 1.0
+
+    /// Schreibt `{"cmd":"get_info"}` im Zeilenmodus; liefert die geschriebenen Bytes.
+    @discardableResult
+    private func sendGetInfo() -> Int {
+        let fd = self.fileDescriptor
+        guard fd >= 0, let cmdData = "{\"cmd\":\"get_info\"}\n".data(using: .utf8) else { return -1 }
+        return cmdData.withUnsafeBytes { rawBuffer -> Int in
+            guard let ptr = rawBuffer.baseAddress else { return -1 }
+            return Darwin.write(fd, ptr, rawBuffer.count)
         }
     }
 
@@ -2219,15 +2254,31 @@ class SerialPortManager {
         while Date() < deadline {
             var pfd = pollfd(fd: fileDescriptor, events: Int16(POLLIN), revents: 0)
             let pollResult = Darwin.poll(&pfd, 1, 100)
+            let hangup = Int16(POLLHUP) | Int16(POLLERR) | Int16(POLLNVAL)
+            if pollResult > 0 && (pfd.revents & hangup) != 0 && (pfd.revents & Int16(POLLIN)) == 0 {
+                markPortLost()
+                return nil
+            }
             if pollResult > 0 && (pfd.revents & Int16(POLLIN)) != 0 {
                 let readResult = Darwin.read(fileDescriptor, &byte, 1)
                 if readResult == 1 {
                     if byte == 0x0A { return String(bytes: buffer, encoding: .utf8) }
                     if byte != 0x0D { buffer.append(byte) }
-                } else { return nil }
+                } else {
+                    // 0 = Gegenstelle weg, -1 mit ENXIO/EIO = USB-Geraet abgemeldet.
+                    let err = errno
+                    if readResult == 0 || err == ENXIO || err == EIO || err == EBADF { markPortLost() }
+                    return nil
+                }
             }
         }
         return nil
+    }
+
+    private func markPortLost() {
+        guard !portLost else { return }
+        portLost = true
+        NSLog("[Serial] Read error on %@ — port will be reopened", connectedPort ?? "?")
     }
 
     private func drainInput() {
