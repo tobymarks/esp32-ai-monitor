@@ -28,3 +28,4 @@ dark-light = "2"
 ctrlc = { version = "3", features = ["termination"] }
 ureq.workspace = true
 open = "5"
+tauri-plugin-dialog = "2"

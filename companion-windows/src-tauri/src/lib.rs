@@ -61,6 +61,7 @@ fn dev_action(app: tauri::AppHandle, action: String) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Kein Dock-Icon unter macOS, die App lebt in der Menüleiste.
             #[cfg(target_os = "macos")]
@@ -127,6 +128,7 @@ pub fn run() {
             commands::get_update_status,
             commands::download_firmware,
             commands::flash_firmware,
+            commands::flash_local_firmware,
             commands::install_app_update,
             commands::open_release_page,
         ])

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   checkUpdates,
   flashFirmware,
+  flashLocalFirmware,
   getUpdateStatus,
   installAppUpdate,
   onFirmwareDownload,
@@ -68,6 +70,8 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
   const [installError, setInstallError] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [localPath, setLocalPath] = useState<string | null>(null);
+  const [chooseError, setChooseError] = useState<string | null>(null);
   const [variant, setVariant] = useState<DisplayVariant>("ili9341");
   const [flashing, setFlashing] = useState(false);
   const [flash, setFlash] = useState<FlashProgress | null>(null);
@@ -138,12 +142,14 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
   const runFlash = async (chosen: DisplayVariant) => {
     setVariant(chosen);
     setFlashing(true);
-    setFlash({ phase: "downloading", variant: chosen, percent: null, message: null, summary: null, detail: null });
+    setFlash({ phase: localPath ? "connecting" : "downloading", variant: chosen, percent: null, message: null, summary: null, detail: null });
     setDownload(null);
     setOutcome(null);
     setFlashError(null);
     try {
-      setOutcome(await flashFirmware(chosen));
+      setOutcome(localPath
+        ? await flashLocalFirmware(chosen, localPath)
+        : await flashFirmware(chosen));
     } catch (e) {
       // Das Detail kam schon über das failed-Event; sonst den Text selbst zeigen.
       setFlashError((prev) => prev ?? { summary: String(e), detail: null, message: null });
@@ -152,9 +158,23 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
     }
   };
 
+  const chooseLocalFirmware = async () => {
+    setChooseError(null);
+    try {
+      const path = await open({ multiple: false, directory: false, filters: [{ name: "Firmware", extensions: ["bin"] }] });
+      if (typeof path === "string") {
+        setLocalPath(path);
+        setDialogOpen(true);
+      }
+    } catch (e) {
+      setChooseError(translateError(t, e));
+    }
+  };
+
   const closeDialog = () => {
     if (flashing) return;
     setDialogOpen(false);
+    setLocalPath(null);
     setFlash(null);
     setOutcome(null);
     setFlashError(null);
@@ -180,7 +200,7 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
   const port = connection?.port ?? null;
   const releaseLoaded = !!fw?.latestTag;
   const filesComplete = releaseLoaded && (fw?.missingAssets.length ?? 0) === 0;
-  const canStart = !!port && filesComplete && !flashing && !(connection?.paused ?? false);
+  const ready = !!port && !flashing && !(connection?.paused ?? false) && (!!localPath || filesComplete);
   const deviceName = connection?.profile?.friendlyName ?? "ESP32";
   const shortPort = port ? port.replace(/^\/dev\//, "") : "";
 
@@ -303,30 +323,34 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
           <button type="button" className="btn" onClick={() => setDialogOpen(true)} disabled={flashing} title={t("upd.flash.tooltip")}>
             {t("flash.action.short")}
           </button>
+          <button type="button" className="btn" onClick={chooseLocalFirmware} disabled={flashing}>
+            {t("flash.local.choose")}
+          </button>
         </div>
       )}
+      {chooseError && <p className="notice-bad">{chooseError}</p>}
 
       {dialogOpen && (
         <div className="card" role="dialog" aria-label={t("flashdlg.title")}>
           <h3>{t("flashdlg.title")}</h3>
-          <p className="muted">{t("flashdlg.info", { port: shortPort || "—", version: fw?.latestVersion ?? fw?.deviceVersion ?? "?" })}</p>
+          <p className="muted">{localPath ? `${localPath.split(/[\\/]/).pop()} · ${t("flash.local.format")}` : t("flashdlg.info", { port: shortPort || "—", version: fw?.latestVersion ?? fw?.deviceVersion ?? "?" })}</p>
 
           {!flash && (
             <>
               <h4>{t("flashdlg.preflight")}</h4>
-              <ul className={canStart ? "preflight" : "preflight preflight-warn"}>
+              <ul className={ready ? "preflight" : "preflight preflight-warn"}>
                 <li>{port ? t("flash.pre.usb.ok", { port: shortPort }) : t("flash.pre.usb.missing")}</li>
-                <li>
+                {!localPath && <li>
                   {!releaseLoaded
                     ? t("flash.pre.release.none")
                     : filesComplete
                       ? t("flash.pre.files.ok")
                       : t("flash.pre.files.missing", { names: fw?.missingAssets.join(", ") ?? "" })}
-                </li>
+                </li>}
                 <li>{t("flash.pre.tool.ok")}</li>
                 <li>{t("flash.hint.cable")}</li>
               </ul>
-              {!canStart && <p className="notice-warn">{t("flash.hint.ready")}</p>}
+              {!ready && <p className="notice-warn">{t("flash.hint.ready")}</p>}
 
               <h4>{t("flashdlg.variant")}</h4>
               <div className="radio-group" role="radiogroup" aria-label={t("flashdlg.variant")}>
@@ -347,8 +371,8 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
                   type="button"
                   className="btn btn-primary"
                   onClick={() => runFlash(variant)}
-                  disabled={!canStart}
-                  title={canStart ? t("flashdlg.start.tooltip") : t("flashdlg.blocked")}
+                  disabled={!ready}
+                  title={ready ? t("flashdlg.start.tooltip") : t("flashdlg.blocked")}
                 >
                   {t("flashdlg.start")}
                 </button>
@@ -365,7 +389,7 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
 
               {outcome && (
                 <p className="notice">
-                  <strong>{t("flash.ok.info")}</strong> {outcome.version} · {outcome.variant} · {outcome.seconds.toFixed(1)} s
+                  <strong>{t("flash.ok.info")}</strong> {outcome.tag === "local" ? t("flash.local.version") : outcome.version} · {outcome.variant} · {outcome.seconds.toFixed(1)} s
                   <br />
                   {t("flash.ok.detail")}
                 </p>
@@ -386,7 +410,7 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
                     </>
                   )}
                   <br />
-                  {t("flash.recovery")}
+                  {t(localPath ? "flash.local.recovery" : "flash.recovery")}
                 </div>
               )}
 
@@ -397,14 +421,14 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
                       <button type="button" className="btn" onClick={() => runFlash(variant)} disabled={!port}>
                         {t("flash.retry")}
                       </button>
-                      <button
+                      {!localPath && <button
                         type="button"
                         className="btn"
                         onClick={() => runFlash(variant === "ili9341" ? "st7789" : "ili9341")}
                         disabled={!port}
                       >
                         {t("flash.othervariant.short")}
-                      </button>
+                      </button>}
                     </>
                   )}
                   <button type="button" className="btn" onClick={closeDialog}>

@@ -95,6 +95,9 @@
 "esp32.none.title" = "No ESP32 connected";
 "flash.action.plain" = "Flash firmware";
 "flash.action.short" = "Flash firmware …";
+"flash.local.choose" = "Choose firmware file …";
+"flash.local.format" = "A complete ESP32 image starting at 0x0 (.bin) is required.";
+"flash.release.corrupt" = "The downloaded firmware image was corrupt. It was removed from the cache; please try again.";
 "flash.err.aborted" = "Writing the firmware was aborted.";
 "flash.err.aborted.detail" = "Try the same flash again. If the display looks wrong afterwards, pick the other variant in the recovery dialog.";
 "flash.err.bootmode.detail" = "Check the USB cable, reconnect the display briefly and flash again. If your board has a boot button, hold it down as flashing starts.";

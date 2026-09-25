@@ -17,6 +17,25 @@ pub const FLASH_BAUD: u32 = 460_800;
 /// Gemergte Images beginnen beim Bootloader.
 pub const FLASH_ADDRESS: u32 = 0x0;
 
+/// Layout aus scripts/build_firmware.sh für die unterstützten 4-MB-CYD-Boards.
+pub const MAX_IMAGE_BYTES: u64 = 0x400000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageValidationError {
+    Size,
+    Layout,
+}
+
+pub fn validate_merged_image(image: &[u8]) -> Result<(), ImageValidationError> {
+    if image.len() < 0x11000 || image.len() as u64 > MAX_IMAGE_BYTES {
+        return Err(ImageValidationError::Size);
+    }
+    if image[0x1000] != 0xE9 || image[0x8000..0x8002] != [0xAA, 0x50] || image[0x10000] != 0xE9 {
+        return Err(ImageValidationError::Layout);
+    }
+    Ok(())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum FlashError {
     #[error("Port konnte nicht geöffnet werden: {0}")]
@@ -156,5 +175,18 @@ mod tests {
         let r = flash_image("/dev/does-not-exist", &[], FLASH_BAUD, &mut |e| events.push(e));
         assert!(matches!(r, Err(FlashError::EmptyImage)));
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn merged_image_validation_distinguishes_app_image() {
+        let mut image = vec![0xff; 0x11000];
+        image[0x1000] = 0xe9;
+        image[0x8000..0x8002].copy_from_slice(&[0xaa, 0x50]);
+        image[0x10000] = 0xe9;
+        assert!(validate_merged_image(&image).is_ok());
+        image[0x1000] = 0xff;
+        assert_eq!(validate_merged_image(&image), Err(ImageValidationError::Layout));
+        assert_eq!(validate_merged_image(&vec![0xe9; 0x10000]), Err(ImageValidationError::Size));
+        assert_eq!(validate_merged_image(&vec![0xe9; MAX_IMAGE_BYTES as usize + 1]), Err(ImageValidationError::Size));
     }
 }
