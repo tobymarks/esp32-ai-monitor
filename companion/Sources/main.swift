@@ -554,6 +554,48 @@ class Settings {
         }
     }
 
+    /// Ab v1.30.0: Display-Fenster (FW ab 2.19.0). Jedes Fenster zeigt einen
+    /// Provider (Rohwert wie „codex") oder die Uhr („clock"). Ohne gespeicherte
+    /// Liste gilt der gewählte Provider als einziges Fenster — so verhält sich
+    /// eine bestehende Installation wie vor der Fensterverwaltung.
+    static let maxDisplayViews = 8
+    static let clockView = "clock"
+
+    var displayViews: [String] {
+        get {
+            let stored = (defaults.stringArray(forKey: "displayViews") ?? []).map {
+                $0 == Self.clockView ? $0 : CodexBarProvider.normalized($0).rawValue
+            }
+            return stored.isEmpty ? [selectedProvider] : Array(stored.prefix(Self.maxDisplayViews))
+        }
+        set {
+            let views = newValue.isEmpty ? [selectedProvider] : Array(newValue.prefix(Self.maxDisplayViews))
+            defaults.set(views, forKey: "displayViews")
+            if activeDisplayView >= views.count { activeDisplayView = views.count - 1 }
+        }
+    }
+
+    /// `true` = das Display wechselt selbst nach `displayViewInterval` Sekunden.
+    var displayViewsAutomatic: Bool {
+        get { defaults.bool(forKey: "displayViewsAutomatic") }
+        set { defaults.set(newValue, forKey: "displayViewsAutomatic") }
+    }
+
+    var displayViewInterval: Int {
+        get {
+            let raw = defaults.integer(forKey: "displayViewInterval")
+            return raw == 0 ? 10 : max(2, min(3600, raw))
+        }
+        set { defaults.set(max(2, min(3600, newValue)), forKey: "displayViewInterval") }
+    }
+
+    var activeDisplayView: Int {
+        get {
+            max(0, min(defaults.integer(forKey: "activeDisplayView"), displayViews.count - 1))
+        }
+        set { defaults.set(max(0, newValue), forKey: "activeDisplayView") }
+    }
+
     /// Globale Prozent-Logik für alle Provider auf dem ESP32:
     /// `.used` = 0 → 100 verbraucht, `.remaining` = 100 → 0 verbleibend.
     var usagePercentDisplayMode: UsagePercentDisplayMode {
@@ -1710,6 +1752,13 @@ class SerialPortManager {
     /// ueberschreiben. 5 s deckt auch langsamere CYD-Klone ab.
     private let kGetInfoTimeout: TimeInterval = 5
     var onConnect: (() -> Void)?
+    /// Ab v1.30.0: Das Geraet meldet einen Fensterwechsel per Touch als
+    /// `view_state`-Zeile, ohne dass wir gefragt haben. Wird auf dem
+    /// Main-Thread aufgerufen.
+    var onViewState: (([String: Any]) -> Void)?
+    /// Angefangene Zeile aus `drainInput()`, damit ein Ereignis, das genau
+    /// waehrend des Leerens ankommt, nicht zerschnitten verloren geht.
+    private var unsolicitedLine = [UInt8]()
     var deviceFirmwareVersion: String?
     var deviceSerialTransport: String?
     var deviceMaxFrameBytes: Int?
@@ -2198,6 +2247,7 @@ class SerialPortManager {
             let remaining = deadline.timeIntervalSinceNow
             if remaining <= 0 { break }
             guard let line = readLine(timeout: min(remaining, 0.25)) else { continue }
+            routeUnsolicited(line)
             guard line.hasPrefix("{"),
                   let jsonData = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
@@ -2274,6 +2324,7 @@ class SerialPortManager {
             let remaining = deadline.timeIntervalSinceNow
             if remaining <= 0 { break }
             guard let line = readLine(timeout: min(remaining, 1.0)) else { continue }
+            if !acceptedTypes.contains("view_state") { routeUnsolicited(line) }
             guard line.hasPrefix("{"),
                   let jsonData = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
@@ -2321,14 +2372,41 @@ class SerialPortManager {
         NSLog("[Serial] Read error on %@ — port will be reopened", connectedPort ?? "?")
     }
 
+    /// Liest alles Anstehende. Alte Antworten werden verworfen, Touch-Ereignisse
+    /// (`view_state`) aber weitergereicht — sonst gingen sie vor jedem Frame verloren.
     private func drainInput() {
         var byte: UInt8 = 0
         while true {
             var pfd = pollfd(fd: fileDescriptor, events: Int16(POLLIN), revents: 0)
             if Darwin.poll(&pfd, 1, 10) > 0 && (pfd.revents & Int16(POLLIN)) != 0 {
-                _ = Darwin.read(fileDescriptor, &byte, 1)
+                guard Darwin.read(fileDescriptor, &byte, 1) == 1 else { break }
+                if byte == 0x0A {
+                    if let line = String(bytes: unsolicitedLine, encoding: .utf8) { routeUnsolicited(line) }
+                    unsolicitedLine.removeAll(keepingCapacity: true)
+                } else if byte != 0x0D && unsolicitedLine.count < 4096 {
+                    unsolicitedLine.append(byte)
+                }
             } else { break }
         }
+    }
+
+    /// Reicht eine `view_state`-Zeile an `onViewState` weiter; alles andere
+    /// bleibt unbeachtet.
+    private func routeUnsolicited(_ line: String) {
+        guard line.hasPrefix("{"), line.contains("\"view_state\""),
+              let data = line.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["type"] as? String == "view_state" else { return }
+        DispatchQueue.main.async { [weak self] in self?.onViewState?(json) }
+    }
+
+    /// Ab v1.30.0: regelmaessig aufgerufen, damit Touch-Wechsel am Geraet auch
+    /// ohne laufenden Frame-Versand ankommen.
+    func pollUnsolicitedInput() {
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        guard fileDescriptor >= 0 else { return }
+        drainInput()
     }
 }
 
@@ -2342,6 +2420,9 @@ class UsageMonitor {
     private static let serialBrightnessPreviewFirmwareVersion = "2.12.4"
     private static let serialAutoRepairThreshold = 3
     private static let serialAutoRepairCooldown: TimeInterval = 60
+    /// Fensterverwaltung ab FW 2.19.0. `-0` ist das kleinste Prerelease, damit
+    /// auch `2.19.0-dev` und `2.19.0-beta.x` als faehig gelten.
+    private static let serialViewsFirmwareVersion = "2.19.0-0"
 
     let serialPort: SerialPortManager
     let codexBar: CodexBarSource
@@ -2363,6 +2444,13 @@ class UsageMonitor {
     private(set) var serialConsecutiveUnconfirmedFrames = 0
     private(set) var lastSerialAutoRepairDate: Date?
     private(set) var serialLinkDetail: String?
+    /// Zusatz-Sources fuer Fenster, deren Provider nicht der gewaehlte ist.
+    private var viewSources: [String: CodexBarSource] = [:]
+    private var pollingViewProviders = Set<String>()
+    /// Erst nach `set_views` in dieser Verbindung gehen Frames mit `viewIndex`
+    /// raus — sonst verwirft das Geraet sie als unbekanntes Fenster.
+    private var viewsConfigured = false
+    private var viewEventTimer: Timer?
 
     init() {
         self.serialPort = SerialPortManager()
@@ -2374,8 +2462,26 @@ class UsageMonitor {
     /// Snapshot an den ESP32 (kein Warten auf den nächsten Heartbeat).
     func setSelectedProvider(_ newProvider: String) {
         let norm = CodexBarProvider.normalized(newProvider).rawValue
-        Settings.shared.selectedProvider = norm
-        codexBar.setProvider(norm)
+        // Im manuellen Modus zeigt das Display das aktive Fenster. Die Wahl im
+        // Kopf oder im Menue springt auf ein Fenster mit dieser Quelle oder
+        // belegt das aktive neu — sonst bliebe das Display beim alten Provider.
+        let settings = Settings.shared
+        var viewsChanged = false
+        if !settings.displayViewsAutomatic {
+            var views = settings.displayViews
+            let active = settings.activeDisplayView
+            if views[active] != norm {
+                if let index = views.firstIndex(of: norm) {
+                    settings.activeDisplayView = index
+                } else {
+                    views[active] = norm
+                    settings.displayViews = views
+                }
+                viewsChanged = true
+            }
+        }
+        switchMainProvider(to: norm)
+        if viewsChanged { displayViewsChanged() }
         // Wenn die CodexBar-Source bereits einen OK-Entry für den neuen Provider
         // hat (setProvider() hat loadOnce() getriggert, das auch onChange feuert
         // und damit sendUsageToESP32 bereits ausgelöst hat), ist das hier
@@ -2384,6 +2490,155 @@ class UsageMonitor {
         // Auch ohne Daten senden: sendUsageToESP32() schickt dann einen
         // Hinweis-Frame. Vorher blieb hier das Bild des alten Providers stehen.
         scheduleUsageSend()
+    }
+
+    /// Haupt-Source umstellen. Liegt fuer den Provider schon ein Stand aus einem
+    /// Zusatzfenster vor, startet sie damit statt mit „Lade Provider".
+    private func switchMainProvider(to provider: String) {
+        Settings.shared.selectedProvider = provider
+        if let extra = viewSources[provider] { codexBar.seedCache(from: extra) }
+        codexBar.setProvider(provider)
+        reconcileViewSources()
+    }
+
+    // ---- Display-Fenster (FW ab 2.19.0) ----
+
+    /// Fensterliste setzen, z. B. aus dem Reiter Display. Im manuellen Modus
+    /// folgt der gewaehlte Provider dem aktiven Fenster.
+    func updateDisplayViews(_ views: [String], active: Int? = nil) {
+        let settings = Settings.shared
+        settings.displayViews = views
+        if let active { settings.activeDisplayView = active }
+        let current = settings.displayViews[settings.activeDisplayView]
+        if !settings.displayViewsAutomatic, current != Settings.clockView, current != codexBar.provider {
+            switchMainProvider(to: current)
+        }
+        displayViewsChanged()
+    }
+
+    func setDisplayViewMode(automatic: Bool, interval: Int) {
+        Settings.shared.displayViewsAutomatic = automatic
+        Settings.shared.displayViewInterval = interval
+        // Zurueck auf manuell: der Provider folgt wieder dem aktiven Fenster.
+        updateDisplayViews(Settings.shared.displayViews)
+    }
+
+    private func displayViewsChanged() {
+        reconcileViewSources()
+        sendViewsToESP32()
+        onUpdate?()
+        scheduleUsageSend()
+    }
+
+    /// Zusatzfenster mit anderem Provider bekommen eine eigene Source. Nicht
+    /// mehr benoetigte pollen nicht weiter, behalten aber ihren Stand.
+    private func reconcileViewSources() {
+        let selected = codexBar.provider
+        let needed = Set(Settings.shared.displayViews.filter { $0 != Settings.clockView && $0 != selected })
+        for provider in needed where !pollingViewProviders.contains(provider) {
+            let source = viewSources[provider] ?? CodexBarSource(provider: provider)
+            source.onChange = { [weak self] in self?.scheduleUsageSend() }
+            viewSources[provider] = source
+            source.start()
+            pollingViewProviders.insert(provider)
+        }
+        for provider in pollingViewProviders.subtracting(needed) {
+            viewSources[provider]?.stop()
+            pollingViewProviders.remove(provider)
+        }
+    }
+
+    /// Fuer den Hinweis im Reiter Display: verbunden, aber Firmware ohne Fenster.
+    var connectedFirmwareLacksViews: Bool {
+        serialPort.isReadyForCommands && !firmwareSupportsViews()
+    }
+
+    private func firmwareSupportsViews() -> Bool {
+        guard let version = serialPort.deviceFirmwareVersion else { return false }
+        return compareSemanticVersion(version, Self.serialViewsFirmwareVersion) != .orderedAscending
+    }
+
+    /// Fensterliste, Modus und aktives Fenster ans Geraet.
+    func sendViewsToESP32() {
+        guard serialPort.isReadyForCommands, firmwareSupportsViews() else { return }
+        let settings = Settings.shared
+        let payload: [String: Any] = [
+            "cmd": "set_views",
+            "views": settings.displayViews,
+            "mode": settings.displayViewsAutomatic ? "automatic" : "manual",
+            "interval": settings.displayViewInterval,
+            "active": settings.activeDisplayView,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        if serialPort.sendJSON(json) {
+            viewsConfigured = true
+            NSLog("[Serial] Sent set_views: %@", json)
+        }
+    }
+
+    /// Nach dem Verbinden erst die Auswahl am Geraet abfragen (dort kann per
+    /// Touch ein anderes Fenster gewaehlt worden sein), dann konfigurieren.
+    private func configureViewsAfterConnect() {
+        viewsConfigured = false
+        guard firmwareSupportsViews() else { return }
+        serialPort.performJSONCommand(["cmd": "get_views"], acceptedTypes: ["view_state"], timeout: 1.0) { [weak self] response in
+            guard let self = self else { return }
+            if let response { self.applyDeviceViewState(response) }
+            self.sendViewsToESP32()
+            self.scheduleUsageSend()
+        }
+    }
+
+    /// Touch-Wechsel am Geraet uebernehmen — nur wenn dessen Konfiguration zur
+    /// eigenen passt. Sonst gilt beim naechsten `set_views` die App-Auswahl.
+    private func applyDeviceViewState(_ json: [String: Any]) {
+        let settings = Settings.shared
+        guard let views = json["views"] as? [String], views == settings.displayViews,
+              json["mode"] as? String == (settings.displayViewsAutomatic ? "automatic" : "manual"),
+              json["interval"] as? Int == settings.displayViewInterval,
+              let active = json["active"] as? Int, active >= 0, active < views.count,
+              active != settings.activeDisplayView else { return }
+        settings.activeDisplayView = active
+        if views[active] != Settings.clockView { switchMainProvider(to: views[active]) }
+        NSLog("[Views] Touch-Auswahl übernommen: Fenster %d", active + 1)
+        onUpdate?()
+        scheduleUsageSend()
+    }
+
+    /// Nach einem Providerwechsel laedt die Haupt-Source eventuell noch; bis
+    /// dahin den Stand des Zusatzfensters senden, damit die Werte stehen bleiben.
+    private func sourceForView(_ provider: String) -> CodexBarSource? {
+        if provider == codexBar.provider {
+            if codexBar.lastEntry == nil, let extra = viewSources[provider], extra.lastEntry != nil { return extra }
+            return codexBar
+        }
+        return viewSources[provider]
+    }
+
+    /// Ein Frame je Provider-Fenster, jeweils mit `viewIndex`. Uhr-Fenster
+    /// brauchen keine Daten.
+    private func sendViewFramesToESP32() {
+        guard viewsConfigured else { return }
+        for (index, view) in Settings.shared.displayViews.enumerated() where view != Settings.clockView {
+            guard let source = sourceForView(view) else { continue }
+            if let entry = source.lastEntry {
+                let frameId = allocateFrameId()
+                transmitUsage(buildUsageEnvelope(entry: entry, source: source, frameId: frameId, viewIndex: index),
+                              frameId: frameId)
+            } else {
+                sendNoticeToESP32(source: source, viewIndex: index)
+            }
+        }
+    }
+
+    /// Traegt `viewIndex` in `data[0]` ein.
+    private static func withViewIndex(_ envelope: [String: Any], _ viewIndex: Int?) -> [String: Any] {
+        guard let viewIndex, var data = envelope["data"] as? [[String: Any]], !data.isEmpty else { return envelope }
+        var out = envelope
+        data[0]["viewIndex"] = viewIndex
+        out["data"] = data
+        return out
     }
 
     func start() {
@@ -2419,6 +2674,7 @@ class UsageMonitor {
             self.sendLanguageToESP32()
             self.sendOrientationToESP32()
             self.sendBrightnessToESP32(Settings.shared.lastKnownBrightness)
+            self.configureViewsAfterConnect()
             self.sendUsageToESP32()
             if self.pendingDiagnosticAfterNextConnect && self.serialPort.state == .connected {
                 self.pendingDiagnosticAfterNextConnect = false
@@ -2434,6 +2690,15 @@ class UsageMonitor {
 
         // CodexBar zuletzt starten (nachdem Callbacks gesetzt sind)
         codexBar.start()
+        reconcileViewSources()
+
+        // Touch-Wechsel am Geraet kommen unaufgefordert; ohne laufenden
+        // Frame-Versand liest sie sonst niemand.
+        serialPort.onViewState = { [weak self] json in self?.applyDeviceViewState(json) }
+        viewEventTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.serialPort.isReadyForCommands, self.firmwareSupportsViews() else { return }
+            self.serialSendQueue.async { self.serialPort.pollUnsolicitedInput() }
+        }
 
         // Heartbeat: Display-Uhr aktuell halten, auch wenn CodexBar nicht neu schreibt
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: kSerialHeartbeatInterval, repeats: true) { [weak self] _ in
@@ -2445,7 +2710,11 @@ class UsageMonitor {
     func stop() {
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
+        viewEventTimer?.invalidate()
+        viewEventTimer = nil
         codexBar.stop()
+        viewSources.values.forEach { $0.stop() }
+        pollingViewProviders.removeAll()
         serialPort.stopScanning()
     }
 
@@ -2658,7 +2927,16 @@ class UsageMonitor {
     func sendDiagnosticTestFrame() -> Bool {
         guard serialPort.isReadyForCommands else { return false }
 
-        let provider = CodexBarProvider.normalized(Settings.shared.selectedProvider)
+        var provider = CodexBarProvider.normalized(Settings.shared.selectedProvider)
+        // Mit Fenstern (FW ab 2.19.0) ins aktive Provider-Fenster schreiben — ein
+        // Frame ohne viewIndex schaltet die Firmware auf ein einzelnes Fenster.
+        var viewIndex: Int?
+        if firmwareSupportsViews() {
+            let views = Settings.shared.displayViews
+            let active = Settings.shared.activeDisplayView
+            viewIndex = views[active] != Settings.clockView ? active : views.firstIndex { $0 != Settings.clockView }
+            if let viewIndex { provider = CodexBarProvider.normalized(views[viewIndex]) }
+        }
         let activeProvider = provider.rawValue
 
         let isoFormatter = Self.frameISOFormatter
@@ -2744,7 +3022,7 @@ class UsageMonitor {
         ]
 
         do {
-            let jsonData = try JSONSerialization.data(withJSONObject: envelope)
+            let jsonData = try JSONSerialization.data(withJSONObject: Self.withViewIndex(envelope, viewIndex))
             guard let jsonString = String(data: jsonData, encoding: .utf8) else { return false }
             let receipt = serialPort.sendJSONAndWaitForFrameAck(jsonString, frameId: frameId)
             let accepted = registerFrameReceipt(receipt, source: "diagnostic")
@@ -2817,6 +3095,10 @@ class UsageMonitor {
 
     fileprivate func sendUsageToESP32() {
         guard serialPort.isReadyForCommands else { return }
+        if firmwareSupportsViews() {
+            sendViewFramesToESP32()
+            return
+        }
         // Kein Eintrag heisst NICHT „nichts tun". Vorher kehrte die Funktion
         // hier einfach zurueck — das Display zeigte dann weiter die Werte des
         // zuvor gewaehlten Providers, obwohl der neue gar keine Daten liefert.
@@ -2826,12 +3108,12 @@ class UsageMonitor {
             return
         }
 
-        // Provider aus der CodexBar-Source (normalisiert), nicht direkt aus
-        // Settings — das hält Envelope und tatsächlich gelesene Daten konsistent.
-        let provider = CodexBarProvider.normalized(codexBar.provider)
         let frameId = allocateFrameId()
-        let built = buildUsageEnvelope(entry: entry, provider: provider, frameId: frameId)
+        transmitUsage(buildUsageEnvelope(entry: entry, source: codexBar, frameId: frameId, viewIndex: nil),
+                      frameId: frameId)
+    }
 
+    private func transmitUsage(_ built: BuiltUsageEnvelope, frameId: Int) {
         // Envelope + Serialisierung laufen hier auf dem Main-Thread (schnell,
         // liest State gefahrlos). Nur der blockierende send+ACK wird auf die
         // serielle Queue ausgelagert; das Ergebnis-Handling (State/UI) kehrt
@@ -2892,8 +3174,9 @@ class UsageMonitor {
     /// leeren Zeilen und einem `notice`-Text. Firmware ab v2.15.0 rendert den
     /// Text; aeltere Firmware ignoriert das unbekannte Feld und zeigt durch die
     /// leeren Zeilen zumindest keine falschen Zahlen mehr.
-    fileprivate func sendNoticeToESP32() {
+    fileprivate func sendNoticeToESP32(source: CodexBarSource? = nil, viewIndex: Int? = nil) {
         guard serialPort.isReadyForCommands else { return }
+        let codexBar = source ?? self.codexBar
         // Laeuft gerade ein Abruf ohne vorhandene Daten, ist nichts kaputt —
         // dann „Lädt …" statt einer Fehlermeldung. Ohne diesen Zweig bliebe in
         // den 1–4 s des CLI-Aufrufs das Bild des vorherigen Providers stehen.
@@ -2914,7 +3197,7 @@ class UsageMonitor {
         let timeFmt = Self.frameTimeFormatter
         timeFmt.timeZone = Settings.shared.effectiveTimeZone()
 
-        let envelope: [String: Any] = [
+        let envelope: [String: Any] = Self.withViewIndex([
             "schemaVersion": Self.serialSchemaVersion,
             "frameId": frameId,
             "sentAt": nowISO,
@@ -2933,7 +3216,7 @@ class UsageMonitor {
                     ]
                 ]
             ]
-        ]
+        ], viewIndex)
 
         guard let jsonData = try? JSONSerialization.data(withJSONObject: envelope),
               let jsonString = String(data: jsonData, encoding: .utf8) else { return }
@@ -2964,9 +3247,12 @@ class UsageMonitor {
     /// Baut den JSON-Envelope fuer einen CodexBar-Eintrag — seiteneffektfreie
     /// Konstruktion, exakt das Format, das zuvor inline in sendUsageToESP32
     /// erzeugt wurde (Wire-kompatibel).
-    private func buildUsageEnvelope(entry: CodexBarEntry, provider: CodexBarProvider, frameId: Int) -> BuiltUsageEnvelope {
+    private func buildUsageEnvelope(entry: CodexBarEntry, source: CodexBarSource, frameId: Int, viewIndex: Int?) -> BuiltUsageEnvelope {
+        // Provider aus der Source (normalisiert), nicht direkt aus Settings —
+        // das hält Envelope und tatsächlich gelesene Daten konsistent.
+        let provider = CodexBarProvider.normalized(source.provider)
         let activeProvider = provider.rawValue
-        let fetching = codexBar.isFetching
+        let fetching = source.isFetching
         let loginMethodLabel = provider.loginLabel
 
         let percentMode = Settings.shared.usagePercentDisplayMode
@@ -3192,7 +3478,7 @@ class UsageMonitor {
         ]
 
         return BuiltUsageEnvelope(
-            dict: envelope,
+            dict: Self.withViewIndex(envelope, viewIndex),
             activeProvider: activeProvider,
             primaryPercent: primaryPercent,
             secondaryPercent: secondaryPercent,

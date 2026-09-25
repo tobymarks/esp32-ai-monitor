@@ -425,6 +425,14 @@ final class CodexBarSource {
         notify()
     }
 
+    /// Ab v1.30.0: Stand eines anderen Abrufs (Zusatzfenster) uebernehmen, damit
+    /// ein folgendes `setProvider` sofort Daten hat statt „Lade Provider".
+    func seedCache(from other: CodexBarSource) {
+        guard let cached = other.cachedEntries[other.provider] else { return }
+        if let own = cachedEntries[other.provider], own.fetchedAt >= cached.fetchedAt { return }
+        cachedEntries[other.provider] = cached
+    }
+
     private static func normalizeProvider(_ raw: String) -> String {
         CodexBarProvider.normalized(raw).rawValue
     }

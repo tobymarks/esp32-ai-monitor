@@ -265,8 +265,10 @@ impl DeviceInfo {
         semver::at_least(&self.version, NOTICE_MIN_VERSION)
     }
 
+    /// `-0` ist das kleinste Prerelease: so gelten `2.19.0-dev`, `2.19.0-beta.x`
+    /// und `2.19.0` als fähig ("beta" < "dev" lexikalisch).
     pub fn supports_views(&self) -> bool {
-        semver::at_least(&self.version, "2.19.0-dev")
+        semver::at_least(&self.version, "2.19.0-0")
     }
 
     pub fn max_frame_bytes(&self) -> usize {
@@ -535,6 +537,19 @@ mod tests {
         assert_eq!(err, DeviceMessage::Error { frame_id: None, message: "frame timeout".into() });
         let ok = DeviceMessage::parse_line(r#"{"type":"ok","cmd":"set_brightness","value":80,"persist":true}"#).unwrap();
         assert!(matches!(ok, DeviceMessage::Ok { ref cmd, .. } if cmd == "set_brightness"));
+    }
+
+    #[test]
+    fn views_need_firmware_2_19_including_prereleases() {
+        let supports = |version: &str| {
+            DeviceInfo::from_value(&serde_json::json!({"type": "info", "version": version}))
+                .unwrap()
+                .supports_views()
+        };
+        assert!(supports("2.19.0-dev"));
+        assert!(supports("2.19.0-beta.1"));
+        assert!(supports("2.19.0"));
+        assert!(!supports("2.18.1"));
     }
 
     #[test]

@@ -126,6 +126,13 @@ extension SettingsWindowController {
             views: [appearanceRows]
         )
 
+        let viewsStep = buildDisplaySetupStep(
+            number: "3",
+            title: L("views.step"),
+            detail: L("views.step.detail"),
+            views: buildViewsStepContent()
+        )
+
         let testButton = NSButton(title: "Testbild senden", target: self, action: #selector(sendTestFrame))
         testButton.bezelStyle = .rounded
         testButton.toolTip = L("disp.test.tooltip")
@@ -136,13 +143,13 @@ extension SettingsWindowController {
         testHelper.textColor = .secondaryLabelColor
 
         let testStep = buildDisplaySetupStep(
-            number: "3",
+            number: "4",
             title: L("disp.step.check"),
             detail: L("disp.step.check.detail"),
             views: [testButton, testHelper, lastUpdateLabel]
         )
 
-        let stack = NSStackView(views: [heading, intro, deviceStep, appearanceStep, testStep])
+        let stack = NSStackView(views: [heading, intro, deviceStep, appearanceStep, viewsStep, testStep])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14

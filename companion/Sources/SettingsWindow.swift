@@ -65,6 +65,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var healthFirmwareDetailLabel: NSTextField!
     var setupTestButton: NSButton!
     var displayTestButton: NSButton!
+    // Display — Fenster (ab v1.30.0, siehe SettingsWindow+Views.swift)
+    var viewsListStack: NSStackView!
+    var viewsAddButton: NSButton!
+    var viewsModePopup: NSPopUpButton!
+    var viewsIntervalField: NSTextField!
+    var viewsIntervalRow: NSView!
+    var viewsFirmwareHint: NSTextField!
+    var viewsSignature = ""
     var setupCopyButton: NSButton!
 
     // Linke Spalte — CodexBar
@@ -592,6 +600,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             updateChannelPopup.selectItem(at: channel == .beta ? 1 : 0)
         }
         updateSetupBox()
+        updateViewsSection()
 
         // CodexBar
         let src = monitor.codexBar
