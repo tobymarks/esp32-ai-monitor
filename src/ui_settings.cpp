@@ -22,17 +22,17 @@
 
 // External config
 extern AppConfig g_config;
+static bool settings_closing = false;
 
 // ============================================================
 // Back button handler
 // ============================================================
 static void on_back_tap(lv_event_t *e) {
     (void)e;
+    if (settings_closing) return;
+    settings_closing = true;
+    Serial.println("[UI] Settings closed -> Dashboard");
     ui_dashboard_load_back();
-    lv_obj_t *old_scr = (lv_obj_t *)lv_event_get_user_data(e);
-    if (old_scr != nullptr) {
-        lv_obj_delete_async(old_scr);
-    }
 }
 
 // ============================================================
@@ -78,6 +78,7 @@ static lv_obj_t* create_info_row(lv_obj_t *parent, const char *label, const char
 // Create settings screen
 // ============================================================
 void ui_settings_create() {
+    settings_closing = false;
     ui_styles_init();
 
     int16_t sw = SCREEN_WIDTH;
@@ -87,6 +88,8 @@ void ui_settings_create() {
     lv_obj_set_style_bg_color(scr, UI_COLOR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(scr, on_back_tap, LV_EVENT_LONG_PRESSED, nullptr);
 
     // ---- Header ----
     lv_obj_t *header = lv_obj_create(scr);
@@ -96,6 +99,7 @@ void ui_settings_create() {
     lv_obj_set_style_border_width(header, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(header, 0, LV_PART_MAIN);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(header, LV_OBJ_FLAG_CLICKABLE);
 
     // Back button
     lv_obj_t *btn_back = lv_label_create(header);
@@ -106,6 +110,7 @@ void ui_settings_create() {
     lv_obj_add_flag(btn_back, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(btn_back, 15);
     lv_obj_add_event_cb(btn_back, on_back_tap, LV_EVENT_CLICKED, scr);
+    lv_obj_add_event_cb(btn_back, on_back_tap, LV_EVENT_LONG_PRESSED, nullptr);
 
     lv_obj_t *lbl_title = lv_label_create(header);
     lv_label_set_text(lbl_title, L(STR_SETTINGS));

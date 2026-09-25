@@ -44,6 +44,7 @@ pub fn apply_provider(app: &AppHandle, provider: Provider) {
         poll::emit_snapshot(app);
     }
     poll::start_fetch(app);
+    poll::refresh_views(app);
 }
 
 /// Autostart über das Plugin setzen. Fehler werden gemeldet, nicht verschluckt.
@@ -79,6 +80,7 @@ pub fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, Stri
     let previous = state.settings.lock().unwrap().clone();
 
     let mut next = settings;
+    next.normalize_views();
     let mut error = None;
     if next.autostart != previous.autostart {
         if let Err(e) = apply_autostart(&app, next.autostart) {
@@ -99,12 +101,19 @@ pub fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, Stri
     }
     if next.percent_mode != previous.percent_mode {
         serial_service::request_resend(&app);
+        poll::refresh_views(&app);
     }
     if next.manual_port != previous.manual_port {
         serial_service::send(&app, Job::SetManualPort(next.manual_port.clone()));
     }
     if next.timezone != previous.timezone {
         serial_service::request_resend(&app);
+    }
+    if next.views != previous.views || next.view_mode != previous.view_mode
+        || next.view_interval_seconds != previous.view_interval_seconds
+        || next.active_view != previous.active_view {
+        serial_service::send(&app, Job::ConfigureViews);
+        poll::refresh_views(&app);
     }
     if next.update_channel != previous.update_channel {
         // Anderer Kanal, andere Auswahl aus demselben Cache: Status neu melden.

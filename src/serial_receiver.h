@@ -15,8 +15,18 @@ MonitorState serial_get_state();
 // Returns true if we received valid data within the last 5 minutes
 bool serial_has_recent_data();
 
+// True while the companion has sent a valid usage or notice frame recently.
+bool serial_has_recent_host_frame();
+
 // Returns true if new data arrived since last call (auto-resets)
 bool serial_has_new_data();
+
+// Display-Fenster: Auswahl per Touch oder Timer; die Konfiguration kommt vom Host.
+void serial_select_view(uint8_t index);
+void serial_next_view();
+void serial_previous_view();
+bool serial_is_clock_view();
+uint8_t serial_view_count();
 
 // Returns current display time string ("HH:MM" or "--:--")
 const char* serial_get_display_time();

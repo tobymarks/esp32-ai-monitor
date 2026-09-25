@@ -17,6 +17,26 @@ pub enum Language {
     En,
 }
 
+/// Inhalt eines Display-Fensters. Eine Quelle darf in mehreren Fenstern liegen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "provider", rename_all = "lowercase")]
+pub enum ViewContent {
+    Clock,
+    Provider(Provider),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ViewMode {
+    #[default]
+    Manual,
+    Automatic,
+}
+
+pub const MAX_VIEWS: usize = 8;
+fn default_views() -> Vec<ViewContent> { vec![ViewContent::Provider(Provider::DEFAULT)] }
+fn default_view_interval() -> u16 { 10 }
+
 impl Language {
     /// Tatsächlich zu verwendende Sprache: "de" oder "en".
     pub fn effective(self) -> &'static str {
@@ -40,6 +60,14 @@ impl Language {
 pub struct Settings {
     #[serde(default = "default_provider")]
     pub provider: Provider,
+    #[serde(default = "default_views")]
+    pub views: Vec<ViewContent>,
+    #[serde(default)]
+    pub view_mode: ViewMode,
+    #[serde(default = "default_view_interval")]
+    pub view_interval_seconds: u16,
+    #[serde(default)]
+    pub active_view: usize,
     #[serde(default)]
     pub percent_mode: PercentMode,
     #[serde(default)]
@@ -75,6 +103,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             provider: Provider::DEFAULT,
+            views: default_views(),
+            view_mode: ViewMode::Manual,
+            view_interval_seconds: default_view_interval(),
+            active_view: 0,
             percent_mode: PercentMode::Used,
             language: Language::System,
             autostart: false,
@@ -98,12 +130,26 @@ impl Settings {
             return Settings::default();
         };
         match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            Ok(bytes) => serde_json::from_slice::<Settings>(&bytes).map(|mut s| {
+                // Vor der Fensterverwaltung war `provider` die einzige Anzeige.
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    if v.get("views").is_none() { s.views = vec![ViewContent::Provider(s.provider)]; }
+                }
+                s.normalize_views();
+                s
+            }).unwrap_or_else(|e| {
                 eprintln!("[aimonitor] settings.json unlesbar ({e}), Defaults");
                 Settings::default()
             }),
             Err(_) => Settings::default(),
         }
+    }
+
+    pub fn normalize_views(&mut self) {
+        if self.views.is_empty() { self.views = default_views(); }
+        self.views.truncate(MAX_VIEWS);
+        self.view_interval_seconds = self.view_interval_seconds.clamp(2, 3600);
+        self.active_view = self.active_view.min(self.views.len() - 1);
     }
 
     pub fn save(&self, app: &AppHandle) {
@@ -119,5 +165,35 @@ impl Settings {
             }
             Err(e) => eprintln!("[aimonitor] Einstellungen nicht serialisierbar: {e}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn view_settings_keep_one_window_and_clamp_limits() {
+        let mut settings = Settings::default();
+        settings.views.clear();
+        settings.active_view = 99;
+        settings.view_interval_seconds = 1;
+        settings.normalize_views();
+        assert_eq!(settings.views, vec![ViewContent::Provider(Provider::Claude)]);
+        assert_eq!(settings.active_view, 0);
+        assert_eq!(settings.view_interval_seconds, 2);
+
+        settings.views = vec![ViewContent::Clock; MAX_VIEWS + 2];
+        settings.active_view = MAX_VIEWS + 1;
+        settings.normalize_views();
+        assert_eq!(settings.views.len(), MAX_VIEWS);
+        assert_eq!(settings.active_view, MAX_VIEWS - 1);
+    }
+
+    #[test]
+    fn view_content_has_a_stable_wire_shape() {
+        assert_eq!(serde_json::to_value(ViewContent::Clock).unwrap(), serde_json::json!({"kind":"clock"}));
+        assert_eq!(serde_json::to_value(ViewContent::Provider(Provider::Codex)).unwrap(),
+                   serde_json::json!({"kind":"provider","provider":"codex"}));
     }
 }

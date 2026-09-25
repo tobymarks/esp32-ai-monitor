@@ -8,6 +8,8 @@
 //! Zugriff hinweg.
 
 use crate::registry;
+use crate::poll;
+use crate::settings::{ViewContent, ViewMode};
 use crate::state::{current_snapshot, AppState};
 use crate::timezone;
 use crate::tray;
@@ -18,15 +20,18 @@ use aimonitor_core::protocol::{
     REPAIR_RECONNECT_DELAY, REPAIR_THRESHOLD, SCAN_INTERVAL, SEND_DEBOUNCE,
 };
 use aimonitor_core::{DeviceInfo, DeviceProfile, Snapshot};
+use aimonitor_core::protocol::{DeviceMessage, ViewState};
 use aimonitor_serial::{list_ports, ports::choose_port, FrameReceipt, Link, LinkError};
 use chrono::{DateTime, Local, Utc};
 use serde::Serialize;
+use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const CONNECTION_EVENT: &str = "connection-changed";
+pub const SETTINGS_EVENT: &str = "settings-changed";
 /// Zeilen im veröffentlichten Protokoll.
 const LOG_LINES: usize = 50;
 /// Wie lange der Thread höchstens blockiert, bevor er wieder Aufträge liest.
@@ -44,6 +49,7 @@ pub enum Job {
     SetManualPort(Option<String>),
     /// Datenframe über den Debounce anfordern (neue Daten, Provider, Einstellungen).
     Resend,
+    ConfigureViews,
     SendDiagnostic,
     /// Nur die geänderten Werte sind `Some`; das Profil selbst liegt in der Registry.
     ApplyProfile {
@@ -371,6 +377,7 @@ impl Service {
         if !matches!(self.state, LinkState::Connected(_)) {
             return;
         }
+        self.poll_view_events();
         let now = Instant::now();
         if let Some(due) = self.diagnostic_due {
             if now >= due {
@@ -521,6 +528,8 @@ impl Service {
                 return;
             }
         }
+        self.restore_touch_selection();
+        self.configure_views();
         self.heartbeat_due = Some(Instant::now() + HEARTBEAT_INTERVAL);
         self.schedule_send();
         self.publish();
@@ -581,31 +590,125 @@ impl Service {
 
     /// Usage- oder Notice-Frame aus dem aktuellen Snapshot; `None`, wenn es
     /// nichts zu zeigen gibt (Spec 5.3).
-    fn build_payload(&mut self, info: &DeviceInfo) -> Option<(String, &'static str, i64)> {
-        let snap = current_snapshot(&self.app);
+    fn build_payload(&mut self, info: &DeviceInfo, snap: Snapshot, view_index: Option<usize>) -> Option<(String, &'static str, i64)> {
         let ctx = self.frame_context(&snap);
         let frame_id = self.frame_ids.next();
-        if let Some(entry) = &snap.entry {
-            return Some((usage_envelope(entry, snap.percent_mode, &ctx, frame_id), "usage", frame_id));
+        let (payload, kind) = if let Some(entry) = &snap.entry {
+            (usage_envelope(entry, snap.percent_mode, &ctx, frame_id), "usage")
+        } else {
+            let key = snap.status.display_notice_key()
+                .or_else(|| snap.fetching.then_some("dsp.notice.loading"))
+                .unwrap_or("dsp.notice.loading");
+            if !info.supports_notice() { return None; }
+            let language = self.profile.as_ref().map(|p| p.language).unwrap_or_default();
+            (notice_envelope(snap.provider, notice_text(key, language), &ctx, frame_id), "notice")
+        };
+        if let Some(index) = view_index {
+            let mut value: serde_json::Value = serde_json::from_str(&payload).ok()?;
+            value["data"][0]["viewIndex"] = json!(index);
+            return Some((value.to_string(), kind, frame_id));
         }
-        let key = snap
-            .status
-            .display_notice_key()
-            .or_else(|| snap.fetching.then_some("dsp.notice.loading"))?;
-        if !info.supports_notice() {
-            self.log_event(format!("Hinweis {key} nicht gesendet, Firmware ohne notice-Unterstützung"));
-            return None;
+        Some((payload, kind, frame_id))
+    }
+
+    fn configure_views(&mut self) {
+        let LinkState::Connected(info) = &self.state else { return };
+        if !info.supports_views() { return; }
+        let settings = self.app.state::<AppState>().settings.lock().unwrap().clone();
+        let contents: Vec<&str> = settings.views.iter().map(|v| match v {
+            ViewContent::Clock => "clock",
+            ViewContent::Provider(p) => p.key(),
+        }).collect();
+        let line = json!({
+            "cmd": "set_views", "views": contents,
+            "mode": match settings.view_mode { ViewMode::Manual => "manual", ViewMode::Automatic => "automatic" },
+            "interval": settings.view_interval_seconds,
+            "active": settings.active_view,
+        }).to_string() + "\n";
+        self.send_command(&line);
+    }
+
+    /// Nur eine passende Gerätekonfiguration darf die lokale Auswahl übernehmen.
+    /// So überschreibt ein Reconnect keinen inzwischen am ESP gewählten Tab.
+    fn restore_touch_selection(&mut self) {
+        let LinkState::Connected(info) = &self.state else { return };
+        if !info.supports_views() { return; }
+        let result = self.link.as_mut().unwrap().command_with_response(
+            "{\"cmd\":\"get_views\"}\n", "view_state", Duration::from_millis(500));
+        match result {
+            Ok(Some(DeviceMessage::ViewState(view))) => self.apply_device_selection(view),
+            Ok(_) => self.log_event("Keine Fensterantwort vom Gerät"),
+            Err(e) => self.log_event(format!("Fensterabfrage fehlgeschlagen: {e}")),
         }
-        let language = self.profile.as_ref().map(|p| p.language).unwrap_or_default();
-        let text = notice_text(key, language);
-        Some((notice_envelope(snap.provider, text, &ctx, frame_id), "notice", frame_id))
+        self.absorb_link_log();
+    }
+
+    fn poll_view_events(&mut self) {
+        let Some(link) = self.link.as_mut() else { return };
+        link.poll_input();
+        let events = link.take_view_events();
+        self.absorb_link_log();
+        for view in events { self.apply_device_selection(view); }
+        if self.link.as_ref().is_some_and(Link::is_lost) {
+            self.disconnect("Lesefehler beim Fensterereignis");
+        }
+    }
+
+    fn apply_device_selection(&mut self, view: ViewState) {
+        let app_state = self.app.state::<AppState>();
+        let (changed, provider) = {
+            let mut settings = app_state.settings.lock().unwrap();
+            let expected: Vec<&str> = settings.views.iter().map(|v| match v {
+                ViewContent::Clock => "clock", ViewContent::Provider(p) => p.key(),
+            }).collect();
+            let mode = match settings.view_mode { ViewMode::Manual => "manual", ViewMode::Automatic => "automatic" };
+            if view.views.iter().map(String::as_str).collect::<Vec<_>>() != expected
+                || view.mode != mode || view.interval != settings.view_interval_seconds
+                || view.active >= settings.views.len() || view.active == settings.active_view {
+                return;
+            }
+            settings.active_view = view.active;
+            let provider = match settings.views[view.active] {
+                ViewContent::Clock => None,
+                ViewContent::Provider(p) => { settings.provider = p; Some(p) },
+            };
+            settings.save(&self.app);
+            (true, provider)
+        };
+        if changed {
+            if let Some(provider) = provider {
+                app_state.source.lock().unwrap().set_provider(provider, Utc::now());
+                poll::start_fetch(&self.app);
+                poll::refresh_views(&self.app);
+            }
+            let settings = app_state.settings.lock().unwrap().clone();
+            let _ = self.app.emit(SETTINGS_EVENT, settings);
+            self.log_event(format!("Touch-Auswahl übernommen: Fenster {}", view.active + 1));
+            self.publish();
+        }
     }
 
     fn send_data_frame(&mut self, trigger: &str) {
         let LinkState::Connected(info) = &self.state else { return };
         let info = info.clone();
-        let Some((payload, kind, frame_id)) = self.build_payload(&info) else { return };
-        self.transmit(&info, payload, frame_id, kind, trigger);
+        let selected = current_snapshot(&self.app);
+        if !info.supports_views() {
+            if let Some((payload, kind, frame_id)) = self.build_payload(&info, selected, None) {
+                self.transmit(&info, payload, frame_id, kind, trigger);
+            }
+            return;
+        }
+        let views = self.app.state::<AppState>().settings.lock().unwrap().views.clone();
+        let cached = self.app.state::<AppState>().view_sources.lock().unwrap().clone();
+        for (index, view) in views.iter().enumerate() {
+            let ViewContent::Provider(provider) = view else { continue };
+            let snap = if *provider == selected.provider { Some(selected.clone()) } else { cached.get(provider).cloned() };
+            let Some(snap) = snap else { continue };
+            if let Some((payload, kind, frame_id)) = self.build_payload(&info, snap, Some(index)) {
+                self.transmit(&info, payload, frame_id, kind, trigger);
+            }
+            if !matches!(self.state, LinkState::Connected(_)) { break; }
+        }
     }
 
     fn send_diagnostic_frame(&mut self) {
@@ -709,6 +812,10 @@ impl Service {
                 }
             }
             Job::Resend => self.schedule_send(),
+            Job::ConfigureViews => {
+                self.configure_views();
+                self.schedule_send();
+            }
             Job::SendDiagnostic => self.send_diagnostic_frame(),
             Job::ApplyProfile { theme, orientation, language } => {
                 self.profile = self.registry_profile();

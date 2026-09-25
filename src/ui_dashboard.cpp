@@ -94,6 +94,7 @@ static bool state_stored = false;
 // Long-press overlay
 static lv_obj_t *long_press_overlay = nullptr;
 static uint32_t tap_press_started_ms = 0;
+static int32_t tap_press_x = 0;
 
 // Splash overlay (shown until first data arrives)
 static lv_obj_t *splash_overlay     = nullptr;
@@ -104,6 +105,10 @@ static bool       first_data_received = false;
 static lv_obj_t *standby_overlay    = nullptr;
 static lv_obj_t *standby_clock      = nullptr;
 static lv_obj_t *standby_wifi       = nullptr;
+static lv_obj_t *clock_overlay      = nullptr;
+static lv_obj_t *clock_time         = nullptr;
+static lv_obj_t *clock_date         = nullptr;
+static bool long_press_handled = false;
 
 // Placeholder row titles while the compact rows are created (before any
 // frame arrived). At render time the titles come from the active provider.
@@ -140,15 +145,66 @@ static inline bool widgets_ready() {
 // Event handlers
 // ============================================================
 static void on_press_start(lv_event_t *e) {
-    (void)e;
+    lv_point_t point;
+    lv_indev_get_point(lv_event_get_indev(e), &point);
+    tap_press_x = point.x;
     tap_press_started_ms = lv_tick_get();
+    long_press_handled = false;
 }
 
 static void on_long_press(lv_event_t *e) {
     (void)e;
+    long_press_handled = true;
     uint32_t elapsed = lv_tick_elaps(tap_press_started_ms);
     Serial.printf("[UI] Long press (%lu ms) -> Settings\n", (unsigned long)elapsed);
     ui_settings_create();
+}
+
+static void on_tap_release(lv_event_t *e) {
+    (void)e;
+    if (long_press_handled || lv_tick_elaps(tap_press_started_ms) >= 800) return;
+    if (tap_press_x < SCREEN_WIDTH / 2) serial_previous_view();
+    else serial_next_view();
+}
+
+static void update_clock_view() {
+    if (!clock_overlay) {
+        clock_overlay = lv_obj_create(scr_dashboard);
+        lv_obj_remove_style_all(clock_overlay);
+        lv_obj_set_size(clock_overlay, SCREEN_WIDTH, SCREEN_HEIGHT);
+        lv_obj_set_style_bg_color(clock_overlay, UI_COLOR_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(clock_overlay, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_add_flag(clock_overlay, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(clock_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
+        lv_obj_add_event_cb(clock_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
+        lv_obj_add_event_cb(clock_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
+        clock_time = lv_label_create(clock_overlay);
+        lv_obj_set_width(clock_time, SCREEN_WIDTH);
+        lv_obj_set_style_text_align(clock_time, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(clock_time, UI_COLOR_TEXT, LV_PART_MAIN);
+        lv_obj_set_style_text_font(clock_time, &font_standby_clock_76, LV_PART_MAIN);
+        lv_obj_align(clock_time, LV_ALIGN_CENTER, 0, -15);
+        clock_date = lv_label_create(clock_overlay);
+        lv_obj_set_width(clock_date, SCREEN_WIDTH);
+        lv_obj_set_style_text_align(clock_date, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(clock_date, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+        lv_obj_set_style_text_font(clock_date, &lv_font_montserrat_20, LV_PART_MAIN);
+        lv_obj_align(clock_date, LV_ALIGN_CENTER, 0, 55);
+    }
+    char time_buf[6] = "--:--";
+    char date_buf[20] = "";
+    time_t now = time(nullptr);
+    if (now > CLOCK_VALID_EPOCH) {
+        struct tm local;
+        localtime_r(&now, &local);
+        strftime(time_buf, sizeof(time_buf), "%H:%M", &local);
+        strftime(date_buf, sizeof(date_buf), "%d.%m.%Y", &local);
+    } else {
+        strlcpy(time_buf, serial_get_display_time(), sizeof(time_buf));
+    }
+    lv_label_set_text(clock_time, time_buf);
+    lv_label_set_text(clock_date, date_buf);
+    lv_obj_move_foreground(clock_overlay);
 }
 
 // ============================================================
@@ -214,6 +270,7 @@ static void show_standby_overlay() {
     lv_obj_clear_flag(standby_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(standby_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(standby_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(standby_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
     lv_obj_add_event_cb(standby_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
 
     standby_wifi = lv_label_create(standby_overlay);
@@ -746,6 +803,7 @@ void ui_dashboard_create() {
     lv_obj_add_flag(long_press_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(long_press_overlay, LV_OBJ_FLAG_CLICK_FOCUSABLE);
     lv_obj_add_event_cb(long_press_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(long_press_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
     lv_obj_add_event_cb(long_press_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
     lv_obj_move_foreground(long_press_overlay);
 
@@ -799,15 +857,29 @@ void ui_dashboard_update(const MonitorState &state) {
     memcpy(&last_state, &state, sizeof(MonitorState));
     state_stored = true;
 
+    if (serial_is_clock_view()) {
+        if (splash_overlay != nullptr) {
+            lv_obj_delete(splash_overlay);
+            splash_overlay = nullptr;
+            splash_spinner = nullptr;
+        }
+        hide_standby_overlay();
+        update_clock_view();
+        return;
+    }
+    if (clock_overlay != nullptr) {
+        lv_obj_delete(clock_overlay);
+        clock_overlay = clock_time = clock_date = nullptr;
+    }
+
     const bool has_recent_data = serial_has_recent_data();
     const bool clock_is_set = time(nullptr) > CLOCK_VALID_EPOCH;
-    // Ein Hinweis-Frame setzt usage.valid = false, damit keine Balken gerendert
-    // werden. serial_has_recent_data() liefert dann aber ebenfalls false — ohne
-    // die notice_only-Ausnahme legte sich die Standby-Uhr vollflaechig ueber den
-    // Hinweis, und der Nutzer sah beim Provider-Wechsel nur die grosse Uhr.
+    // Ein echtes Notice-Frame bleibt sichtbar, solange der Host weiter sendet.
+    // Der synthetische Ladehinweis aus der gespeicherten Fensterkonfiguration
+    // darf die Standby-Uhr nach einem Start ohne Companion nicht blockieren.
     const bool should_show_standby = !has_recent_data
-                                  && !state.usage.notice_only
-                                  && (state.usage.valid || clock_is_set);
+                                  && !serial_has_recent_host_frame()
+                                  && (clock_is_set || lv_tick_get() >= 10000);
 
     // Hide splash overlay once we receive the first valid data — oder einen
     // Hinweis. Sonst bliebe der Splash haengen, wenn der beim Start gewaehlte
@@ -1100,6 +1172,10 @@ void ui_dashboard_recreate() {
         splash_spinner     = nullptr;
         standby_overlay    = nullptr;
         standby_clock      = nullptr;
+        standby_wifi       = nullptr;
+        clock_overlay      = nullptr;
+        clock_time         = nullptr;
+        clock_date         = nullptr;
     }
 
     // Reset styles so they pick up new colors

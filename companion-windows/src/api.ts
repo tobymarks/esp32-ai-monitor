@@ -8,6 +8,8 @@ export type ProviderKey = "claude" | "codex" | "antigravity" | "gemini" | "copil
 export type PercentMode = "used" | "remaining";
 export type Language = "system" | "de" | "en";
 export type UpdateChannel = "stable" | "beta";
+export type ViewContent = { kind: "clock" } | { kind: "provider"; provider: ProviderKey };
+export type ViewMode = "manual" | "automatic";
 
 export type Status =
   | { kind: "ok" }
@@ -54,6 +56,10 @@ export interface Snapshot {
 
 export interface Settings {
   provider: ProviderKey;
+  views: ViewContent[];
+  viewMode: ViewMode;
+  viewIntervalSeconds: number;
+  activeView: number;
   percentMode: PercentMode;
   language: Language;
   autostart: boolean;
@@ -83,6 +89,10 @@ export const rescanCli = () => invoke<void>("rescan_cli");
 
 export function onSnapshot(handler: (snapshot: Snapshot) => void): Promise<UnlistenFn> {
   return listen<Snapshot>("snapshot-changed", (event) => handler(event.payload));
+}
+
+export function onSettingsChanged(handler: (settings: Settings) => void): Promise<UnlistenFn> {
+  return listen<Settings>("settings-changed", (event) => handler(event.payload));
 }
 
 // ---------------------------------------------------------------------------

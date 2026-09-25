@@ -23,6 +23,7 @@
 #include <lvgl.h>
 #include <Preferences.h>
 #include "config.h"
+#include "touch_input.h"
 #include "config_store.h"
 #include "localization.h"
 #include "serial_receiver.h"
@@ -77,7 +78,7 @@ void backlight_apply_percent(uint8_t pct)
 // ============================================================
 // Orientation change WITHOUT reboot
 //   - switches TFT rotation
-//   - reapplies touch calibration
+//   - touch coordinate mapping follows the current orientation
 //   - resizes LVGL display
 //   - recreates dashboard so layout uses new SCREEN_WIDTH/HEIGHT
 // ============================================================
@@ -116,19 +117,9 @@ static void apply_rotation(uint8_t orientation)
     }
 }
 
-// Re-apply touch calibration (landscape uses rotation preset 5, portrait 2).
-static void apply_touch_cal(uint8_t orientation)
-{
-    const uint8_t preset = (orientation == ORIENTATION_LANDSCAPE_LEFT ||
-                            orientation == ORIENTATION_LANDSCAPE_RIGHT) ? 5 : 2;
-    uint16_t calData[5] = { TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y, preset };
-    tft.setTouch(calData);
-}
-
 void apply_orientation(uint8_t orientation)
 {
     apply_rotation(orientation);
-    apply_touch_cal(orientation);
 
     // Blank the panel so no garbled pixels leak through during recreate
     tft.fillScreen(TFT_BLACK);
@@ -140,7 +131,7 @@ void apply_orientation(uint8_t orientation)
     }
 
     // C4: The dashboard recreate is deferred to loop() (see serial_receiver).
-    // All state above (rotation, SCREEN_WIDTH/HEIGHT, touch cal, LVGL
+    // All state above (rotation, SCREEN_WIDTH/HEIGHT, LVGL
     // resolution) is applied synchronously here; only the expensive full-screen
     // rebuild is taken out of the Serial RX path. apply_orientation() is only
     // ever called from the command parser, so deferring is safe.
@@ -173,16 +164,21 @@ static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 // ============================================================
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
+    (void)indev;
+    static bool was_touched = false;
     uint16_t x = 0, y = 0;
-    bool touched = tft.getTouch(&x, &y);
+    bool touched = touch_input_read(&x, &y, g_config.orientation);
 
     if (touched) {
+        if (!was_touched) Serial.printf("[Touch] Press at %u,%u\n", x, y);
         data->point.x = x;
         data->point.y = y;
         data->state = LV_INDEV_STATE_PRESSED;
     } else {
+        if (was_touched) Serial.println("[Touch] Release");
         data->state = LV_INDEV_STATE_RELEASED;
     }
+    was_touched = touched;
 }
 
 // ============================================================
@@ -290,8 +286,7 @@ void setup()
     Serial.printf("[TFT] Display initialized (%ux%u)\n", SCREEN_WIDTH, SCREEN_HEIGHT);
 
     // --- Touch init ---
-    apply_touch_cal(g_config.orientation);
-    Serial.println("[Touch] XPT2046 initialized via TFT_eSPI");
+    touch_input_begin();
 
     // --- LVGL init ---
     lv_init();

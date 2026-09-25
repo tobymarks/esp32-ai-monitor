@@ -3,9 +3,11 @@
 //! danach jeweils nur kurz gehalten.
 
 use crate::serial_service;
+use crate::settings::ViewContent;
 use crate::state::{current_snapshot, AppState};
 use crate::tray;
-use aimonitor_core::{source, POLL_INTERVAL};
+use aimonitor_core::{source, POLL_INTERVAL, Provider, Source};
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const SNAPSHOT_EVENT: &str = "snapshot-changed";
@@ -67,7 +69,51 @@ pub fn start_timer(app: AppHandle) {
         .name("aimonitor-poll".into())
         .spawn(move || loop {
             start_fetch(&app);
+            refresh_views(&app);
             std::thread::sleep(POLL_INTERVAL);
         })
         .expect("Poll-Thread");
+}
+
+/// Zusätzliche Fenster unabhängig von der in der Übersicht gewählten Quelle
+/// abrufen. Das Gerät erhält jeden Fensterstand einzeln, damit das 4-KiB-
+/// Framelimit auch bei acht Fenstern eingehalten wird.
+pub fn refresh_views(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.view_fetching.swap(true, Ordering::SeqCst) {
+        state.view_refresh_pending.store(true, Ordering::SeqCst);
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let (views, selected, mode) = {
+            let state = app.state::<AppState>();
+            let s = state.settings.lock().unwrap();
+            (s.views.clone(), s.provider, s.percent_mode)
+        };
+        let mut providers: Vec<Provider> = Vec::new();
+        for view in views {
+            if let ViewContent::Provider(p) = view {
+                if p != selected && !providers.contains(&p) { providers.push(p); }
+            }
+        }
+        for provider in providers {
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                let mut src = Source::new(provider);
+                src.begin_fetch();
+                let outcome = source::fetch(src.cli_path(), provider);
+                src.apply(outcome);
+                src.snapshot(mode)
+            }).await;
+            if let Ok(snapshot) = result {
+                app.state::<AppState>().view_sources.lock().unwrap().insert(provider, snapshot);
+                serial_service::request_resend(&app);
+            }
+        }
+        let state = app.state::<AppState>();
+        state.view_fetching.store(false, Ordering::SeqCst);
+        if state.view_refresh_pending.swap(false, Ordering::SeqCst) {
+            refresh_views(&app);
+        }
+    });
 }

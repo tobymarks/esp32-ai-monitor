@@ -265,6 +265,10 @@ impl DeviceInfo {
         semver::at_least(&self.version, NOTICE_MIN_VERSION)
     }
 
+    pub fn supports_views(&self) -> bool {
+        semver::at_least(&self.version, "2.19.0-dev")
+    }
+
     pub fn max_frame_bytes(&self) -> usize {
         self.max_frame_bytes.unwrap_or(MAX_FRAME_BYTES)
     }
@@ -274,6 +278,7 @@ impl DeviceInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeviceMessage {
     Info(DeviceInfo),
+    ViewState(ViewState),
     Ack {
         frame_id: i64,
         schema_version: i64,
@@ -309,6 +314,10 @@ impl DeviceMessage {
                 Some(info) => DeviceMessage::Info(info),
                 None => DeviceMessage::Other(v),
             },
+            "view_state" => match serde_json::from_value::<ViewState>(v.clone()) {
+                Ok(state) => DeviceMessage::ViewState(state),
+                Err(_) => DeviceMessage::Other(v),
+            },
             "ack" => DeviceMessage::Ack {
                 frame_id: v.get("frameId").and_then(Value::as_i64).unwrap_or(-1),
                 schema_version: v.get("schemaVersion").and_then(Value::as_i64).unwrap_or(0),
@@ -334,6 +343,7 @@ impl DeviceMessage {
     pub fn type_name(&self) -> &'static str {
         match self {
             DeviceMessage::Info(_) => "info",
+            DeviceMessage::ViewState(_) => "view_state",
             DeviceMessage::Ack { .. } => "ack",
             DeviceMessage::Error { .. } => "error",
             DeviceMessage::Ok { .. } => "ok",
@@ -342,6 +352,15 @@ impl DeviceMessage {
             DeviceMessage::Other(_) => "other",
         }
     }
+}
+
+/// Aktuelle Fensterwahl des Geräts; wird auf Anfrage und nach einem Touch gesendet.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct ViewState {
+    pub views: Vec<String>,
+    pub mode: String,
+    pub interval: u16,
+    pub active: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +535,16 @@ mod tests {
         assert_eq!(err, DeviceMessage::Error { frame_id: None, message: "frame timeout".into() });
         let ok = DeviceMessage::parse_line(r#"{"type":"ok","cmd":"set_brightness","value":80,"persist":true}"#).unwrap();
         assert!(matches!(ok, DeviceMessage::Ok { ref cmd, .. } if cmd == "set_brightness"));
+    }
+
+    #[test]
+    fn parses_touch_view_state_and_rejects_incomplete_state() {
+        let line = r#"{"type":"view_state","mode":"manual","interval":10,"active":1,"views":["codex","clock"]}"#;
+        let Some(DeviceMessage::ViewState(state)) = DeviceMessage::parse_line(line) else { panic!() };
+        assert_eq!(state.active, 1);
+        assert_eq!(state.views, ["codex", "clock"]);
+        assert_eq!(DeviceMessage::parse_line(line).unwrap().type_name(), "view_state");
+        assert!(matches!(DeviceMessage::parse_line(r#"{"type":"view_state","active":1}"#), Some(DeviceMessage::Other(_))));
     }
 
     #[test]

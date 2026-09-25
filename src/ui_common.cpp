@@ -441,7 +441,7 @@ void ui_screen_load_forward(lv_obj_t *scr) {
 }
 
 void ui_screen_load_back(lv_obj_t *scr) {
-    lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, false);
+    lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
 }
 
 void ui_screen_load_fade(lv_obj_t *scr) {

@@ -8,16 +8,20 @@ import {
   type ConnectionSnapshot,
   type DisplayLanguage,
   type Orientation,
+  type ProviderInfo,
   type Settings,
   type ThemeSetting,
   type TimeZoneOption,
 } from "../api";
 import type { Translate } from "../i18n";
+import ViewManager from "./ViewManager";
 
 interface Props {
   t: Translate;
   connection: ConnectionSnapshot | null;
   settings: Settings | null;
+  providers: ProviderInfo[];
+  onSettings: (patch: Partial<Settings>) => void;
   onSettingsChanged: () => void;
 }
 
@@ -28,7 +32,7 @@ const ORIENTATIONS: Orientation[] = ["portrait", "landscape_left", "landscape_ri
 const THEMES: ThemeSetting[] = ["system", "dark", "light"];
 const LANGUAGES: DisplayLanguage[] = ["de", "en"];
 
-export default function Display({ t, connection, settings, onSettingsChanged }: Props) {
+export default function Display({ t, connection, settings, providers, onSettings, onSettingsChanged }: Props) {
   const profile = connection?.profile ?? null;
   const connected = connection?.state === "connected";
   const [name, setName] = useState(profile?.friendlyName ?? "");
@@ -99,7 +103,7 @@ export default function Display({ t, connection, settings, onSettingsChanged }: 
   const disabled = !connected || !profile;
 
   return (
-    <section className="page">
+    <section className="page page-display">
       <header className="page-head">
         <h1>{t("nav.display")}</h1>
         {connection && <span className={`pill pill-conn-${connection.state}`}>{t(`conn.state.${connection.state}`)}</span>}
@@ -146,6 +150,8 @@ export default function Display({ t, connection, settings, onSettingsChanged }: 
           })}
         </p>
       )}
+
+      {settings && <ViewManager t={t} settings={settings} providers={providers} onSettings={onSettings} />}
 
       <h2>{t("disp.step.look")}</h2>
       <div className="field-row">
