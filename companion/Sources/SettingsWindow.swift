@@ -133,6 +133,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var fwVariantLabel: NSTextField!
     var fwUpdateLabel: NSTextField!
     var fwFlashButton: NSButton!
+    var fwLocalFlashButton: NSButton!
     var fwProgressBar: NSProgressIndicator!
     var fwProgressLabel: NSTextField!
 
@@ -713,6 +714,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let profile = DeviceRegistry.shared.currentProfile()
         let missingAssets = fw.missingExpectedAssetNames
         let releaseAssetsOK = missingAssets.isEmpty
+
+        fwLocalFlashButton.isEnabled = (sp.state == .connected || sp.state == .foreignFirmware)
+            && !fw.isFlashing && !fw.isDownloading
 
         fwVariantLabel.stringValue = firmwareVariantText(profile?.displayVariant, state: sp.state)
         if isForeign {

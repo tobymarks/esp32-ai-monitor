@@ -95,6 +95,9 @@
 "esp32.none.title" = "Kein ESP32 verbunden";
 "flash.action.plain" = "Firmware flashen";
 "flash.action.short" = "Firmware flashen …";
+"flash.local.choose" = "Firmware-Datei auswählen …";
+"flash.local.format" = "Vollständiges ESP32-Image ab 0x0 (.bin) erforderlich.";
+"flash.release.corrupt" = "Das heruntergeladene Firmware-Image ist beschädigt. Es wurde aus dem Cache entfernt; bitte erneut versuchen.";
 "flash.err.aborted" = "Schreiben der Firmware wurde abgebrochen.";
 "flash.err.aborted.detail" = "Denselben Flash erneut versuchen. Sieht das Display danach falsch aus, im Recovery-Dialog die andere Variante wählen.";
 "flash.err.bootmode.detail" = "USB-Kabel prüfen, Display kurz neu verbinden und erneut flashen. Hat das Board eine Boot-Taste, diese beim Start des Flashens gedrückt halten.";

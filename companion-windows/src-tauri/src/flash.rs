@@ -11,8 +11,9 @@ use crate::serial_service::{self, Job};
 use crate::state::AppState;
 use crate::updates;
 use aimonitor_core::protocol::DisplayVariant;
-use aimonitor_flash::{flash_image, FlashError, FlashEvent, FLASH_BAUD};
+use aimonitor_flash::{flash_image, validate_merged_image, FlashError, FlashEvent, MAX_IMAGE_BYTES, FLASH_BAUD};
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -70,7 +71,7 @@ fn emit_phase(app: &AppHandle, variant: DisplayVariant, phase: &'static str, per
 
 fn emit_failed(app: &AppHandle, variant: DisplayVariant, summary: &'static str, detail: &'static str, message: String) {
     eprintln!("[flash] Fehlgeschlagen: {summary} ({message})");
-    emit(app, FlashProgress { phase: "failed", variant, percent: None, message: Some(message), summary: Some(summary), detail: Some(detail) });
+    emit(app, FlashProgress { phase: "failed", variant, percent: None, message: (!message.is_empty()).then_some(message), summary: Some(summary), detail: Some(detail) });
 }
 
 /// Setzt das Flash-Flag beim Verlassen zurück, auch bei frühem `return`.
@@ -85,6 +86,10 @@ impl Drop for FlashGuard<'_> {
 /// Kompletter Ablauf: Download (falls nötig), Pause, Flash, Resume.
 /// Fehler kommen als i18n-Schlüssel zurück; das Detail steht im Event.
 pub fn run(app: &AppHandle, variant: DisplayVariant) -> Result<FlashOutcome, String> {
+    run_with_image(app, variant, None)
+}
+
+pub fn run_with_image(app: &AppHandle, variant: DisplayVariant, local_path: Option<PathBuf>) -> Result<FlashOutcome, String> {
     let state = app.state::<AppState>();
     if state.flashing.swap(true, Ordering::SeqCst) {
         return Err("flash.err.running".into());
@@ -95,25 +100,52 @@ pub fn run(app: &AppHandle, variant: DisplayVariant) -> Result<FlashOutcome, Str
     println!("[flash] Start: Variante {} auf {port}", variant.wire());
 
     // Firmware-Datei sicherstellen; der Download meldet sich über firmware-download.
-    emit_phase(app, variant, "downloading", None, None);
-    let file = match updates::download_firmware(app, variant) {
-        Ok(f) => f,
-        Err(e) => {
-            emit_failed(app, variant, "flash.err.nofile.title", "flash.err.nofile.detail", e.clone());
-            return Err(e);
+    let (image, release) = if let Some(path) = local_path {
+        let valid_extension = path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("bin"));
+        let metadata = std::fs::metadata(&path).map_err(|e| {
+            let msg = e.to_string();
+            emit_failed(app, variant, "flash.err.nofile.title", "flash.err.nofile.detail", msg.clone());
+            msg
+        })?;
+        if !valid_extension || !metadata.is_file() || metadata.len() > MAX_IMAGE_BYTES {
+            emit_failed(app, variant, "flash.err.invalid.title", "flash.local.format", String::new());
+            return Err("flash.local.format".into());
         }
-    };
-    if file.fallback {
-        println!("[flash] Hinweis: kein Asset für {}, Standard-Image {} wird verwendet", variant.wire(), file.asset);
-    }
-    let image = match std::fs::read(&file.path) {
-        Ok(bytes) => bytes,
-        Err(e) => {
+        let image = std::fs::read(&path).map_err(|e| {
+            let msg = e.to_string();
+            emit_failed(app, variant, "flash.err.nofile.title", "flash.err.nofile.detail", msg.clone());
+            msg
+        })?;
+        (image, None)
+    } else {
+        emit_phase(app, variant, "downloading", None, None);
+        let file = updates::download_firmware(app, variant).map_err(|e| {
+            emit_failed(app, variant, "flash.err.nofile.title", "flash.err.nofile.detail", e.clone());
+            e
+        })?;
+        if file.fallback {
+            println!("[flash] Hinweis: kein Asset für {}, Standard-Image {} wird verwendet", variant.wire(), file.asset);
+        }
+        let image = std::fs::read(&file.path).map_err(|e| {
             let msg = format!("{}: {e}", file.path.display());
             emit_failed(app, variant, "flash.err.nofile.title", "flash.err.nofile.detail", msg.clone());
-            return Err(msg);
-        }
+            msg
+        })?;
+        (image, Some(file))
     };
+    if let Err(reason) = validate_merged_image(&image) {
+        eprintln!("[flash] Ungültiges Image: {reason:?}");
+        let detail = if let Some(file) = &release {
+            if let Err(e) = std::fs::remove_file(&file.path) {
+                eprintln!("[flash] Ungültige Cache-Datei konnte nicht gelöscht werden: {e}");
+            }
+            "flash.release.corrupt"
+        } else {
+            "flash.local.format"
+        };
+        emit_failed(app, variant, "flash.err.invalid.title", detail, String::new());
+        return Err(detail.into());
+    }
 
     // Serial-Service anhalten und auf die Freigabe des Ports warten.
     let (tx, rx) = mpsc::channel();
@@ -158,10 +190,10 @@ pub fn run(app: &AppHandle, variant: DisplayVariant) -> Result<FlashOutcome, Str
     let outcome = match result {
         Ok(()) => {
             let seconds = started.elapsed().as_secs_f64();
-            println!("[flash] Fertig nach {seconds:.1} s: {} {}", file.tag, variant.wire());
+            println!("[flash] Fertig nach {seconds:.1} s: {}", variant.wire());
             {
                 let mut settings = state.settings.lock().unwrap();
-                settings.installed_firmware_version = Some(file.version.clone());
+                settings.installed_firmware_version = release.as_ref().map(|file| file.version.clone());
                 settings.save(app);
             }
             {
@@ -171,7 +203,7 @@ pub fn run(app: &AppHandle, variant: DisplayVariant) -> Result<FlashOutcome, Str
                     registry::save(app, &reg);
                 }
             }
-            Ok(FlashOutcome { variant, version: file.version.clone(), tag: file.tag.clone(), port: port.clone(), seconds })
+            Ok(FlashOutcome { variant, version: release.as_ref().map_or("local".to_string(), |file| file.version.clone()), tag: release.as_ref().map_or("local".to_string(), |file| file.tag.clone()), port: port.clone(), seconds })
         }
         Err(e) => {
             let (summary, detail) = classify(&e);

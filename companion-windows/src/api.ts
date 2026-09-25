@@ -264,6 +264,7 @@ export const checkUpdates = (force: boolean) => invoke<UpdateStatus>("check_upda
 export const getUpdateStatus = () => invoke<UpdateStatus>("get_update_status");
 export const downloadFirmware = (variant: DisplayVariant) => invoke<FirmwareFile>("download_firmware", { variant });
 export const flashFirmware = (variant: DisplayVariant) => invoke<FlashOutcome>("flash_firmware", { variant });
+export const flashLocalFirmware = (variant: DisplayVariant, path: string) => invoke<FlashOutcome>("flash_local_firmware", { variant, path });
 export const installAppUpdate = () => invoke<InstallOutcome>("install_app_update");
 export const openReleasePage = () => invoke<void>("open_release_page");
 
