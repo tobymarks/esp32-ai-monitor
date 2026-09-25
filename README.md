@@ -24,12 +24,22 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 - Used or remaining percentage display mode
 - Live reset countdowns and local display clock
 - Optional cost/extra-usage support when supplied by the provider data
+- ChatGPT/Codex header badges for workspace extra credits and reset credits (see below)
 - Automatic USB serial detection and instant resend on connect
 - Per-device settings for orientation, theme, language, brightness, timezone, and board variant
 - Portrait plus left/right landscape layouts
 - Firmware flashing for ILI9341 and ST7789 CYD variants
 - Optional menu bar quick menu for provider switching
 - Optional Wi-Fi on the display, used only to keep the standby clock accurate via NTP while the app is not connected
+
+### ChatGPT Header Badges
+
+Since firmware 2.18.0 (Mac app 1.28.3, Windows app 1.0.1) the ChatGPT view can show small badges next to the provider name:
+
+- **`+Cr`** (green): the ChatGPT workspace has purchased extra credits, so you can keep working once your limit is used up. Owners and admins see the balance instead, for example `+238` or `+2.5k`. OpenAI does not share the workspace balance with other members, so they only see `+Cr`.
+- **Arrow icon with a number** (grey): available Codex reset credits. Each one resets your Codex limit early, once. They belong to your own account and you redeem them yourself in the Codex app or the Codex IDE extension; no admin is needed. CodexBar shows when they expire.
+
+Without these badges the account reports neither. In portrait the header is narrow, so the reset-credit badge may be left out.
 
 ## Quick Start
 
