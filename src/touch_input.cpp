@@ -58,8 +58,9 @@ bool touch_input_read(uint16_t *x, uint16_t *y, uint8_t orientation) {
         // orientations use opposite X/Y directions; on this board a touch
         // near the upper right in landscape_right must map near (319, 0).
         const bool right = orientation == ORIENTATION_LANDSCAPE_RIGHT;
-        *x = screen_coord(raw_y, TOUCH_MIN_X, TOUCH_MAX_X, SCREEN_WIDTH, !right);
-        *y = screen_coord(raw_x, TOUCH_MIN_Y, TOUCH_MAX_Y, SCREEN_HEIGHT, !right);
+        // Kalibrierwerte gehören zur jeweiligen Rohachse, nicht zur Bildschirmachse.
+        *x = screen_coord(raw_y, TOUCH_MIN_Y, TOUCH_MAX_Y, SCREEN_WIDTH, !right);
+        *y = screen_coord(raw_x, TOUCH_MIN_X, TOUCH_MAX_X, SCREEN_HEIGHT, !right);
     }
     return true;
 }

@@ -597,9 +597,11 @@ impl Service {
             (usage_envelope(entry, snap.percent_mode, &ctx, frame_id), "usage")
         } else {
             let key = snap.status.display_notice_key()
-                .or_else(|| snap.fetching.then_some("dsp.notice.loading"))
-                .unwrap_or("dsp.notice.loading");
-            if !info.supports_notice() { return None; }
+                .or_else(|| snap.fetching.then_some("dsp.notice.loading"))?;
+            if !info.supports_notice() {
+                self.log_event(format!("Hinweis {key} nicht gesendet, Firmware ohne notice-Unterstützung"));
+                return None;
+            }
             let language = self.profile.as_ref().map(|p| p.language).unwrap_or_default();
             (notice_envelope(snap.provider, notice_text(key, language), &ctx, frame_id), "notice")
         };
@@ -702,7 +704,10 @@ impl Service {
         let cached = self.app.state::<AppState>().view_sources.lock().unwrap().clone();
         for (index, view) in views.iter().enumerate() {
             let ViewContent::Provider(provider) = view else { continue };
-            let snap = if *provider == selected.provider { Some(selected.clone()) } else { cached.get(provider).cloned() };
+            // Nach einem Wechsel lädt die Haupt-Source noch; bis dahin den
+            // Fensterstand senden, damit die angezeigten Werte stehen bleiben.
+            let loading = selected.entry.is_none() && selected.fetching && cached.contains_key(provider);
+            let snap = if *provider == selected.provider && !loading { Some(selected.clone()) } else { cached.get(provider).cloned() };
             let Some(snap) = snap else { continue };
             if let Some((payload, kind, frame_id)) = self.build_payload(&info, snap, Some(index)) {
                 self.transmit(&info, payload, frame_id, kind, trigger);

@@ -877,9 +877,10 @@ void ui_dashboard_update(const MonitorState &state) {
     // Ein echtes Notice-Frame bleibt sichtbar, solange der Host weiter sendet.
     // Der synthetische Ladehinweis aus der gespeicherten Fensterkonfiguration
     // darf die Standby-Uhr nach einem Start ohne Companion nicht blockieren.
+    // Ohne Uhrzeit und ohne je empfangene Daten bleibt der Warte-Splash stehen.
     const bool should_show_standby = !has_recent_data
                                   && !serial_has_recent_host_frame()
-                                  && (clock_is_set || lv_tick_get() >= 10000);
+                                  && (clock_is_set || state.usage.valid);
 
     // Hide splash overlay once we receive the first valid data — oder einen
     // Hinweis. Sonst bliebe der Splash haengen, wenn der beim Start gewaehlte

@@ -4,7 +4,7 @@ use crate::flash::{self, FlashOutcome};
 use crate::poll;
 use crate::registry;
 use crate::serial_service::{self, ConnectionSnapshot, Job};
-use crate::settings::Settings;
+use crate::settings::{Settings, ViewContent, ViewMode};
 use crate::state::{current_snapshot, AppState};
 use crate::timezone::{self, TimeZoneOption};
 use crate::updates::{self, FirmwareFile, InstallOutcome, UpdateStatus};
@@ -14,7 +14,7 @@ use aimonitor_core::{DeviceProfile, Provider, Snapshot};
 use aimonitor_serial::PortCandidate;
 use chrono::Utc;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 /// Längste erlaubte Gerätebezeichnung (SettingsWindow+Display.swift).
@@ -33,12 +33,32 @@ pub struct ProviderInfo {
 pub fn apply_provider(app: &AppHandle, provider: Provider) {
     let state = app.state::<AppState>();
     let changed = state.source.lock().unwrap().set_provider(provider, Utc::now());
-    {
+    let views_changed = {
         let mut settings = state.settings.lock().unwrap();
-        if settings.provider != provider {
+        // Im manuellen Modus zeigt das Display das aktive Fenster. Die Wahl
+        // springt auf ein Fenster mit dieser Quelle oder belegt das aktive neu.
+        let content = ViewContent::Provider(provider);
+        let views_changed = settings.view_mode == ViewMode::Manual
+            && settings.views[settings.active_view] != content;
+        if views_changed {
+            match settings.views.iter().position(|v| *v == content) {
+                Some(index) => settings.active_view = index,
+                None => {
+                    let active = settings.active_view;
+                    settings.views[active] = content;
+                }
+            }
+        }
+        if settings.provider != provider || views_changed {
             settings.provider = provider;
             settings.save(app);
         }
+        views_changed
+    };
+    if views_changed {
+        serial_service::send(app, Job::ConfigureViews);
+        let settings = state.settings.lock().unwrap().clone();
+        let _ = app.emit(serial_service::SETTINGS_EVENT, settings);
     }
     if changed {
         poll::emit_snapshot(app);

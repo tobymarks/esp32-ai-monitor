@@ -32,6 +32,8 @@ export default function Overview({ t, now, snapshot, settings, providers, onProv
   const activeProvider = settings?.provider ?? snapshot?.provider;
   const manualViews = settings?.viewMode === "manual";
   const clockActive = manualViews && settings.views[settings.activeView]?.kind === "clock";
+  // Mit nur einem Fenster bleibt die Quellenwahl; sie belegt dieses Fenster.
+  const windowSelector = manualViews && settings.views.length > 1;
   const viewLabel = (view: ViewContent) => view.kind === "clock"
     ? t("views.clock")
     : providers.find((provider) => provider.key === view.provider)?.label ?? view.provider;
@@ -46,7 +48,7 @@ export default function Overview({ t, now, snapshot, settings, providers, onProv
         </button>
       </header>
 
-      {manualViews && (
+      {windowSelector && (
         <div className="field-row">
           <span className="field-label">{t("views.manual.choose")}</span>
           <div className="segmented window-selector" role="group" aria-label={t("views.manual.choose")}>
@@ -62,7 +64,7 @@ export default function Overview({ t, now, snapshot, settings, providers, onProv
         </div>
       )}
 
-      {!manualViews && <div className="field-row">
+      {!windowSelector && <div className="field-row">
         <span className="field-label">{t("ov.source")}</span>
         <div className="segmented" role="group" aria-label={t("ov.source")}>
           {providers.map((p) => (

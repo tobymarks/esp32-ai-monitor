@@ -63,7 +63,8 @@ static unsigned long serial_frame_started_ms = 0;
 
 static MonitorState state;
 static const uint8_t VIEW_MAX = 8;
-static const uint8_t VIEW_CLOCK = 6;
+// Außerhalb der Provider-IDs, damit ein neuer Provider nicht mit der Uhr kollidiert.
+static const uint8_t VIEW_CLOCK = 0xFF;
 static MonitorState view_states[VIEW_MAX];
 static uint8_t view_types[VIEW_MAX] = {PROVIDER_CLAUDE};
 static uint8_t view_count = 1;
@@ -73,6 +74,9 @@ static uint16_t view_interval_seconds = 10;
 static unsigned long last_view_change = 0;
 static unsigned long last_host_frame_ms = 0;
 static bool host_frame_seen = false;
+// Erst ein Host mit set_views schaltet Wechsel per Timer und Touch frei. Ohne
+// ihn (Boot, alter Companion) bleibt die gespeicherte Auswahl stehen.
+static bool views_host_configured = false;
 static bool new_data_flag = false;
 static char display_time[6] = "--:--";
 static int16_t timezone_offset_minutes = 60;  // Default: Europe/Berlin winter time
@@ -103,14 +107,14 @@ void serial_select_view(uint8_t index) {
 }
 
 void serial_next_view() {
-    if (view_count > 1) {
+    if (views_host_configured && view_count > 1) {
         serial_select_view((active_view + 1) % view_count);
         persist_touch_view();
     }
 }
 
 void serial_previous_view() {
-    if (view_count > 1) {
+    if (views_host_configured && view_count > 1) {
         serial_select_view((active_view + view_count - 1) % view_count);
         persist_touch_view();
     }
@@ -443,17 +447,20 @@ static void handle_reboot() {
     ESP.restart();
 }
 
+// Provider-Namen kommen aus der zentralen PROVIDERS[]-Tabelle, inklusive
+// Fallback auf Claude wie bei den bisherigen Frames.
 static int view_type_from_name(const char *name) {
     if (!name) return -1;
-    if (strcmp(name, "clock") == 0) return VIEW_CLOCK;
-    const char *keys[] = {"claude", "codex", "antigravity", "gemini", "copilot", "cursor"};
-    for (int i = 0; i < 6; ++i) if (strcmp(name, keys[i]) == 0) return i;
-    return -1;
+    if (strcasecmp(name, "clock") == 0) return VIEW_CLOCK;
+    return provider_from_string(name);
+}
+
+static bool view_type_valid(uint8_t type) {
+    return type == VIEW_CLOCK || provider_info_for_id(type)->id == type;
 }
 
 static const char *view_name_from_type(uint8_t type) {
-    static const char *names[] = {"claude", "codex", "antigravity", "gemini", "copilot", "cursor", "clock"};
-    return type <= VIEW_CLOCK ? names[type] : "claude";
+    return type == VIEW_CLOCK ? "clock" : provider_info_for_id(type)->wire_keys[0];
 }
 
 static void print_view_state() {
@@ -535,6 +542,7 @@ static void handle_set_views(JsonDocument &doc) {
         prefs.putUChar("view_active", (uint8_t)active);
         prefs.end();
     }
+    views_host_configured = true;
     serial_select_view((uint8_t)active);
     Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_views\",\"count\":%u}\n", (unsigned)view_count);
 }
@@ -787,6 +795,7 @@ static void parse_json(const char *json_str) {
         strlcpy(state.status, "JSON Error", sizeof(state.status));
         strlcpy(state.usage.error, err.c_str(), sizeof(state.usage.error));
         state.usage.valid = false;
+        view_states[active_view] = state;  // sonst verwirft der nächste Frame den Fehler
         return;
     }
 
@@ -817,6 +826,7 @@ static void parse_json(const char *json_str) {
         strlcpy(state.status, "JSON Error", sizeof(state.status));
         strlcpy(state.usage.error, "Missing data[0]", sizeof(state.usage.error));
         state.usage.valid = false;
+        view_states[active_view] = state;
         return;
     }
 
@@ -824,7 +834,7 @@ static void parse_json(const char *json_str) {
     // Anzeige bleibt bei Daten für andere Fenster unverändert.
     const char *frame_provider = data0["provider"] | "claude";
     int frame_type = view_type_from_name(frame_provider);
-    if (frame_type < 0 || frame_type >= VIEW_CLOCK) {
+    if (frame_type < 0 || frame_type == VIEW_CLOCK) {
         print_frame_error(frame_id, schema_version, "invalid provider");
         return;
     }
@@ -837,6 +847,7 @@ static void parse_json(const char *json_str) {
             view_count = 1;
             view_types[0] = (uint8_t)frame_type;
             views_automatic = false;
+            views_host_configured = false;
             memset(view_states, 0, sizeof(view_states));
             serial_select_view(0);
             Serial.println("[Views] Legacy companion: single provider view");
@@ -895,7 +906,9 @@ static void parse_json(const char *json_str) {
         strlcpy(state.status, "JSON Error", sizeof(state.status));
         strlcpy(state.usage.error, "Missing usage", sizeof(state.usage.error));
         state.usage.valid = false;
+        view_states[frame_view] = state;
         state = view_states[active_view];
+        if (frame_view == active_view) new_data_flag = true;
         return;
     }
 
@@ -961,7 +974,7 @@ void serial_receiver_init() {
         uint8_t stored_types[VIEW_MAX] = {};
         prefs.getBytes("view_types", stored_types, stored_count);
         bool valid = true;
-        for (uint8_t i = 0; i < stored_count; ++i) valid &= stored_types[i] <= VIEW_CLOCK;
+        for (uint8_t i = 0; i < stored_count; ++i) valid &= view_type_valid(stored_types[i]);
         if (valid) {
             view_count = stored_count;
             memcpy(view_types, stored_types, stored_count);
@@ -993,7 +1006,7 @@ void serial_receiver_init() {
 // Tick — call from loop()
 // ============================================================
 void serial_receiver_tick() {
-    if (views_automatic && view_count > 1 &&
+    if (views_host_configured && views_automatic && view_count > 1 &&
         millis() - last_view_change >= (unsigned long)view_interval_seconds * 1000UL) {
         serial_select_view((active_view + 1) % view_count);
     }

@@ -97,18 +97,27 @@ pub fn refresh_views(app: &AppHandle) {
                 if p != selected && !providers.contains(&p) { providers.push(p); }
             }
         }
+        let mut updated = false;
         for provider in providers {
+            // Source wiederverwenden: Source::new sucht die CLI und startet `--version`.
+            let kept = app.state::<AppState>().view_clients.lock().unwrap().remove(&provider);
             let result = tauri::async_runtime::spawn_blocking(move || {
-                let mut src = Source::new(provider);
+                let mut src = kept.unwrap_or_else(|| Source::new(provider));
                 src.begin_fetch();
                 let outcome = source::fetch(src.cli_path(), provider);
                 src.apply(outcome);
-                src.snapshot(mode)
+                let snapshot = src.snapshot(mode);
+                (src, snapshot)
             }).await;
-            if let Ok(snapshot) = result {
-                app.state::<AppState>().view_sources.lock().unwrap().insert(provider, snapshot);
-                serial_service::request_resend(&app);
+            if let Ok((src, snapshot)) = result {
+                let state = app.state::<AppState>();
+                state.view_clients.lock().unwrap().insert(provider, src);
+                state.view_sources.lock().unwrap().insert(provider, snapshot);
+                updated = true;
             }
+        }
+        if updated {
+            serial_service::request_resend(&app);
         }
         let state = app.state::<AppState>();
         state.view_fetching.store(false, Ordering::SeqCst);
