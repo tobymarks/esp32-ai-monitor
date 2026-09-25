@@ -1,6 +1,6 @@
 # AI Monitor
 
-A macOS or Windows (beta) companion app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
+A macOS or Windows companion app plus an ESP32 desk display for keeping AI usage limits visible while you work. It reads Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor usage through the local CodexBar CLI, then streams the current limits to a small USB-connected CYD display.
 
 Usage data travels only over USB: the ESP32 needs no Wi-Fi, never sees cloud credentials, and there is no browser tab to keep open.
 
@@ -35,7 +35,7 @@ The Mac app can also flash firmware, check GitHub Releases for app and firmware 
 
 1. **Buy** an [ESP32-2432S028 / ESP32-2432S028R board](https://de.aliexpress.com/item/1005007731775734.html), also known as a Cheap Yellow Display.
 2. **Install [CodexBar](https://codexbar.app/)** so its local CLI is available.
-3. **Download** the AI Monitor app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases): the Mac app (`app-v*`), or the Windows app (`win-v*`, currently a beta).
+3. **Download** the AI Monitor app from [GitHub Releases](https://github.com/tobymarks/esp32-ai-monitor/releases): the Mac app (`app-v*`), or the Windows app (`win-v*`).
 4. **Plug** the ESP32 into your computer via a USB data cable.
 5. **Flash** the right firmware variant and choose the provider in the AI Monitor settings window.
 
@@ -46,7 +46,7 @@ A step-by-step build guide with photos is on [Hackster.io](https://www.hackster.
 - macOS 14+ on Apple Silicon or Intel (the app ships as a universal binary), or Windows 10/11 x64 for the Windows app
 - [CodexBar](https://codexbar.app/) installed with its local CLI; on Windows [Win-CodexBar](https://github.com/nesszer/Win-CodexBar) (`winget install Finesssee.Win-CodexBar`), whose `codexbar-cli.exe` provides the same data
 - Windows only: a driver for the CYD's CH340 USB-serial chip if Windows does not install it automatically
-- Windows app status: beta. It builds and passes its tests on Windows in CI, but has not been tried on real Windows hardware yet, and the installer is not code-signed yet, so SmartScreen warns on first launch
+- Windows only: the installer is not code-signed yet, so Windows SmartScreen warns on first launch. Choose "More info", then "Run anyway"
 - At least one of Claude, ChatGPT, Antigravity, Gemini, Copilot, or Cursor set up in CodexBar
 - ESP32-2432S028 / ESP32-2432S028R CYD board
 - USB data cable, not a charge-only cable

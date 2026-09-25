@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "aimonitor"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "aimonitor-core",
  "aimonitor-flash",
@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "aimonitor-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "chrono",
  "serde",
@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "aimonitor-flash"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "espflash",
  "serde",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "aimonitor-serial"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "aimonitor-core",
  "chrono",

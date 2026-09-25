@@ -120,6 +120,7 @@ a.tag:hover { background: white; color: var(--primary); }
 .download-card .tag-list { margin-top: auto; column-gap: 15px; }
 .download-card .tag-list > a.tag { border: 0; background: transparent; padding-inline: 0; font-family: var(--font-sans); font-size: var(--fs-sm); }
 .download-card .tag-list > span.tag { padding: 0; border: 0; background: none; }
+.download-card p.download-note { margin: 12px 0 0; font-size: var(--fs-sm); color: var(--muted); }
 .app-gallery { display: grid; grid-template-columns: 1fr 1fr .8fr; gap: 20px; margin-top: 20px; }
 .app-shot { margin: 0; min-width: 0; display: flex; flex-direction: column; }
 .app-shot-frame { flex: 1; display: grid; place-items: center; padding: 10px; background: #e8ebf0; border: 1px solid #dbe1ea; border-radius: 14px; overflow: hidden; }
