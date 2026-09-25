@@ -44,3 +44,9 @@
 | Abschlusszustand | Bestanden | Nach dem letzten Flash zeigt die native Windows-App „verbunden“ auf COM5, Firmware `2.19.0-dev`, ILI9341 und quittierte Datenframes. Die Dev-Firmware läuft auf dem physisch angeschlossenen ESP. |
 
 Der projektweite `cargo fmt --all -- --check` meldet bereits in unveränderten Dateien zahlreiche Formatabweichungen; es wurde keine pauschale Umformatierung vorgenommen.
+
+## Integration mit `main` vom 25.09.2026
+
+- Die drei neuen `main`-Commits mit lokalem Firmware-Flash und den Releases Windows 1.1.0 / Mac 1.29.0 wurden in den Feature-Branch gemergt. Die Windows-Version steht in `package.json`, `Cargo.toml` und `tauri.conf.json` übereinstimmend auf 1.1.0; die neue Geräte-Firmware bleibt `2.19.0-dev`.
+- Nach dem Merge: `npm run build`, `cargo test -p aimonitor-core --locked` (50 Unit- und 5 Fixture-Tests), `cargo test --workspace --locked` nativ unter Windows (65 Tests) und `cargo build -p aimonitor --locked` bestanden. Beide PlatformIO-Varianten wurden erneut erfolgreich gebaut.
+- Die nativ neu gebaute Windows-App verbindet sich nach dem Merge wieder mit dem physischen ESP auf COM5. Die Verbindungsansicht zeigt Firmware `2.19.0-dev`, ILI9341 und einen quittierten Datenframe mit zwei Zeilen.
