@@ -467,10 +467,15 @@ impl Service {
         }
     }
 
-    /// Verbindung trennen, wenn der Port aus der Liste verschwunden ist.
+    /// Verbindung trennen, wenn der Port aus der Liste verschwunden ist oder
+    /// ein Lesefehler aufgetreten ist. Ein Gerät, das sich kurz am USB
+    /// abmeldet, kommt unter demselben COM-Namen zurück; der alte Handle
+    /// bleibt aber tot und muss neu geöffnet werden.
     fn check_port_still_present(&mut self) {
-        let Some(name) = self.link.as_ref().map(|l| l.name().to_string()) else { return };
-        if !list_ports().iter().any(|p| p.name == name) {
+        let Some((name, lost)) = self.link.as_ref().map(|l| (l.name().to_string(), l.is_lost())) else { return };
+        if lost {
+            self.disconnect("Lesefehler, Port wird neu geöffnet");
+        } else if !list_ports().iter().any(|p| p.name == name) {
             self.disconnect("Port nicht mehr vorhanden");
         }
     }
