@@ -48,9 +48,10 @@ jobs:
       # Bewusst nur bei Release-Tags: die Seite zeigt die veroeffentlichte
       # Version. Zwischen einer Versionsanhebung im Code und dem Release darf
       # sie also legitim hinterherhinken — sonst wuerde sie auf ein Release
-      # verlinken, das es noch gar nicht gibt.
+      # verlinken, das es noch gar nicht gibt. Nur Stable-Tags (v*): die Seite
+      # verlinkt kein Beta, wie im Windows-Workflow.
       - name: Verify site versions are in sync
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/v')
         run: ./scripts/sync_site_versions.sh --check
 
       - name: Setup Python
