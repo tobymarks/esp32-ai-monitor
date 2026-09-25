@@ -37,6 +37,13 @@ def win(used, resets, minutes=None, desc=None):
     return w
 
 
+def info(desc, resets=None, minutes=None):
+    """RateWindow::informational: nur Text, used_percent 0."""
+    w = win(0.0, resets, minutes, desc)
+    w["is_informational"] = True
+    return w
+
+
 def ok(provider, source, usage, **extra):
     u = dict(usage)
     u["updated_at"] = upd
@@ -66,6 +73,17 @@ fixtures = {
         "secondary": win(21.0, week, 10080),
         "login_method": "chatgpt",
     }),
+    # Business-Mitglied mit reinem Wochenplan (Win-CodexBar 0.60): Session-
+    # Platzhalter und Reset Credits als informational, Pool-Stand nicht lesbar.
+    "codex-business": ok("codex", "oauth", {
+        "primary": info("No active 5h session", minutes=300),
+        "secondary": win(15.0, week, 10080),
+        "extra_rate_windows": [
+            {"id": "reset-credits", "title": "Reset credits",
+             "window": info("2 reset credits available", resets=now + dt.timedelta(days=5))},
+        ],
+        "login_method": "chatgpt",
+    }, cost={"used": 0.0, "currency_code": "USD", "period": "Credits", "updated_at": upd}),
     "antigravity": ok("antigravity", "lsp", {
         "primary": win(5.0, h5, 300),
         "extra_rate_windows": [

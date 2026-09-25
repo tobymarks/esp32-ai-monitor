@@ -89,6 +89,32 @@ fn synthetic_rows_match_mac_app_rules() {
     assert_eq!(legacy[0].title, "Plan");
 }
 
+/// Business-Mitglied: Credits und Reset Credits kommen als Kennzeichen an,
+/// nicht als Balkenzeilen, und das in beiden CLI-Varianten gleich.
+#[test]
+fn codex_business_credits_become_flags_in_both_formats() {
+    let check = |path: PathBuf, now: Option<DateTime<Utc>>| {
+        let data = std::fs::read(&path).unwrap();
+        let result = parse_output(&data).unwrap();
+        let now = now.unwrap_or_else(|| {
+            let updated = result.usage.as_ref().and_then(|u| u.updated_at.clone()).unwrap();
+            aimonitor_core::codexbar::parse_timestamp(&updated).unwrap()
+        });
+        let entry = evaluate(result, Provider::Codex, now, Duration::from_secs(900)).entry.expect("Eintrag");
+        let rows = build_rows(&entry, PercentMode::Used);
+        assert_eq!(rows.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(), ["Weekly"], "{}", path.display());
+        assert_eq!(entry.credits, Some(aimonitor_core::Credits { available: true, balance: None }), "{}", path.display());
+        let reset = entry.reset_credits.expect("Reset Credits");
+        assert_eq!(reset.count, 2);
+        assert!(reset.next_expires_at.unwrap() > now);
+    };
+    check(synthetic_dir().join("codex-business.json"), Some(synthetic_now()));
+    let mac = repo_root().join("companion/Fixtures/codexbar/codex-business.json");
+    if mac.exists() {
+        check(mac, None);
+    }
+}
+
 #[test]
 fn upstream_camel_case_fixtures_parse_too() {
     let dir = repo_root().join("companion/Fixtures/codexbar");

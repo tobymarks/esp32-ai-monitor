@@ -1,0 +1,41 @@
+[
+  {
+    "provider": "codex",
+    "version": "0.56.8",
+    "source": "oauth",
+    "usage": {
+      "primary": {
+        "used_percent": 0.0,
+        "window_minutes": 300,
+        "reset_description": "No active 5h session",
+        "is_informational": true
+      },
+      "secondary": {
+        "used_percent": 15.0,
+        "window_minutes": 10080,
+        "resets_at": "2026-09-14T09:00:00.000Z",
+        "is_informational": false
+      },
+      "extra_rate_windows": [
+        {
+          "id": "reset-credits",
+          "title": "Reset credits",
+          "window": {
+            "used_percent": 0.0,
+            "resets_at": "2026-09-16T08:00:00.000Z",
+            "reset_description": "2 reset credits available",
+            "is_informational": true
+          }
+        }
+      ],
+      "login_method": "chatgpt",
+      "updated_at": "2026-09-11T08:00:00.000Z"
+    },
+    "cost": {
+      "used": 0.0,
+      "currency_code": "USD",
+      "period": "Credits",
+      "updated_at": "2026-09-11T08:00:00.000Z"
+    }
+  }
+]

@@ -432,6 +432,8 @@ Der Vergleich ist case-insensitiv, der String wird auf 15 Zeichen gekürzt `(pro
 | `secondary` | Objekt | nein | Fenster 2 | `(main.swift:3014-3020)` |
 | `tertiary` | Objekt | nein | Fenster 3 | `(main.swift:3021-3027)` |
 | `providerCost` | Objekt | nein | `{"used":<Float>,"limit":<Float>}`; wird vom Gerät gelesen, von der Mac-App nie gesendet | `(serial_receiver.cpp:574-587)` |
+| `credits` | Objekt | nein | Zusatz-Credits (Codex), siehe unten. Fehlt, wenn die Quelle nichts dazu meldet. Wird ab der nächsten Mac-App-Version bzw. Windows-App 1.0.1 gesendet, das Gerät liest es noch nicht | `(CodexBarSource.swift, credits(from:))`, `(codexbar.rs, credits_from)` |
+| `resetCredits` | Objekt | nein | Einlösbare Limit-Zurücksetzungen (Codex „Reset credits"), siehe unten. Nur bei Anzahl > 0 | `(CodexBarSource.swift, resetCredits(from:))`, `(codexbar.rs)` |
 
 Fenster-Objekte `primary`/`secondary`/`tertiary`:
 
@@ -442,6 +444,24 @@ Fenster-Objekte `primary`/`secondary`/`tertiary`:
 | `windowMinutes` | Int | Fensterlänge in Minuten. Ab 10080 gilt ein Fenster als "weekly" | `(main.swift:2882-2884)`, `(serial_receiver.cpp:42, 482-492)` |
 
 Das Gerät nutzt die Fenster-Objekte für die Legacy-Werte Session/Weekly `(serial_receiver.cpp:465-504)` und als Fallback, wenn `rows` leer ist `(serial_receiver.cpp:529-548)`. Für `antigravity` füllt es fehlende Zeilen bis auf 3 aus den Fenster-Objekten auf `(serial_receiver.cpp:553-568)`.
+
+Objekt `credits`:
+
+| Feld | Typ | Pflicht | Bedeutung |
+|---|---|---|---|
+| `available` | Bool | ja | `true`: Die Quelle meldet einen Credit-Pool. `false`: Sie meldet ausdrücklich keinen |
+| `balance` | Zahl | nein | Verbleibende Credits, auf zwei Stellen gerundet. Fehlt, wenn der Stand nicht lesbar ist |
+
+Den Stand des Workspace-Pools gibt OpenAI nur an Owner und Admins heraus. Für Mitglieder meldet die Quelle den Pool, hält den Betrag aber zurück. Dann kommt `{"available":true}` ohne `balance`, niemals eine 0. Bei einem persönlichen Monatslimit steht in `balance` dessen Rest. Die Werte stammen aus dem Block `credits` der Upstream-CLI bzw. aus `cost` (`period` `"Credits"` oder `"Monthly credits"`) bei Win-CodexBar.
+
+Objekt `resetCredits`:
+
+| Feld | Typ | Pflicht | Bedeutung |
+|---|---|---|---|
+| `count` | Int | ja | Anzahl verfügbarer Reset Credits, immer > 0 |
+| `nextExpiresAt` | String | ja | Ablauf des nächsten Credits, ISO-8601 UTC oder `""`. Kein Reset-Zeitpunkt eines Fensters |
+
+Fenster, die Win-CodexBar als `is_informational` kennzeichnet (etwa „No active 5h session" bei reinen Wochenplänen oder die Reset Credits), sendet die Windows-App weder als Zeile noch als `primary`/`secondary`/`tertiary`. Sie tragen keinen echten Prozentwert.
 
 Zeilen-Objekte in `rows`:
 

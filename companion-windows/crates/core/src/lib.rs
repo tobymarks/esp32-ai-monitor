@@ -32,7 +32,7 @@ pub mod semver;
 pub mod source;
 pub mod status;
 
-pub use model::{Entry, ExtraWindow, Window};
+pub use model::{Credits, Entry, ExtraWindow, ResetCredits, Window};
 pub use provider::Provider;
 pub use rows::{build_rows, PercentMode, Row};
 pub use source::{FetchOutcome, Snapshot, Source};

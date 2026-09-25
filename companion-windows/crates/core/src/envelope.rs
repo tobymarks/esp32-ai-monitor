@@ -94,6 +94,22 @@ pub fn usage_envelope(entry: &Entry, mode: PercentMode, ctx: &FrameContext, fram
             usage.insert((*key).into(), window_value(w, idx, provider, mode));
         }
     }
+    // Zusatz-Credits als Kennzeichen statt Balken. `balance` nur, wenn die
+    // Quelle den Stand lesen durfte (Workspace-Stand nur für Owner/Admins).
+    if let Some(c) = &entry.credits {
+        let mut credits = serde_json::Map::new();
+        credits.insert("available".into(), Value::Bool(c.available));
+        if let Some(b) = c.balance {
+            credits.insert("balance".into(), json!((b * 100.0).round() / 100.0));
+        }
+        usage.insert("credits".into(), Value::Object(credits));
+    }
+    if let Some(r) = &entry.reset_credits {
+        usage.insert(
+            "resetCredits".into(),
+            json!({ "count": r.count, "nextExpiresAt": iso(r.next_expires_at) }),
+        );
+    }
 
     envelope(
         frame_id,
@@ -168,7 +184,7 @@ pub fn diagnostic_envelope(provider: Provider, ctx: &FrameContext, frame_id: i64
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ExtraWindow;
+    use crate::model::{Credits, ExtraWindow, ResetCredits};
     use chrono::TimeZone;
 
     fn ctx() -> FrameContext {
@@ -203,6 +219,8 @@ mod tests {
                 window: win(12.0, Some(10080), Utc.with_ymd_and_hms(2026, 9, 14, 9, 0, 0).single()),
             }],
             login_method: None,
+            credits: None,
+            reset_credits: None,
         };
         let s = usage_envelope(&entry, PercentMode::Used, &ctx(), 42);
         let v: Value = serde_json::from_str(&s).unwrap();
@@ -237,6 +255,8 @@ mod tests {
             tertiary: None,
             extra_windows: vec![],
             login_method: None,
+            credits: None,
+            reset_credits: None,
         };
         let v: Value = serde_json::from_str(&usage_envelope(&entry, PercentMode::Remaining, &ctx(), 1)).unwrap();
         let u = &v["data"][0]["usage"];
@@ -244,6 +264,37 @@ mod tests {
         assert_eq!(u["primary"]["windowMinutes"], 300, "Default für Codex Index 0");
         assert_eq!(u["primary"]["resetsAt"], "");
         assert_eq!(u["rows"][0]["usedPercent"], 70);
+    }
+
+    #[test]
+    fn credits_and_reset_credits_are_sent_without_rows() {
+        let entry = Entry {
+            provider: Provider::Codex,
+            updated_at: None,
+            primary: None,
+            secondary: Some(win(15.0, Some(10080), None)),
+            tertiary: None,
+            extra_windows: vec![],
+            login_method: None,
+            credits: Some(Credits { available: true, balance: None }),
+            reset_credits: Some(ResetCredits {
+                count: 2,
+                next_expires_at: Utc.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).single(),
+            }),
+        };
+        let v: Value = serde_json::from_str(&usage_envelope(&entry, PercentMode::Used, &ctx(), 3)).unwrap();
+        let u = &v["data"][0]["usage"];
+        assert_eq!(u["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(u["credits"]["available"], true);
+        assert!(u["credits"].get("balance").is_none(), "unbekannter Stand wird nicht als 0 gesendet");
+        assert_eq!(u["resetCredits"]["count"], 2);
+        assert_eq!(u["resetCredits"]["nextExpiresAt"], "2026-10-01T12:00:00Z");
+
+        let admin = Entry { credits: Some(Credits { available: true, balance: Some(237.750159) }), reset_credits: None, ..entry };
+        let v: Value = serde_json::from_str(&usage_envelope(&admin, PercentMode::Used, &ctx(), 4)).unwrap();
+        let u = &v["data"][0]["usage"];
+        assert_eq!(u["credits"]["balance"], 237.75);
+        assert!(u.get("resetCredits").is_none());
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! `[{ provider, source, usage: { primary, secondary, tertiary, updated_at,
 //!    extra_rate_windows: [{ id, title, window }] } }]`.
 
-use crate::model::{Entry, ExtraWindow, Window};
+use crate::model::{Credits, Entry, ExtraWindow, ResetCredits, Window};
 use crate::provider::Provider;
 use crate::status::Status;
 use chrono::{DateTime, Utc};
@@ -50,6 +50,62 @@ pub struct CliUsage {
     pub extra_rate_windows: Option<Vec<CliExtraWindow>>,
     #[serde(default, alias = "loginMethod")]
     pub login_method: Option<String>,
+    /// Upstream: Reset Credits als eigener Block statt als Zusatzfenster.
+    #[serde(default, alias = "codexResetCredits")]
+    pub codex_reset_credits: Option<CliResetCredits>,
+}
+
+/// Upstream-Block `usage.codexResetCredits`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CliResetCredits {
+    #[serde(default, alias = "availableCount")]
+    pub available_count: Option<u32>,
+    #[serde(default)]
+    pub credits: Vec<CliResetCredit>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CliResetCredit {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default, alias = "expiresAt")]
+    pub expires_at: Option<String>,
+}
+
+/// Upstream-Block `credits` auf oberster Ebene (nur Codex).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliCredits {
+    #[serde(default)]
+    pub remaining: Option<f64>,
+    /// Fehlt bei älteren CLI-Versionen; dann galt jeder Wert als gelesen.
+    #[serde(default)]
+    pub balance_read_succeeded: Option<bool>,
+    /// `true`: Pool vorhanden, auch wenn der Stand zurückgehalten wird.
+    #[serde(default)]
+    pub credits_available: Option<bool>,
+    #[serde(default)]
+    pub balance_is_workspace: Option<bool>,
+    #[serde(default)]
+    pub codex_credit_limit: Option<CliCreditLimit>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CliCreditLimit {
+    #[serde(default)]
+    pub remaining: Option<f64>,
+}
+
+/// Win-CodexBar-Block `cost` auf oberster Ebene. Bei Codex steht er nur da,
+/// wenn ein Credit-Pool gemeldet ist; `used` trägt dann den Kontostand.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CliCost {
+    #[serde(default)]
+    pub used: Option<f64>,
+    #[serde(default)]
+    pub limit: Option<f64>,
+    #[serde(default)]
+    pub period: Option<String>,
 }
 
 /// Upstream meldet ein Objekt, Win-CodexBar einen String.
@@ -85,6 +141,10 @@ pub struct CliResult {
     pub error: Option<CliError>,
     /// Win-CodexBar schreibt seine Version in jedes Ergebnis.
     pub version: Option<String>,
+    #[serde(default)]
+    pub credits: Option<CliCredits>,
+    #[serde(default)]
+    pub cost: Option<CliCost>,
 }
 
 /// Rohausgabe der CLI in das erste Ergebnis übersetzen.
@@ -112,6 +172,71 @@ fn to_window(w: CliWindow) -> Window {
         window_minutes: w.window_minutes,
         reset_description: w.reset_description,
     }
+}
+
+/// Win-CodexBar-ID des Reset-Credits-Zusatzfensters.
+const RESET_CREDITS_WINDOW_ID: &str = "reset-credits";
+
+/// Zusatz-Credits aus dem Upstream-Block `credits` oder dem Win-CodexBar-Block
+/// `cost`. `None` heißt: die Quelle sagt nichts dazu, nicht „keine Credits".
+fn credits_from(credits: Option<&CliCredits>, cost: Option<&CliCost>) -> Option<Credits> {
+    if let Some(c) = credits {
+        // Wie `CreditsSnapshot.displayRemaining` in CodexBar: ein nicht
+        // gelesener Stand ist unbekannt, keine Null.
+        let read = c.balance_read_succeeded.unwrap_or(true);
+        let balance = if read && c.balance_is_workspace == Some(true) {
+            c.remaining
+        } else {
+            c.codex_credit_limit
+                .as_ref()
+                .and_then(|l| l.remaining)
+                .or(if read { c.remaining } else { None })
+        };
+        let available = c.credits_available == Some(true) || balance.is_some_and(|b| b > 0.0);
+        if !available && c.credits_available != Some(false) {
+            return None;
+        }
+        return Some(Credits { available, balance: balance.filter(|_| available) });
+    }
+
+    // Win-CodexBar setzt einen fehlenden Stand auf 0, deshalb zählt nur ein
+    // positiver Wert. Andere Perioden gehören zu anderen Kostenarten.
+    let cost = cost?;
+    let balance = match cost.period.as_deref()? {
+        "Credits" => cost.used.filter(|b| *b > 0.0),
+        "Monthly credits" => cost.limit.zip(cost.used).map(|(l, u)| (l - u).max(0.0)),
+        _ => return None,
+    };
+    Some(Credits { available: true, balance })
+}
+
+/// Win-CodexBar: Anzahl steht nur im Beschreibungstext („2 reset credits
+/// available"), der Zeitpunkt ist der Ablauf des nächsten Credits.
+fn reset_credits_from_window(w: &CliWindow) -> Option<ResetCredits> {
+    let digits: String = w
+        .reset_description
+        .as_deref()?
+        .trim_start()
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    let count: u32 = digits.parse().ok()?;
+    Some(ResetCredits {
+        count,
+        next_expires_at: w.resets_at.as_deref().and_then(parse_timestamp),
+    })
+}
+
+fn reset_credits_from_upstream(r: &CliResetCredits, now: DateTime<Utc>) -> Option<ResetCredits> {
+    let count = r.available_count?;
+    let next_expires_at = r
+        .credits
+        .iter()
+        .filter(|c| c.status.as_deref() == Some("available"))
+        .filter_map(|c| c.expires_at.as_deref().and_then(parse_timestamp))
+        .filter(|d| *d > now)
+        .min();
+    Some(ResetCredits { count, next_expires_at })
 }
 
 /// Ergebnis der Bewertung: Status plus, falls verwertbar, der Eintrag.
@@ -151,6 +276,15 @@ pub fn evaluate(
         };
     };
 
+    let credits = credits_from(result.credits.as_ref(), result.cost.as_ref());
+    let mut reset_credits = usage
+        .codex_reset_credits
+        .as_ref()
+        .and_then(|r| reset_credits_from_upstream(r, now));
+
+    // Informational-Fenster (Win-CodexBar) tragen nur einen Text, keinen
+    // Prozentwert, etwa „No active 5h session" bei reinen Wochenplänen oder
+    // die Reset Credits. Als Balken wären sie irreführend (0 % bzw. 100 %).
     let extras: Vec<ExtraWindow> = usage
         .extra_rate_windows
         .unwrap_or_default()
@@ -158,6 +292,12 @@ pub fn evaluate(
         .filter_map(|raw| {
             let id = raw.id?;
             let window = raw.window?;
+            if window.is_informational {
+                if id == RESET_CREDITS_WINDOW_ID && reset_credits.is_none() {
+                    reset_credits = reset_credits_from_window(&window);
+                }
+                return None;
+            }
             Some(ExtraWindow {
                 title: raw.title.unwrap_or_else(|| id.clone()),
                 id,
@@ -177,11 +317,13 @@ pub fn evaluate(
     let entry = Entry {
         provider,
         updated_at,
-        primary: usage.primary.map(to_window),
-        secondary: usage.secondary.map(to_window),
-        tertiary: usage.tertiary.map(to_window),
+        primary: usage.primary.filter(|w| !w.is_informational).map(to_window),
+        secondary: usage.secondary.filter(|w| !w.is_informational).map(to_window),
+        tertiary: usage.tertiary.filter(|w| !w.is_informational).map(to_window),
         extra_windows: extras,
         login_method: usage.login_method,
+        credits,
+        reset_credits: reset_credits.filter(|r| r.count > 0),
     };
 
     // Alle Fenster leer? Dann hat der Provider zwar geantwortet, aber nichts
@@ -285,6 +427,94 @@ mod tests {
         let json = br#"[{"provider":"copilot","source":"auto","usage":{"updated_at":"2026-09-11T08:00:00Z"}}]"#;
         let eval = evaluate(parse_output(json).unwrap(), Provider::Copilot, now(), Duration::from_secs(900));
         assert!(matches!(eval.status, Status::ProviderUnavailable { .. }));
+    }
+
+    #[test]
+    fn win_codexbar_informational_windows_become_flags_not_rows() {
+        // Business-Mitglied mit reinem Wochenplan: Session-Platzhalter und
+        // Reset Credits sind informational, der Pool-Stand ist nicht lesbar (0).
+        let json = br#"[{"provider":"codex","source":"oauth","usage":{
+            "primary":{"used_percent":0,"window_minutes":300,"reset_description":"No active 5h session","is_informational":true},
+            "secondary":{"used_percent":15,"window_minutes":10080,"resets_at":"2026-10-01T09:00:00Z","is_informational":false},
+            "extra_rate_windows":[{"id":"reset-credits","title":"Reset credits","window":{"used_percent":0,
+                "resets_at":"2026-10-03T12:00:00Z","reset_description":"2 reset credits available","is_informational":true}}],
+            "updated_at":"2026-09-11T08:00:00Z"},
+            "cost":{"used":0.0,"currency_code":"USD","period":"Credits","updated_at":"2026-09-11T08:00:00Z"}}]"#;
+        let eval = evaluate(parse_output(json).unwrap(), Provider::Codex, now(), Duration::from_secs(900));
+        assert_eq!(eval.status, Status::Ok);
+        let entry = eval.entry.unwrap();
+        assert!(entry.primary.is_none(), "Session-Platzhalter ist kein Fenster");
+        assert!(entry.extra_windows.is_empty(), "Reset Credits sind kein Fenster");
+        assert_eq!(entry.credits, Some(Credits { available: true, balance: None }));
+        let reset = entry.reset_credits.unwrap();
+        assert_eq!(reset.count, 2);
+        assert_eq!(reset.next_expires_at, parse_timestamp("2026-10-03T12:00:00Z"));
+    }
+
+    #[test]
+    fn win_codexbar_credit_balance_and_monthly_cap() {
+        let with_cost = |cost: &str| {
+            let json = format!(r#"[{{"provider":"codex","usage":{{"secondary":{{"used_percent":5}},
+                "updated_at":"2026-09-11T08:00:00Z"}},"cost":{cost}}}]"#);
+            evaluate(parse_output(json.as_bytes()).unwrap(), Provider::Codex, now(), Duration::from_secs(900))
+                .entry
+                .unwrap()
+                .credits
+        };
+        assert_eq!(with_cost(r#"{"used":412.5,"period":"Credits"}"#), Some(Credits { available: true, balance: Some(412.5) }));
+        assert_eq!(with_cost(r#"{"used":300,"limit":1000,"period":"Monthly credits"}"#), Some(Credits { available: true, balance: Some(700.0) }));
+        assert_eq!(with_cost(r#"{"used":12,"period":"This month (API key)"}"#), None);
+        assert_eq!(with_cost("null"), None);
+    }
+
+    #[test]
+    fn upstream_credits_distinguish_hidden_pool_from_known_balance() {
+        let with_credits = |credits: &str| {
+            let json = format!(r#"[{{"provider":"codex","usage":{{"secondary":{{"usedPercent":5}},
+                "updatedAt":"2026-09-11T08:00:00Z"}},"credits":{credits}}}]"#);
+            evaluate(parse_output(json.as_bytes()).unwrap(), Provider::Codex, now(), Duration::from_secs(900))
+                .entry
+                .unwrap()
+                .credits
+        };
+        // Admin: Workspace-Stand lesbar.
+        assert_eq!(
+            with_credits(r#"{"remaining":237.75,"balanceReadSucceeded":true,"creditsAvailable":true,"balanceIsWorkspace":true,"events":[]}"#),
+            Some(Credits { available: true, balance: Some(237.75) })
+        );
+        // Mitglied: Pool gemeldet, Stand zurückgehalten.
+        assert_eq!(
+            with_credits(r#"{"remaining":0,"balanceReadSucceeded":false,"creditsAvailable":true,"balanceIsWorkspace":false,"events":[]}"#),
+            Some(Credits { available: true, balance: None })
+        );
+        // Ausdrücklich kein Pool.
+        assert_eq!(
+            with_credits(r#"{"remaining":0,"balanceReadSucceeded":true,"creditsAvailable":false,"events":[]}"#),
+            Some(Credits { available: false, balance: None })
+        );
+        // Persönliches Monatslimit ohne Workspace-Stand.
+        assert_eq!(
+            with_credits(r#"{"remaining":0,"balanceReadSucceeded":false,"creditsAvailable":true,"codexCreditLimit":{"used":300,"limit":1000,"remaining":700},"events":[]}"#),
+            Some(Credits { available: true, balance: Some(700.0) })
+        );
+    }
+
+    #[test]
+    fn upstream_reset_credits_count_and_next_expiry() {
+        let json = br#"[{"provider":"codex","usage":{"secondary":{"usedPercent":5},"updatedAt":"2026-09-11T08:00:00Z",
+            "codexResetCredits":{"availableCount":2,"updatedAt":"2026-09-11T08:00:00Z","credits":[
+                {"id":"a","reset_type":"x","status":"redeemed","granted_at":"2026-09-01T00:00:00Z","expires_at":"2026-09-12T00:00:00Z"},
+                {"id":"b","reset_type":"x","status":"available","granted_at":"2026-09-01T00:00:00Z","expires_at":"2026-09-20T00:00:00Z"},
+                {"id":"c","reset_type":"x","status":"available","granted_at":"2026-09-01T00:00:00Z","expires_at":"2026-09-15T00:00:00Z"}]}}}]"#;
+        let entry = evaluate(parse_output(json).unwrap(), Provider::Codex, now(), Duration::from_secs(900)).entry.unwrap();
+        let reset = entry.reset_credits.unwrap();
+        assert_eq!(reset.count, 2);
+        assert_eq!(reset.next_expires_at, parse_timestamp("2026-09-15T00:00:00Z"));
+
+        let none = br#"[{"provider":"codex","usage":{"secondary":{"usedPercent":5},"updatedAt":"2026-09-11T08:00:00Z",
+            "codexResetCredits":{"availableCount":0,"updatedAt":"2026-09-11T08:00:00Z","credits":[]}}}]"#;
+        let entry = evaluate(parse_output(none).unwrap(), Provider::Codex, now(), Duration::from_secs(900)).entry.unwrap();
+        assert!(entry.reset_credits.is_none(), "0 Reset Credits nicht senden");
     }
 
     #[test]

@@ -26,6 +26,25 @@ pub struct ExtraWindow {
     pub window: Window,
 }
 
+/// Zusatz-Credits (Codex): ob ein Credit-Pool gemeldet ist und, falls
+/// lesbar, wie viel übrig ist. Den Workspace-Stand bekommen nur Owner und
+/// Admins; für Mitglieder ist `balance` deshalb meist `None`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Credits {
+    pub available: bool,
+    pub balance: Option<f64>,
+}
+
+/// Einlösbare Limit-Zurücksetzungen (Codex „Reset credits"): Anzahl plus
+/// Ablauf des nächsten Credits. Kein Nutzungsfenster, daher kein Balken.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCredits {
+    pub count: u32,
+    pub next_expires_at: Option<DateTime<Utc>>,
+}
+
 /// Ein erfolgreich gelesener Stand eines Providers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +59,10 @@ pub struct Entry {
     /// Vom CLI gemeldete Anmeldeart, nur zur Anzeige. Zum Gerät geht immer
     /// `Provider::login_label`, wie in der Mac-App.
     pub login_method: Option<String>,
+    #[serde(default)]
+    pub credits: Option<Credits>,
+    #[serde(default)]
+    pub reset_credits: Option<ResetCredits>,
 }
 
 impl Entry {

@@ -141,6 +141,8 @@ mod tests {
             tertiary: None,
             extra_windows: vec![],
             login_method: None,
+            credits: None,
+            reset_credits: None,
         }
     }
 

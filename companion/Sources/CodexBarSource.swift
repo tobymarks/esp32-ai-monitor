@@ -227,6 +227,21 @@ struct CodexBarExtraWindow {
     let window: CodexBarWindow
 }
 
+/// Zusatz-Credits (Codex): ob ein Credit-Pool gemeldet ist und, falls lesbar,
+/// wie viel uebrig ist. Den Workspace-Stand liefert OpenAI nur Owner und Admins;
+/// fuer Mitglieder bleibt `balance` deshalb meist nil.
+struct CodexBarCredits {
+    let available: Bool
+    let balance: Double?
+}
+
+/// Einloesbare Limit-Zuruecksetzungen („Reset credits"): Anzahl plus Ablauf
+/// des naechsten Credits. Kein Nutzungsfenster, daher kein Balken.
+struct CodexBarResetCredits {
+    let count: Int
+    let nextExpiresAt: String?
+}
+
 struct CodexBarEntry {
     let provider: String?
     let updatedAt: String?
@@ -235,6 +250,8 @@ struct CodexBarEntry {
     let tertiary: CodexBarWindow?
     let usageRows: [CodexBarUsageRow]?
     let extraWindows: [CodexBarExtraWindow]?
+    var credits: CodexBarCredits? = nil
+    var resetCredits: CodexBarResetCredits? = nil
 }
 
 // MARK: - CLI-Antwortformat
@@ -245,12 +262,43 @@ private struct CLIExtraWindow: Codable {
     let window: CodexBarWindow?
 }
 
+private struct CLIResetCredit: Codable {
+    let status: String?
+    let expiresAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case expiresAt = "expires_at"
+    }
+}
+
+private struct CLIResetCredits: Codable {
+    let availableCount: Int?
+    let credits: [CLIResetCredit]?
+}
+
 private struct CLIUsage: Codable {
     let primary: CodexBarWindow?
     let secondary: CodexBarWindow?
     let tertiary: CodexBarWindow?
     let updatedAt: String?
     let extraRateWindows: [CLIExtraWindow]?
+    let codexResetCredits: CLIResetCredits?
+}
+
+private struct CLICreditLimit: Codable {
+    let remaining: Double?
+}
+
+/// Block `credits` auf oberster Ebene (nur Codex).
+private struct CLICredits: Codable {
+    let remaining: Double?
+    /// Fehlt bei aelteren CLI-Versionen; dann galt jeder Wert als gelesen.
+    let balanceReadSucceeded: Bool?
+    /// `true`: Pool vorhanden, auch wenn der Stand zurueckgehalten wird.
+    let creditsAvailable: Bool?
+    let balanceIsWorkspace: Bool?
+    let codexCreditLimit: CLICreditLimit?
 }
 
 private struct CLIError: Codable {
@@ -264,6 +312,7 @@ private struct CLIResult: Codable {
     let source: String?
     let usage: CLIUsage?
     let error: CLIError?
+    let credits: CLICredits?
 }
 
 // MARK: - Source
@@ -543,7 +592,7 @@ final class CodexBarSource {
                 return CodexBarExtraWindow(id: id, title: raw.title ?? id, window: window)
             }
 
-            let entry = CodexBarEntry(
+            var entry = CodexBarEntry(
                 provider: result.provider ?? provider,
                 updatedAt: usage.updatedAt,
                 primary: usage.primary,
@@ -552,6 +601,8 @@ final class CodexBarSource {
                 usageRows: nil,
                 extraWindows: extras.isEmpty ? nil : extras
             )
+            entry.credits = result.credits.flatMap(Self.credits(from:))
+            entry.resetCredits = usage.codexResetCredits.flatMap(resetCredits(from:))
 
             // Alle Fenster leer? Dann hat der Provider zwar geantwortet, aber
             // nichts Verwertbares — genauso behandeln wie „nicht verfuegbar",
@@ -614,6 +665,34 @@ final class CodexBarSource {
         f.formatOptions = [.withInternetDateTime]
         return f
     }()
+
+    /// Wie `CreditsSnapshot.displayRemaining` in CodexBar: ein nicht gelesener
+    /// Stand ist unbekannt, keine Null. nil heisst „Quelle sagt nichts dazu".
+    private static func credits(from c: CLICredits) -> CodexBarCredits? {
+        let read = c.balanceReadSucceeded ?? true
+        let balance: Double?
+        if read && c.balanceIsWorkspace == true {
+            balance = c.remaining
+        } else {
+            balance = c.codexCreditLimit?.remaining ?? (read ? c.remaining : nil)
+        }
+        let available = c.creditsAvailable == true || (balance ?? 0) > 0
+        if !available && c.creditsAvailable != false { return nil }
+        return CodexBarCredits(available: available, balance: available ? balance : nil)
+    }
+
+    private func resetCredits(from r: CLIResetCredits) -> CodexBarResetCredits? {
+        guard let count = r.availableCount, count > 0 else { return nil }
+        let now = Date()
+        let next = (r.credits ?? [])
+            .filter { $0.status == "available" }
+            .compactMap { credit -> (String, Date)? in
+                guard let raw = credit.expiresAt, let date = parseISO8601(raw), date > now else { return nil }
+                return (raw, date)
+            }
+            .min { $0.1 < $1.1 }
+        return CodexBarResetCredits(count: count, nextExpiresAt: next?.0)
+    }
 
     private func parseISO8601(_ s: String) -> Date? {
         Self.isoFractional.date(from: s) ?? Self.isoPlain.date(from: s)

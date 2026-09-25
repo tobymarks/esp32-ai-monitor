@@ -3061,6 +3061,22 @@ class UsageMonitor {
             ]
         }
 
+        // Zusatz-Credits als Kennzeichen statt Balken. `balance` nur, wenn
+        // CodexBar den Stand lesen durfte (Workspace-Stand nur fuer Admins).
+        if let credits = entry.credits {
+            var creditsPayload: [String: Any] = ["available": credits.available]
+            if let balance = credits.balance {
+                creditsPayload["balance"] = (balance * 100).rounded() / 100
+            }
+            usagePayload["credits"] = creditsPayload
+        }
+        if let reset = entry.resetCredits {
+            usagePayload["resetCredits"] = [
+                "count": reset.count,
+                "nextExpiresAt": reset.nextExpiresAt ?? ""
+            ]
+        }
+
         // JSON-Envelope: strukturgleich zum alten Format, ab v1.10.0 mit
         // `provider`-Feld (FW v2.9.0 rendert darauf das Header-Label; ältere FW
         // ignoriert unbekannte Felder und zeigt „CLAUDE" statisch).

@@ -60,6 +60,22 @@ fixtures = {
     "cursor-legacy": [{"provider": "cursor", "source": "web", "usage": {
         "primary": win(46.0, month_end, cycle, "230 / 500 requests"),
         "updatedAt": upd}}],
+    # Codex Business, Mitglied ohne Admin-Rechte: nur Wochenfenster (primary
+    # null), Credit-Pool gemeldet, Stand zurueckgehalten, zwei Reset Credits.
+    # Struktur wie `codexbar usage --provider codex --json` (CodexBar 0.60).
+    "codex-business": [{"provider": "codex", "source": "oauth", "usage": {
+        "primary": None,
+        "secondary": win(15.0, now + dt.timedelta(days=6, hours=4), 10080),
+        "tertiary": None,
+        "loginMethod": "self_serve_business_prolite",
+        "codexResetCredits": {"availableCount": 2, "updatedAt": upd, "credits": [
+            {"id": "rc-1", "reset_type": "weekly", "status": "available",
+             "granted_at": iso(now - dt.timedelta(days=3)), "expires_at": iso(now + dt.timedelta(days=12))},
+            {"id": "rc-2", "reset_type": "weekly", "status": "available",
+             "granted_at": iso(now - dt.timedelta(days=3)), "expires_at": iso(now + dt.timedelta(days=5))}]},
+        "updatedAt": upd},
+        "credits": {"remaining": 0, "balanceReadSucceeded": False, "creditsAvailable": True,
+                    "balanceIsWorkspace": False, "events": [], "updatedAt": upd}}],
 }
 for name, data in fixtures.items():
     path = os.path.join(out, f"{name}.json")

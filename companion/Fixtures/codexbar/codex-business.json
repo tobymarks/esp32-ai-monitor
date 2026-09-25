@@ -1,0 +1,45 @@
+[
+  {
+    "provider": "codex",
+    "source": "oauth",
+    "usage": {
+      "primary": null,
+      "secondary": {
+        "usedPercent": 15.0,
+        "resetsAt": "2026-10-01T18:19:22Z",
+        "windowMinutes": 10080
+      },
+      "tertiary": null,
+      "loginMethod": "self_serve_business_prolite",
+      "codexResetCredits": {
+        "availableCount": 2,
+        "updatedAt": "2026-09-25T14:19:22Z",
+        "credits": [
+          {
+            "id": "rc-1",
+            "reset_type": "weekly",
+            "status": "available",
+            "granted_at": "2026-09-22T14:19:22Z",
+            "expires_at": "2026-10-07T14:19:22Z"
+          },
+          {
+            "id": "rc-2",
+            "reset_type": "weekly",
+            "status": "available",
+            "granted_at": "2026-09-22T14:19:22Z",
+            "expires_at": "2026-09-30T14:19:22Z"
+          }
+        ]
+      },
+      "updatedAt": "2026-09-25T14:19:22Z"
+    },
+    "credits": {
+      "remaining": 0,
+      "balanceReadSucceeded": false,
+      "creditsAvailable": true,
+      "balanceIsWorkspace": false,
+      "events": [],
+      "updatedAt": "2026-09-25T14:19:22Z"
+    }
+  }
+]
