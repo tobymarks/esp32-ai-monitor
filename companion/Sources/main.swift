@@ -21,6 +21,7 @@ import Cocoa
 import Security
 import ServiceManagement
 import Foundation
+import UniformTypeIdentifiers
 
 #if canImport(Darwin)
 import Darwin
@@ -1146,6 +1147,7 @@ class FirmwareManager {
     var downloadedBinPath: String?
     var isDownloading = false
     var isFlashing = false
+    var flashingLocalImage = false
     var downloadProgress: Double = 0
     var flashProgress: String = ""
     /// Aktuelle Phase — wird vom Settings-Fenster live gelesen.
@@ -1394,19 +1396,52 @@ class FirmwareManager {
             if case .writing = phase, let p = percent { self.flashWritePercent = p }
             self.flashProgress = phase.label(
                 percent: percent,
-                version: self.latestRelease?.tag_name
+                version: self.flashingLocalImage ? nil : self.latestRelease?.tag_name
             )
             self.onUpdate?()
         }
     }
 
-    func flashFirmware(port: String, completion: @escaping (Bool, String) -> Void) {
-        guard let binPath = downloadedBinPath, FileManager.default.fileExists(atPath: binPath) else {
+    func flashFirmware(port: String, localPath: String? = nil, completion: @escaping (Bool, String) -> Void) {
+        guard let binPath = localPath ?? downloadedBinPath, FileManager.default.fileExists(atPath: binPath) else {
             completion(false, recordFlashFailure(L("flash.err.nofile"))); return
+        }
+        guard let handle = FileHandle(forReadingAtPath: binPath) else {
+            let message = L("flash.err.nofile")
+            recordFlashFailure(message)
+            completion(false, message); return
+        }
+        defer { try? handle.close() }
+        let rejectInvalidImage = {
+            let message: String
+            if localPath == nil {
+                try? FileManager.default.removeItem(atPath: binPath)
+                self.downloadedBinPath = nil
+                message = L("flash.release.corrupt")
+            } else {
+                message = L("flash.local.format")
+            }
+            self.recordFlashFailure(message)
+            completion(false, message)
+        }
+        // Layout aus scripts/build_firmware.sh für die unterstützten 4-MB-CYD-Boards.
+        let length = ((try? FileManager.default.attributesOfItem(atPath: binPath))?[.size] as? NSNumber)?.intValue ?? 0
+        guard length >= 0x11000 && length <= 0x400000 else {
+            rejectInvalidImage(); return
+        }
+        handle.seek(toFileOffset: 0x1000)
+        let boot = handle.readData(ofLength: 1)
+        handle.seek(toFileOffset: 0x8000)
+        let partitions = handle.readData(ofLength: 2)
+        handle.seek(toFileOffset: 0x10000)
+        let app = handle.readData(ofLength: 1)
+        guard boot.first == 0xE9 && partitions == Data([0xAA, 0x50]) && app.first == 0xE9 else {
+            rejectInvalidImage(); return
         }
         guard let tool = resolveEsptool() else {
             completion(false, recordFlashFailure(L("flash.err.notool"))); return
         }
+        flashingLocalImage = localPath != nil
         isFlashing = true
         setPhase(.connecting)
         usleep(500_000)
@@ -1486,7 +1521,9 @@ class FirmwareManager {
                 errorPipe.fileHandleForReading.readabilityHandler = nil
                 let exitCode = process.terminationStatus
                 if exitCode == 0 {
-                    if let release = self.latestRelease {
+                    if localPath != nil {
+                        Settings.shared.installedFirmwareVersion = nil
+                    } else if let release = self.latestRelease {
                         Settings.shared.installedFirmwareVersion = self.firmwareVersionTag(from: release.tag_name)
                     }
                     self.setPhase(.done)
@@ -1522,7 +1559,7 @@ class FirmwareManager {
 
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
-        guard let installed = Settings.shared.installedFirmwareVersion else { return true }
+        guard let installed = Settings.shared.installedFirmwareVersion else { return !flashingLocalImage }
         // Siehe AppUpdateManager.hasUpdate: `!=` bot Downgrades als Updates an.
         // Ein Downgrade setzt zusaetzlich die Geraete-Einstellungen zurueck.
         return compareFirmwareVersions(firmwareVersionTag(from: installed),
@@ -1569,6 +1606,9 @@ class FirmwareManager {
 
     private func classifyFlashError(_ rawMessage: String) -> (summary: String, detail: String) {
         let lower = rawMessage.lowercased()
+        if rawMessage == L("flash.local.format") || rawMessage == L("flash.release.corrupt") {
+            return (L("flash.failed.title"), rawMessage)
+        }
         if lower.contains("no serial data received") ||
             lower.contains("failed to connect") ||
             lower.contains("timed out waiting for packet") ||
@@ -3520,6 +3560,59 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self = self else { return }
             guard let variant = chosenVariant else { return }  // Abbrechen
             self.performFlash(port: port, variant: variant)
+        }
+    }
+
+    func chooseLocalFirmware() {
+        guard monitor.serialPort.connectedPort != nil else {
+            alert(title: L("esp32.none.title"), info: L("esp32.none.info"), style: .warning)
+            return
+        }
+        let panel = NSOpenPanel()
+        if let binType = UTType(filenameExtension: "bin") {
+            panel.allowedContentTypes = [binType]
+        }
+        panel.canChooseDirectories = false
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url, url.pathExtension.lowercased() == "bin" else { return }
+            let fw = FirmwareManager.shared
+            guard !fw.isFlashing && !fw.isDownloading else { return }
+            guard let port = self?.monitor.serialPort.connectedPort else {
+                self?.alert(title: L("esp32.none.title"), info: L("esp32.none.info"), style: .warning)
+                return
+            }
+            let variant = DeviceRegistry.shared.currentProfile()?.displayVariant ?? kDisplayVariantDefault
+            let info = "ESP32 \((port as NSString).lastPathComponent) — \(url.lastPathComponent)"
+            FlashDialogController.presentModal(info: info,
+                                               defaultVariant: variant,
+                                               preflightItems: [L("flash.local.format"), L("flash.hint.cable")],
+                                               warning: nil,
+                                               canStart: fw.resolveEsptool() != nil) { [weak self] chosenVariant in
+                guard let chosenVariant = chosenVariant else { return }
+                guard let currentPort = self?.monitor.serialPort.connectedPort else {
+                    self?.alert(title: L("esp32.none.title"), info: L("esp32.none.info"), style: .warning)
+                    return
+                }
+                self?.performLocalFlash(port: currentPort, variant: chosenVariant, path: url.path)
+            }
+        }
+    }
+
+    private func performLocalFlash(port: String, variant: String, path: String) {
+        let fw = FirmwareManager.shared
+        fw.beginFlashAttempt(port: port, variant: variant)
+        monitor.serialPort.stopScanning()
+        fw.flashFirmware(port: port, localPath: path) { [weak self] success, message in
+            DispatchQueue.main.async {
+                self?.monitor.serialPort.startScanning()
+                if success {
+                    DeviceRegistry.shared.updateCurrent { $0.displayVariant = variant }
+                    self?.monitor.queueDiagnosticTestFrameAfterNextConnect()
+                } else {
+                    // Bei lokalen Dateien wäre "andere Variante" mit derselben Binärdatei irreführend.
+                    self?.alert(title: L("flash.failed.title"), info: message, style: .warning)
+                }
+            }
         }
     }
 

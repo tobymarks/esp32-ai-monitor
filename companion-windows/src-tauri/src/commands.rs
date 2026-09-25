@@ -312,6 +312,12 @@ pub async fn flash_firmware(app: AppHandle, variant: DisplayVariant) -> Result<F
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+pub async fn flash_local_firmware(app: AppHandle, variant: DisplayVariant, path: String) -> Result<FlashOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || flash::run_with_image(&app, variant, Some(path.into())))
+        .await.map_err(|e| e.to_string())?
+}
+
 /// Installer laden, prüfen, starten (Event `update-progress`); sonst Browser.
 #[tauri::command]
 pub async fn install_app_update(app: AppHandle) -> Result<InstallOutcome, String> {

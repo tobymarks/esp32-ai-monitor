@@ -69,6 +69,9 @@ extension SettingsWindowController {
         fwFlashButton.bezelStyle = .rounded
         fwFlashButton.toolTip = L("upd.flash.tooltip")
 
+        fwLocalFlashButton = NSButton(title: L("flash.local.choose"), target: self, action: #selector(chooseLocalFirmware))
+        fwLocalFlashButton.bezelStyle = .rounded
+
         fwProgressBar = NSProgressIndicator()
         fwProgressBar.style = .bar
         fwProgressBar.isIndeterminate = false
@@ -89,6 +92,7 @@ extension SettingsWindowController {
             fwVariantLabel,
             fwUpdateLabel,
             fwFlashButton,
+            fwLocalFlashButton,
             fwProgressBar,
             fwProgressLabel,
         ])
@@ -105,6 +109,10 @@ extension SettingsWindowController {
 
     @objc func flashFirmware() {
         (NSApp.delegate as? AppDelegate)?.runFirmwareFlash()
+    }
+
+    @objc func chooseLocalFirmware() {
+        (NSApp.delegate as? AppDelegate)?.chooseLocalFirmware()
     }
 
     @objc func checkAppUpdate() {
