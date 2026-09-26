@@ -140,6 +140,7 @@
   "flash.action.short": "Flash firmware …",
   "flash.local.choose": "Choose firmware file …",
   "flash.local.format": "Complete ESP32 image starting at 0x0 (.bin)",
+  "flash.local.format.required": "A complete ESP32 image starting at 0x0 (.bin) is required.",
   "flash.local.version": "Local file",
   "flash.local.recovery": "You can retry the same file or choose another one.",
   "flash.err.invalid.title": "Invalid firmware image.",
