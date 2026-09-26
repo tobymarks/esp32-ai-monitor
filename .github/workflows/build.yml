@@ -84,6 +84,8 @@ jobs:
             installer/bin/firmware-ota.bin
             installer/bin/ai-monitor-st7789.bin
             installer/bin/firmware-ota-st7789.bin
+            installer/bin/ai-monitor-st7701.bin
+            installer/bin/firmware-ota-st7701.bin
 
   deploy:
     needs: build
@@ -121,3 +123,5 @@ jobs:
             release-assets/firmware-ota.bin
             release-assets/ai-monitor-st7789.bin
             release-assets/firmware-ota-st7789.bin
+            release-assets/ai-monitor-st7701.bin
+            release-assets/firmware-ota-st7701.bin

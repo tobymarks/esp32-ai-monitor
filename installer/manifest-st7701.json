@@ -1,0 +1,16 @@
+{
+  "name": "AI Monitor (Guition ESP32-S3-4848S040)",
+  "version": "2.18.1",
+  "home_assistant_domain": "",
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "bin/ai-monitor-st7701.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

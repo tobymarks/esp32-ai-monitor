@@ -13,6 +13,7 @@ cd "$(dirname "$0")/.."
 PAGE="installer/index.html"
 MANIFEST_ILI="installer/manifest.json"
 MANIFEST_ST="installer/manifest-st7789.json"
+MANIFEST_S3="installer/manifest-st7701.json"
 
 FW=$(grep '#define APP_VERSION' src/config.h | head -1 | sed 's/.*"\(.*\)".*/\1/')
 APP=$(grep '^APP_VERSION=' companion/build.sh | head -1 | cut -d'"' -f2)
@@ -59,7 +60,7 @@ fi
 
 mv "$tmp" "$PAGE"
 
-for m in "$MANIFEST_ILI" "$MANIFEST_ST"; do
+for m in "$MANIFEST_ILI" "$MANIFEST_ST" "$MANIFEST_S3"; do
   [ -f "$m" ] || continue
   sed -i.bak -E "s|(\"version\": \")[0-9]+\.[0-9]+\.[0-9]+|\1${FW}|" "$m" && rm -f "$m.bak"
 done
