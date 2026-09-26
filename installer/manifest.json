@@ -1,6 +1,6 @@
 {
   "name": "AI Monitor (ILI9341 / R-Board)",
-  "version": "2.18.1",
+  "version": "2.19.0",
   "home_assistant_domain": "",
   "builds": [
     {
