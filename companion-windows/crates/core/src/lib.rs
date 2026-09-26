@@ -23,6 +23,8 @@ pub mod codexbar;
 pub mod device;
 pub mod envelope;
 pub mod model;
+pub mod plugin;
+pub mod plugin_package;
 pub mod protocol;
 pub mod provider;
 pub mod release;
@@ -32,13 +34,13 @@ pub mod semver;
 pub mod source;
 pub mod status;
 
+pub use device::{DeviceProfile, DeviceRegistry};
 pub use model::{Credits, Entry, ExtraWindow, ResetCredits, Window};
+pub use protocol::{DeviceInfo, DeviceMessage};
 pub use provider::Provider;
 pub use rows::{build_rows, PercentMode, Row};
 pub use source::{FetchOutcome, Snapshot, Source};
 pub use status::Status;
-pub use device::{DeviceProfile, DeviceRegistry};
-pub use protocol::{DeviceInfo, DeviceMessage};
 
 use std::time::Duration;
 

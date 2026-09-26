@@ -31,7 +31,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.30.0-beta.2"
+let kAppVersion = "1.30.0-beta.3"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -586,7 +586,8 @@ class Settings {
     var displayViews: [String] {
         get {
             let stored = (defaults.stringArray(forKey: "displayViews") ?? []).map {
-                $0 == Self.clockView ? $0 : CodexBarProvider.normalized($0).rawValue
+                if $0 == Self.clockView || DisplayPlugins.id(from: $0) != nil { return $0 }
+                return CodexBarProvider.normalized($0).rawValue
             }
             return stored.isEmpty ? [selectedProvider] : Array(stored.prefix(Self.maxDisplayViews))
         }
@@ -1801,6 +1802,7 @@ class SerialPortManager {
     var deviceFirmwareVersion: String?
     var deviceSerialTransport: String?
     var deviceMaxFrameBytes: Int?
+    var deviceSceneProtocol: Int?
     private(set) var lastFrameReceipt: SerialFrameReceipt?
     private(set) var lastConfirmedFrameReceipt: SerialFrameReceipt?
 
@@ -2021,6 +2023,7 @@ class SerialPortManager {
                         .lowercased()
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     self.deviceMaxFrameBytes = json["maxFrameBytes"] as? Int
+                    self.deviceSceneProtocol = json["sceneProtocol"] as? Int
                     Settings.shared.installedFirmwareVersion = "v\(version)"
                     NSLog("[Serial] ESP32 firmware: v%@ (state=connected)", version)
 
@@ -2106,6 +2109,7 @@ class SerialPortManager {
                     .lowercased()
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 self.deviceMaxFrameBytes = json["maxFrameBytes"] as? Int
+                self.deviceSceneProtocol = json["sceneProtocol"] as? Int
                 Settings.shared.installedFirmwareVersion = "v\(version)"
                 let reportedMAC = (json["mac"] as? String)?
                     .lowercased()
@@ -2150,6 +2154,7 @@ class SerialPortManager {
         deviceFirmwareVersion = nil
         deviceSerialTransport = nil
         deviceMaxFrameBytes = nil
+        deviceSceneProtocol = nil
         lastDisconnectAt = Date()
         state = .disconnected
     }
@@ -2549,7 +2554,8 @@ class UsageMonitor {
         settings.displayViews = views
         if let active { settings.activeDisplayView = active }
         let current = settings.displayViews[settings.activeDisplayView]
-        if !settings.displayViewsAutomatic, current != Settings.clockView, current != codexBar.provider {
+        if !settings.displayViewsAutomatic, current != Settings.clockView,
+           DisplayPlugins.id(from: current) == nil, current != codexBar.provider {
             switchMainProvider(to: current)
         }
         displayViewsChanged()
@@ -2573,7 +2579,9 @@ class UsageMonitor {
     /// mehr benoetigte pollen nicht weiter, behalten aber ihren Stand.
     private func reconcileViewSources() {
         let selected = codexBar.provider
-        let needed = Set(Settings.shared.displayViews.filter { $0 != Settings.clockView && $0 != selected })
+        let needed = Set(Settings.shared.displayViews.filter {
+            $0 != Settings.clockView && $0 != selected && DisplayPlugins.id(from: $0) == nil
+        })
         for provider in needed where !pollingViewProviders.contains(provider) {
             let source = viewSources[provider] ?? CodexBarSource(provider: provider)
             source.onChange = { [weak self] in self?.scheduleUsageSend() }
@@ -2592,6 +2600,10 @@ class UsageMonitor {
         serialPort.isReadyForCommands && !firmwareSupportsViews()
     }
 
+    var connectedFirmwareLacksPluginScenes: Bool {
+        serialPort.isReadyForCommands && (serialPort.deviceSceneProtocol ?? 0) < 1
+    }
+
     private func firmwareSupportsViews() -> Bool {
         guard let version = serialPort.deviceFirmwareVersion else { return false }
         return compareSemanticVersion(version, Self.serialViewsFirmwareVersion) != .orderedAscending
@@ -2601,6 +2613,8 @@ class UsageMonitor {
     func sendViewsToESP32() {
         guard serialPort.isReadyForCommands, firmwareSupportsViews() else { return }
         let settings = Settings.shared
+        if settings.displayViews.contains(where: { DisplayPlugins.id(from: $0) != nil })
+            && connectedFirmwareLacksPluginScenes { return }
         let payload: [String: Any] = [
             "cmd": "set_views",
             "views": settings.displayViews,
@@ -2639,7 +2653,10 @@ class UsageMonitor {
               let active = json["active"] as? Int, active >= 0, active < views.count,
               active != settings.activeDisplayView else { return }
         settings.activeDisplayView = active
-        if views[active] != Settings.clockView { switchMainProvider(to: views[active]) }
+        if views[active] != Settings.clockView,
+           DisplayPlugins.id(from: views[active]) == nil {
+            switchMainProvider(to: views[active])
+        }
         NSLog("[Views] Touch-Auswahl übernommen: Fenster %d", active + 1)
         onUpdate?()
         scheduleUsageSend()
@@ -2660,6 +2677,10 @@ class UsageMonitor {
     private func sendViewFramesToESP32() {
         guard viewsConfigured else { return }
         for (index, view) in Settings.shared.displayViews.enumerated() where view != Settings.clockView {
+            if let pluginID = DisplayPlugins.id(from: view) {
+                sendPluginSceneToESP32(id: pluginID, viewIndex: index)
+                continue
+            }
             guard let source = sourceForView(view) else { continue }
             if let entry = source.lastEntry {
                 let frameId = allocateFrameId()
@@ -2667,6 +2688,38 @@ class UsageMonitor {
                               frameId: frameId)
             } else {
                 sendNoticeToESP32(source: source, viewIndex: index)
+            }
+        }
+    }
+
+    private func sendPluginSceneToESP32(id: String, viewIndex: Int) {
+        guard (serialPort.deviceSceneProtocol ?? 0) >= 1 else { return }
+        let frameId = allocateFrameId()
+        let layout: String
+        if DeviceRegistry.shared.currentProfile()?.displayVariant == kDisplayVariantST7701 {
+            layout = "square"
+        } else if Settings.shared.orientation == "portrait" {
+            layout = "portrait"
+        } else {
+            layout = "landscape"
+        }
+        let scene = DisplayPlugins.shared.scene(for: id, layout: layout)
+        let envelope: [String: Any] = [
+            "schemaVersion": 2,
+            "frameId": frameId,
+            "data": [["pluginId": id, "viewIndex": viewIndex, "scene": scene]]
+        ]
+        guard let bytes = try? JSONSerialization.data(withJSONObject: envelope),
+              bytes.count <= min(serialPort.deviceMaxFrameBytes ?? 4095, 4095),
+              let json = String(data: bytes, encoding: .utf8) else { return }
+        serialSendQueue.async { [weak self] in
+            guard let self = self else { return }
+            let receipt = self.serialPort.sendJSONAndWaitForFrameAck(json, frameId: frameId)
+            DispatchQueue.main.async {
+                if self.registerFrameReceipt(receipt, source: "plugin") {
+                    self.lastUpdateDate = Date()
+                    self.onUpdate?()
+                }
             }
         }
     }
@@ -2681,6 +2734,10 @@ class UsageMonitor {
     }
 
     func start() {
+        DisplayPlugins.shared.onChange = { [weak self] in
+            self?.onUpdate?()
+            self?.scheduleUsageSend()
+        }
         // CodexBar-Source: liefert neue Daten → Push an ESP32
         codexBar.onChange = { [weak self] in
             guard let self = self else { return }
@@ -3133,8 +3190,13 @@ class UsageMonitor {
     }
 
     fileprivate func sendUsageToESP32() {
+        // Keep assigned plugin data ready even while USB is disconnected.
+        // onChange schedules a fresh frame when a fetch completes.
+        DisplayPlugins.shared.refresh(views: Settings.shared.displayViews)
         guard serialPort.isReadyForCommands else { return }
         if firmwareSupportsViews() {
+            if Settings.shared.displayViews.contains(where: { DisplayPlugins.id(from: $0) != nil })
+                && connectedFirmwareLacksPluginScenes { return }
             sendViewFramesToESP32()
             return
         }

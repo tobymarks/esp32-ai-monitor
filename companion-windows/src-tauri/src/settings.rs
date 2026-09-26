@@ -18,11 +18,12 @@ pub enum Language {
 }
 
 /// Inhalt eines Display-Fensters. Eine Quelle darf in mehreren Fenstern liegen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "provider", rename_all = "lowercase")]
 pub enum ViewContent {
     Clock,
     Provider(Provider),
+    Plugin(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -34,8 +35,12 @@ pub enum ViewMode {
 }
 
 pub const MAX_VIEWS: usize = 8;
-fn default_views() -> Vec<ViewContent> { vec![ViewContent::Provider(Provider::DEFAULT)] }
-fn default_view_interval() -> u16 { 10 }
+fn default_views() -> Vec<ViewContent> {
+    vec![ViewContent::Provider(Provider::DEFAULT)]
+}
+fn default_view_interval() -> u16 {
+    10
+}
 
 impl Language {
     /// Tatsächlich zu verwendende Sprache: "de" oder "en".
@@ -44,7 +49,9 @@ impl Language {
             Language::De => "de",
             Language::En => "en",
             Language::System => {
-                let locale = sys_locale::get_locale().unwrap_or_default().to_ascii_lowercase();
+                let locale = sys_locale::get_locale()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
                 if locale.starts_with("de") {
                     "de"
                 } else {
@@ -121,7 +128,10 @@ impl Default for Settings {
 
 impl Settings {
     fn path(app: &AppHandle) -> Option<PathBuf> {
-        app.path().app_config_dir().ok().map(|d| d.join("settings.json"))
+        app.path()
+            .app_config_dir()
+            .ok()
+            .map(|d| d.join("settings.json"))
     }
 
     /// Laden; bei fehlender oder unlesbarer Datei die Defaults.
@@ -130,24 +140,44 @@ impl Settings {
             return Settings::default();
         };
         match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<Settings>(&bytes).map(|mut s| {
-                // Vor der Fensterverwaltung war `provider` die einzige Anzeige.
-                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                    if v.get("views").is_none() { s.views = vec![ViewContent::Provider(s.provider)]; }
-                }
-                s.normalize_views();
-                s
-            }).unwrap_or_else(|e| {
-                eprintln!("[aimonitor] settings.json unlesbar ({e}), Defaults");
-                Settings::default()
-            }),
+            Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
+                .map(|mut s| {
+                    // Vor der Fensterverwaltung war `provider` die einzige Anzeige.
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        if v.get("views").is_none() {
+                            s.views = vec![ViewContent::Provider(s.provider)];
+                        }
+                    }
+                    s.normalize_views();
+                    s
+                })
+                .unwrap_or_else(|e| {
+                    eprintln!("[aimonitor] settings.json unlesbar ({e}), Defaults");
+                    Settings::default()
+                }),
             Err(_) => Settings::default(),
         }
     }
 
     pub fn normalize_views(&mut self) {
-        if self.views.is_empty() { self.views = default_views(); }
+        if self.views.is_empty() {
+            self.views = default_views();
+        }
         self.views.truncate(MAX_VIEWS);
+        for view in &mut self.views {
+            if let ViewContent::Plugin(id) = view {
+                if id.is_empty()
+                    || id.len() > 40
+                    || !id.bytes().all(|c| {
+                        c.is_ascii_lowercase()
+                            || c.is_ascii_digit()
+                            || matches!(c, b'.' | b'-' | b'_')
+                    })
+                {
+                    *view = ViewContent::Clock;
+                }
+            }
+        }
         self.view_interval_seconds = self.view_interval_seconds.clamp(2, 3600);
         self.active_view = self.active_view.min(self.views.len() - 1);
     }
@@ -179,7 +209,10 @@ mod tests {
         settings.active_view = 99;
         settings.view_interval_seconds = 1;
         settings.normalize_views();
-        assert_eq!(settings.views, vec![ViewContent::Provider(Provider::Claude)]);
+        assert_eq!(
+            settings.views,
+            vec![ViewContent::Provider(Provider::Claude)]
+        );
         assert_eq!(settings.active_view, 0);
         assert_eq!(settings.view_interval_seconds, 2);
 
@@ -192,8 +225,17 @@ mod tests {
 
     #[test]
     fn view_content_has_a_stable_wire_shape() {
-        assert_eq!(serde_json::to_value(ViewContent::Clock).unwrap(), serde_json::json!({"kind":"clock"}));
-        assert_eq!(serde_json::to_value(ViewContent::Provider(Provider::Codex)).unwrap(),
-                   serde_json::json!({"kind":"provider","provider":"codex"}));
+        assert_eq!(
+            serde_json::to_value(ViewContent::Clock).unwrap(),
+            serde_json::json!({"kind":"clock"})
+        );
+        assert_eq!(
+            serde_json::to_value(ViewContent::Provider(Provider::Codex)).unwrap(),
+            serde_json::json!({"kind":"provider","provider":"codex"})
+        );
+        assert_eq!(
+            serde_json::to_value(ViewContent::Plugin("org.example.status".into())).unwrap(),
+            serde_json::json!({"kind":"plugin","provider":"org.example.status"})
+        );
     }
 }

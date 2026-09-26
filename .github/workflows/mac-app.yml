@@ -139,6 +139,16 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN"
           echo "Signing keychain ready."
 
+      - name: Prepare Rust plugin helper targets
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Test shared display-plugin contract
+        working-directory: companion-windows
+        run: cargo test -p aimonitor-core -p aimonitor-plugin-host --locked
+
       - name: Build AI Monitor.app
         working-directory: companion
         env:
@@ -156,6 +166,38 @@ jobs:
             echo "Ad-hoc-Build (keine Signing-Secrets hinterlegt)."
           fi
           ./build.sh
+
+      - name: Smoke test bundled display-plugin helper
+        run: |
+          set -euo pipefail
+          HELPER="companion/build/AI Monitor.app/Contents/MacOS/aimonitor-plugin-host"
+          PACKAGE="$RUNNER_TEMP/display-fixture.aimplugin"
+          python3 scripts/package_display_plugin.py \
+            tests/fixtures/display-plugin/plugin.json "$PACKAGE"
+          "$HELPER" inspect "$PACKAGE" > "$RUNNER_TEMP/fixture-preview.json"
+          "$HELPER" render "$PACKAGE" - all \
+            tests/fixtures/display-plugin/response.json \
+            > "$RUNNER_TEMP/fixture-scenes.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          preview = json.loads((root / "fixture-preview.json").read_text())
+          assert preview["id"] == "org.aimonitor.fixture"
+          assert preview["sourceOrigin"] == "https://example.org"
+          assert preview["signed"] is False
+          scenes = json.loads((root / "fixture-scenes.json").read_text())["scenes"]
+          assert set(scenes) == {"portrait", "landscape", "square"}
+          for name, scene in scenes.items():
+              nodes = scene["nodes"]
+              assert any(node.get("text") == "Demo" for node in nodes), name
+              assert any(node.get("text") == "18 pts" for node in nodes), name
+              assert any(node.get("type") == "bar" and node.get("value") == 62
+                         for node in nodes), name
+          print("Bundled Mac plugin helper inspected and rendered the fixture in all layouts")
+          PY
 
       - name: List build artifacts
         working-directory: companion

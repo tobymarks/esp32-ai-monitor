@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import type { ProviderInfo, Settings, ViewContent } from "../api";
+import type { ConnectionSnapshot, PluginInfo, ProviderInfo, Settings, ViewContent } from "../api";
 import type { Translate } from "../i18n";
 
 interface Props {
   t: Translate;
   settings: Settings;
   providers: ProviderInfo[];
+  plugins: PluginInfo[];
+  connection: ConnectionSnapshot | null;
   onSettings: (patch: Partial<Settings>) => void;
 }
 
@@ -16,7 +18,7 @@ const GLYPHS: Record<string, string> = {
   gemini: "✧", copilot: "◆", cursor: "⬡",
 };
 
-export default function ViewManager({ t, settings, providers, onSettings }: Props) {
+export default function ViewManager({ t, settings, providers, plugins, connection, onSettings }: Props) {
   const [selected, setSelected] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [dragPoint, setDragPoint] = useState<{ x: number; y: number } | null>(null);
@@ -37,8 +39,11 @@ export default function ViewManager({ t, settings, providers, onSettings }: Prop
 
   const label = (content: ViewContent) => content.kind === "clock"
     ? t("views.clock")
-    : providers.find((p) => p.key === content.provider)?.label ?? content.provider;
-  const glyph = (content: ViewContent) => GLYPHS[content.kind === "clock" ? "clock" : content.provider];
+    : content.kind === "plugin"
+      ? plugins.find((p) => p.id === content.provider)?.viewLabel ?? content.provider
+      : providers.find((p) => p.key === content.provider)?.label ?? content.provider;
+  const glyph = (content: ViewContent) => content.kind === "plugin"
+    ? "◇" : GLYPHS[content.kind === "clock" ? "clock" : content.provider];
 
   const assign = (index: number, content: ViewContent) => {
     onSettings({
@@ -108,6 +113,9 @@ export default function ViewManager({ t, settings, providers, onSettings }: Prop
     <section className="view-manager" aria-label={t("views.title")}>
       <h2>{t("views.title")}</h2>
       <p className="muted">{t("views.intro")}</p>
+      {settings.views.some((v) => v.kind === "plugin") && connection?.state === "connected"
+        && (connection.info?.sceneProtocol ?? 0) < 1 &&
+        <p className="notice" role="status">{t("plugins.firmware.required")}</p>}
       <div className="view-layout">
         <div className="view-workspace">
           <div className="view-list">
@@ -155,7 +163,8 @@ export default function ViewManager({ t, settings, providers, onSettings }: Prop
         <aside className="view-palette">
           <h3>{t("views.blocks")}</h3>
           <p className="muted">{t("views.blocks.hint")}</p>
-          {[CLOCK, ...providers.map((p): ViewContent => ({ kind: "provider", provider: p.key }))].map((content) => (
+          {[CLOCK, ...providers.map((p): ViewContent => ({ kind: "provider", provider: p.key })),
+            ...plugins.map((p): ViewContent => ({ kind: "plugin", provider: p.id }))].map((content) => (
             <button key={content.kind === "clock" ? "clock" : content.provider} type="button"
               onPointerDown={(e) => startDrag(e, content)}
               onClick={() => { if (!suppressClick.current) assign(selected, content); }} className="view-block">

@@ -12,7 +12,12 @@ import Cocoa
 extension SettingsWindowController {
 
     /// Inhalte, die ein Fenster zeigen kann: die Uhr und jeder Provider.
-    private static let viewContents: [String] = [Settings.clockView] + CodexBarProvider.allCases.map(\.rawValue)
+    private var viewContents: [String] {
+        let installed = DisplayPlugins.shared.records.keys.map { DisplayPlugins.prefix + $0 }
+        let assigned = Settings.shared.displayViews.filter { DisplayPlugins.id(from: $0) != nil }
+        return [Settings.clockView] + CodexBarProvider.allCases.map(\.rawValue)
+            + Array(Set(installed + assigned)).sorted()
+    }
 
     func buildViewsStepContent() -> [NSView] {
         viewsListStack = NSStackView()
@@ -66,9 +71,13 @@ extension SettingsWindowController {
             viewsIntervalField.integerValue = settings.displayViewInterval
         }
         viewsAddButton.isEnabled = settings.displayViews.count < Settings.maxDisplayViews
-        viewsFirmwareHint.isHidden = !(monitor?.connectedFirmwareLacksViews ?? false)
+        let lacksWindows = monitor?.connectedFirmwareLacksViews ?? false
+        let lacksScenes = settings.displayViews.contains(where: { DisplayPlugins.id(from: $0) != nil })
+            && (monitor?.connectedFirmwareLacksPluginScenes ?? false)
+        viewsFirmwareHint.stringValue = lacksScenes ? L("plugins.firmware") : L("views.firmware")
+        viewsFirmwareHint.isHidden = !lacksWindows && !lacksScenes
 
-        let signature = "\(settings.displayViews)|\(settings.activeDisplayView)|\(settings.displayViewsAutomatic)"
+        let signature = "\(settings.displayViews)|\(settings.activeDisplayView)|\(settings.displayViewsAutomatic)|\(DisplayPlugins.shared.records.keys.sorted())"
         guard force || signature != viewsSignature else { return }
         viewsSignature = signature
         viewsListStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -79,7 +88,12 @@ extension SettingsWindowController {
     }
 
     private func displayViewTitle(_ content: String) -> String {
-        content == Settings.clockView ? L("views.clock") : CodexBarProvider.normalized(content).displayLabel
+        if content == Settings.clockView { return L("views.clock") }
+        if let id = DisplayPlugins.id(from: content) {
+            return DisplayPlugins.shared.records[id] == nil
+                ? L("plugins.missing", id) : DisplayPlugins.shared.label(for: content)
+        }
+        return CodexBarProvider.normalized(content).displayLabel
     }
 
     private func buildDisplayViewRow(index: Int, content: String, shown: Bool) -> NSView {
@@ -89,8 +103,8 @@ extension SettingsWindowController {
         label.widthAnchor.constraint(equalToConstant: 100).isActive = true
 
         let popup = NSPopUpButton()
-        popup.addItems(withTitles: Self.viewContents.map(displayViewTitle))
-        popup.selectItem(at: Self.viewContents.firstIndex(of: content) ?? 0)
+        popup.addItems(withTitles: viewContents.map(displayViewTitle))
+        popup.selectItem(at: viewContents.firstIndex(of: content) ?? 0)
         popup.tag = index
         popup.target = self
         popup.action = #selector(displayViewContentChosen(_:))
@@ -160,7 +174,8 @@ extension SettingsWindowController {
         var views = Settings.shared.displayViews
         let index = sender.tag
         guard index < views.count, sender.indexOfSelectedItem >= 0 else { return }
-        views[index] = Self.viewContents[sender.indexOfSelectedItem]
+        guard sender.indexOfSelectedItem < viewContents.count else { return }
+        views[index] = viewContents[sender.indexOfSelectedItem]
         applyDisplayViews(views)
     }
 

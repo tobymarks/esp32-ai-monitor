@@ -156,6 +156,7 @@ Antwort auf `get_info` `(serial_receiver.cpp:353-389)`.
 | `brightness` | Int | 5..100 | 376, `(config.h:170-171)` |
 | `serialTransport` | String | `"AIM1"` | 377, `(serial_receiver.cpp:38)` |
 | `maxFrameBytes` | Int | 4095 | 377 |
+| `sceneProtocol` | Int | `1` bei Firmware mit Display-Szenen; fehlt bei älterer Firmware | `serial_receiver.cpp` |
 | `wifiConfigured` | Bool | Zugangsdaten gespeichert | 378 |
 | `wifiConnected` | Bool | WLAN verbunden | 378 |
 | `timeSynced` | Bool | NTP-Sync erfolgt | 378 |
@@ -269,7 +270,7 @@ Der Host liest `networks` als Array von Objekten `(SettingsWindow+Connection.swi
 
 ## 5. Nachrichten zum Gerät
 
-Jede Nachricht ist ein JSON-Objekt. Das Gerät entscheidet anhand des Feldes `cmd`: Ist es ein String, wird die Nachricht als Kommando behandelt und die Datenparser werden übersprungen `(serial_receiver.cpp:399-400)`, `(serial_receiver.cpp:627)`. Vor dieser Prüfung wird `schemaVersion` geprüft; ein Wert größer 1 führt zum Fehler `unsupported schemaVersion`, auch bei Kommandos `(serial_receiver.cpp:612-624)`. Fehlt `schemaVersion`, gilt 0 und die Nachricht wird verarbeitet.
+Jede Nachricht ist ein JSON-Objekt. Das Gerät entscheidet anhand des Feldes `cmd`: Ist es ein String, wird die Nachricht als Kommando behandelt und die Datenparser werden übersprungen `(serial_receiver.cpp:399-400)`, `(serial_receiver.cpp:627)`. Vor dieser Prüfung wird `schemaVersion` geprüft; ein Wert größer 2 führt zum Fehler `unsupported schemaVersion`, auch bei Kommandos. Fehlt `schemaVersion`, gilt 0 und die Nachricht wird verarbeitet. Schema 1 ist für Usage-Frames reserviert, Schema 2 für Plugin-Szenen.
 
 ### 5.1 Kommandos
 
@@ -393,7 +394,7 @@ Gesendet mit AIM1-Framing oder im Zeilenmodus, siehe 3.3. Aufbau in `buildUsageE
 
 | Feld | Typ | Pflicht | Bedeutung | Host-Quelle | Geräte-Quelle |
 |---|---|---|---|---|---|
-| `schemaVersion` | Int | ja | immer 1 | `(main.swift:2214, 3033)` | max 1, sonst Fehler `(serial_receiver.cpp:48, 619)` |
+| `schemaVersion` | Int | ja | immer 1 bei Usage-Frames | `(main.swift:2214, 3033)` | Schema 2 wird separat als Plugin-Szene geprüft |
 | `frameId` | Int | ja für ACK | fortlaufend 1..999999, dann wieder 1 | `(main.swift:2337-2342)` | fehlt: -1, dann kein ACK `(serial_receiver.cpp:612)`, `(serial_receiver.cpp:130)` |
 | `sentAt` | String | nein | ISO-8601 UTC, gleicher Wert wie `time` | `(main.swift:3035)` | wird nicht gelesen |
 | `time` | String | nein | ISO-8601 UTC im Format `YYYY-MM-DDTHH:MM:SSZ`; setzt die Systemuhr des Geräts | `(main.swift:2517-2521, 3036)` | `(serial_receiver.cpp:454-461)`, Parser `(api_common.h:88-100)` |
@@ -811,7 +812,7 @@ Die Mac-App serialisiert Datenframes über eine eigene Queue und schützt alle Z
 
 ## 10. Fensterverwaltung ab Firmware 2.19.0
 
-Mac-App (ab 1.30.0) und Windows-App speichern eine geordnete Liste von 1 bis 8 Fenstern. Ein Fenster enthält genau einen der sechs bekannten Provider oder `clock`. Ein Inhalt darf mehrfach verwendet werden. Fenster 1 bleibt bestehen, sein Inhalt kann geändert werden. Ohne gespeicherte Liste gilt der zuletzt gewählte Provider als Fenster 1. Im manuellen Modus belegt eine Providerwahl im Kopf, Tray oder Menü das aktive Fenster oder springt auf ein Fenster mit diesem Provider. Quelle: `companion-windows/src-tauri/src/settings.rs`, `companion-windows/src-tauri/src/commands.rs`, `companion/Sources/main.swift` (`Settings.displayViews`, `UsageMonitor.setSelectedProvider`).
+Mac-App (ab 1.30.0) und Windows-App speichern eine geordnete Liste von 1 bis 8 Fenstern. Ein Fenster enthält einen der sechs bekannten Provider, `clock` oder einen installierten Plugin-Schlüssel wie `plugin:org.example.status`. Ein Inhalt darf mehrfach verwendet werden. Fenster 1 bleibt bestehen, sein Inhalt kann geändert werden. Ohne gespeicherte Liste gilt der zuletzt gewählte Provider als Fenster 1. Im manuellen Modus belegt eine Providerwahl im Kopf, Tray oder Menü das aktive Fenster oder springt auf ein Fenster mit diesem Provider. Quelle: `companion-windows/src-tauri/src/settings.rs`, `companion-windows/src-tauri/src/commands.rs`, `companion/Sources/main.swift` (`Settings.displayViews`, `UsageMonitor.setSelectedProvider`).
 
 Nach dem Handshake senden beide Apps ab Firmware 2.19.0 (Vergleich gegen `2.19.0-0`, damit auch `-dev` und `-beta.x` zählen) zusätzlich zu Theme, Sprache, Orientierung und Helligkeit dieses Zeilenkommando. Bei Änderungen sendet sie es erneut:
 
@@ -819,10 +820,40 @@ Nach dem Handshake senden beide Apps ab Firmware 2.19.0 (Vergleich gegen `2.19.0
 {"cmd":"set_views","views":["codex","clock","claude"],"mode":"automatic","interval":10,"active":0}
 ```
 
-`views` enthält 1 bis 8 Einträge aus `claude`, `codex`, `antigravity`, `gemini`, `copilot`, `cursor`, `clock`; Provider-Namen löst die Firmware wie im Datenframe über die Provider-Tabelle auf (unbekannt ergibt Claude). `active` ist der nullbasierte Index. `mode` ist `manual` oder `automatic`; `interval` liegt zwischen 2 und 3600 Sekunden. Das Gerät bestätigt mit `{"type":"ok","cmd":"set_views","count":3}` oder lehnt die gesamte ungültige Konfiguration mit `type:error` ab. Die gültige Konfiguration liegt auch im NVS und bleibt nach einem Neustart erhalten. Ein kurzer Touch auf der linken Displayhälfte wählt das vorherige Fenster, rechts das nächste; ein langer Touch öffnet die Einstellungen und schließt sie dort wieder. Im automatischen Modus wechselt die Firmware selbst nach dem Intervall. Touch- und Timer-Wechsel sind erst aktiv, nachdem in der laufenden Sitzung ein `set_views` angekommen ist; bis dahin bleibt die gespeicherte Auswahl stehen. Quelle: `src/serial_receiver.cpp`, `src/ui_dashboard.cpp`, `src/ui_settings.cpp`.
+`views` enthält 1 bis 8 Einträge aus `claude`, `codex`, `antigravity`, `gemini`, `copilot`, `cursor`, `clock` oder `plugin:<id>`. Ein Plugin-ID hat höchstens 40 Zeichen aus `a-z`, `0-9`, Punkt, Bindestrich und Unterstrich. Unbekannte Inhalte werden abgelehnt. `active` ist der nullbasierte Index. `mode` ist `manual` oder `automatic`; `interval` liegt zwischen 2 und 3600 Sekunden. Das Gerät bestätigt mit `{"type":"ok","cmd":"set_views","count":3}` oder lehnt die gesamte ungültige Konfiguration mit `type:error` ab. Die gültige Konfiguration liegt auch im NVS und bleibt nach einem Neustart erhalten. Ein kurzer Touch auf der linken Displayhälfte wählt das vorherige Fenster, rechts das nächste; ein langer Touch öffnet die Einstellungen und schließt sie dort wieder. Im automatischen Modus wechselt die Firmware selbst nach dem Intervall. Touch- und Timer-Wechsel sind erst aktiv, nachdem in der laufenden Sitzung ein `set_views` angekommen ist; bis dahin bleibt die gespeicherte Auswahl stehen. Quelle: `src/serial_receiver.cpp`, `src/ui_dashboard.cpp`, `src/ui_settings.cpp`.
 
 Jeder Provider erhält weiterhin einen eigenen Datenframe im bestehenden Schema 1. Zusätzlich steht in `data[0]` der Index des Fensters, z. B. `"viewIndex":2`. Die Firmware prüft, ob Index und Provider zur Konfiguration passen, und speichert den Zustand pro Fenster. Für `clock` geht kein Usage-Frame raus; die Uhr nutzt die Systemzeit aus den anderen Frames beziehungsweise NTP. Weil die Frames einzeln übertragen werden, gilt die Grenze von 4095 Bytes weiterhin pro Datenquelle. Quelle: `companion-windows/src-tauri/src/serial_service.rs`, `src/serial_receiver.cpp`.
 
 Fenster-Konfiguration und Datenframes werden nur an Firmware ab 2.19.0 geschickt. Ältere Firmware erhält weiterhin den einzelnen Datenframe des in der Übersicht gewählten Providers. Ein Datenframe ohne `viewIndex` (ältere App-Version) aktiviert auf neuer Firmware zur Laufzeit eine einzelne Provider-Ansicht und schaltet Touch- und Timer-Wechsel ab, unabhängig von der gespeicherten Fensterliste. Diese Liste bleibt im NVS erhalten und wird beim nächsten `set_views` oder Neustart wiederhergestellt. Quelle: `companion-windows/crates/core/src/protocol.rs`, `companion-windows/src-tauri/src/serial_service.rs`, `src/serial_receiver.cpp`.
 
 Beide Apps fragen nach dem Verbinden mit `{"cmd":"get_views"}` die Geräteauswahl ab und senden erst danach `set_views` und die Datenframes. Das Gerät antwortet mit einer Zeile wie `{"type":"view_state","views":["codex","clock"],"mode":"manual","interval":10,"active":1}`. Nach einem kurzen Touch sendet es dieselbe Nachricht unaufgefordert. Stimmen Liste, Modus und Intervall mit den App-Einstellungen überein, übernimmt die App den aktiven Index und speichert ihn. Dadurch bleibt die Touch-Auswahl nach Reconnect und Neustart erhalten. Die Mac-App liest unaufgeforderte Zeilen jede Sekunde sowie vor jedem Frame und reicht `view_state` weiter (`SerialPortManager.drainInput`). Quelle: `src/serial_receiver.cpp`, `companion-windows/src-tauri/src/serial_service.rs`, `companion/Sources/main.swift`.
+
+## 11. Display-Szenen für Plugins
+
+Ein Gerät mit `sceneProtocol:1` akzeptiert für ein zuvor per `set_views`
+zugewiesenes Plugin-Fenster einen Datenframe mit `schemaVersion:2`:
+
+```json
+{"schemaVersion":2,"frameId":18,"data":[{"pluginId":"org.example.status","viewIndex":1,"scene":{"background":1580575,"nodes":[{"type":"text","x":50,"y":50,"w":900,"h":150,"color":16777215,"font":24,"text":"Status: Ready"}]}}]}
+```
+
+`pluginId` muss exakt zum Schlüssel `plugin:<id>` an `viewIndex` passen.
+Die Firmware bestätigt einen gültigen Frame mit `type:ack`, `schemaVersion:2`
+und demselben `frameId`. Ein ungültiger Frame verändert die bisherige Szene
+nicht. Für jedes Fenster wird eine eigene Szene im RAM gehalten. Ein Wechsel
+oder Neustart des Geräts braucht deshalb neue Szenenframes vom Companion.
+
+Die Szene enthält höchstens 24 Knoten und höchstens 1536 JSON-Bytes. Ein
+vollständiger serieller Frame bleibt unter `maxFrameBytes` (derzeit 4095).
+Koordinaten `x`, `y`, `w`, `h` sind Ganzzahlen auf einer Fläche von 0 bis 1000;
+Breite und Höhe müssen positiv sein und innerhalb der Fläche bleiben. Farben
+sind RGB-Werte von `0` bis `0xFFFFFF`. Unterstützte Knotentypen sind `text`,
+`rect`, `circle` und `bar`. `text` hat bis zu 64 druckbare ASCII-Zeichen und
+eine Schriftgröße aus `12`, `14`, `16`, `20`, `24`, `36`, `48`; `align` kann
+`left`, `center` oder `right` sein. `bar` ergänzt `trackColor` und `value`
+von 0 bis 100. Der Companion wählt die Hoch- oder Querformat-Szene aus dem
+Pluginpaket; die Firmware skaliert die normierten Koordinaten auf das Display.
+Der Companion wählt auf dem ST7701-S3-Board eine eigene quadratische Szene,
+sofern das Paket eine enthält; sonst verwendet er die Hochformat-Szene.
+Das Paketformat und ein vollständiges Wetterbeispiel stehen in
+[`display-plugins.md`](display-plugins.md).

@@ -27,11 +27,14 @@
 #include "ui_settings.h"
 #include "config.h"
 #include "providers.h"
+#include "plugin_scene.h"
+#include "plugin_scene_renderer.h"
 #include "localization.h"
 #include "serial_receiver.h"
 #include "wifi_time.h"
 
 #include <lvgl.h>
+#include <ArduinoJson.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -118,6 +121,9 @@ static lv_obj_t *standby_wifi       = nullptr;
 static lv_obj_t *clock_overlay      = nullptr;
 static lv_obj_t *clock_time         = nullptr;
 static lv_obj_t *clock_date         = nullptr;
+static lv_obj_t *plugin_overlay     = nullptr;
+static uint8_t plugin_rendered_view = 0xFF;
+static uint32_t plugin_rendered_revision = 0;
 static bool long_press_handled = false;
 
 // Placeholder row titles while the compact rows are created (before any
@@ -174,6 +180,40 @@ static void on_tap_release(lv_event_t *e) {
     if (long_press_handled || lv_tick_elaps(tap_press_started_ms) >= 800) return;
     if (tap_press_x < SCREEN_WIDTH / 2) serial_previous_view();
     else serial_next_view();
+}
+
+static void update_plugin_view() {
+    uint8_t index = serial_active_view();
+    const PluginSceneSlot *slot = plugin_scene_get(index);
+    if (plugin_overlay && index == plugin_rendered_view && slot
+        && slot->revision == plugin_rendered_revision) return;
+
+    if (plugin_overlay) lv_obj_delete(plugin_overlay);
+    plugin_overlay = lv_obj_create(scr_dashboard);
+    lv_obj_remove_style_all(plugin_overlay);
+    lv_obj_set_size(plugin_overlay, SCREEN_WIDTH, SCREEN_HEIGHT);
+    lv_obj_set_style_bg_color(plugin_overlay, UI_COLOR_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(plugin_overlay, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_add_flag(plugin_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(plugin_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(plugin_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(plugin_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(plugin_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
+    plugin_rendered_view = index;
+    plugin_rendered_revision = slot ? slot->revision : 0;
+
+    if (!slot || !slot->ready) {
+        lv_obj_t *waiting = lv_label_create(plugin_overlay);
+        lv_label_set_text(waiting, "Loading plugin view...");
+        lv_obj_set_style_text_color(waiting, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+        lv_obj_set_style_text_font(waiting, &lv_font_montserrat_16, LV_PART_MAIN);
+        lv_obj_center(waiting);
+        return;
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, slot->json)) return; // validated at receive time
+    plugin_scene_draw(plugin_overlay, doc.as<JsonObjectConst>(), SCREEN_WIDTH, SCREEN_HEIGHT);
 }
 
 static void update_clock_view() {
@@ -1040,6 +1080,21 @@ void ui_dashboard_update(const MonitorState &state) {
     memcpy(&last_state, &state, sizeof(MonitorState));
     state_stored = true;
 
+    if (serial_is_plugin_view()) {
+        if (splash_overlay) {
+            lv_obj_delete(splash_overlay);
+            splash_overlay = splash_spinner = nullptr;
+        }
+        hide_standby_overlay();
+        update_plugin_view();
+        return;
+    }
+    if (plugin_overlay) {
+        lv_obj_delete(plugin_overlay);
+        plugin_overlay = nullptr;
+        plugin_rendered_view = 0xFF;
+    }
+
     if (serial_is_clock_view()) {
         if (splash_overlay != nullptr) {
             lv_obj_delete(splash_overlay);
@@ -1380,6 +1435,9 @@ void ui_dashboard_recreate() {
         clock_overlay      = nullptr;
         clock_time         = nullptr;
         clock_date         = nullptr;
+        plugin_overlay     = nullptr;
+        plugin_rendered_view = 0xFF;
+        plugin_rendered_revision = 0;
     }
 
     // Reset styles so they pick up new colors

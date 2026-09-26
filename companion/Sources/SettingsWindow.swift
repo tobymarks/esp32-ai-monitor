@@ -11,8 +11,8 @@
  * jede Seite liegt in einer eigenen NSScrollView. „Über AI Monitor" ist im
  * Footer jetzt ein SF-Symbol-Button (zusaetzlich im App-Menue).
  *
- * Ab v1.21.0: Die fünf Settings-Tabs sind in eigene Extension-Dateien
- * ausgelagert (SettingsWindow+Overview/Display/Connection/Updates/Diagnostics).
+ * Ab v1.21.0: Die Settings-Tabs sind in eigene Extension-Dateien
+ * ausgelagert (SettingsWindow+Overview/Display/Plugins/Connection/Updates/Diagnostics).
  * Diese Kern-Datei hält Klassendeklaration, gespeicherte Properties, Lifecycle,
  * den Seitengerüst-/Header-/Footer-Aufbau, gemeinsame Builder, die zentrale
  * `update()`-Logik sowie FlashDialogController und TimeZoneTableSource.
@@ -73,6 +73,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var viewsIntervalRow: NSView!
     var viewsFirmwareHint: NSTextField!
     var viewsSignature = ""
+    var pluginSourceField: NSTextField!
+    var pluginPreviewLabel: NSTextField!
+    var pluginInstallButton: NSButton!
+    var pluginListStack: NSStackView!
+    var pluginPreview: [String: Any]?
+    var pluginSettingsFields: [String: [String: NSTextField]] = [:]
+    var pluginsSignature = ""
     var setupCopyButton: NSButton!
 
     // Linke Spalte — CodexBar
@@ -154,6 +161,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     enum SettingsSection: Int, CaseIterable {
         case overview
         case display
+        case plugins
         case connection
         case updates
         case diagnostics
@@ -162,6 +170,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             switch self {
             case .overview: return "Übersicht"
             case .display: return "Display"
+            case .plugins: return "Plugins"
             case .connection: return "Verbindung"
             case .updates: return "Updates"
             case .diagnostics: return "Diagnose"
@@ -175,6 +184,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             switch self {
             case .overview: return "gauge.with.dots.needle.33percent"
             case .display: return "display"
+            case .plugins: return "square.stack.3d.up"
             case .connection: return "cable.connector"
             case .updates: return "arrow.down.circle"
             case .diagnostics: return "stethoscope"
@@ -408,6 +418,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let pages: [NSView] = [
             buildOverviewPage(),
             buildDisplayPage(),
+            buildPluginsPage(),
             buildConnectionPage(),
             buildUpdatesPage(),
             buildDiagnosticsPage()
@@ -601,6 +612,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         updateSetupBox()
         updateViewsSection()
+        updatePluginsSection()
 
         // CodexBar
         let src = monitor.codexBar
@@ -1276,7 +1288,7 @@ final class FlashDialogController: NSWindowController {
 ///
 /// Ohne das liegt der Ursprung einer NSScrollView unten links: ist der
 /// Seiteninhalt kuerzer als die sichtbare Flaeche, klebt er am unteren Rand
-/// statt oben zu beginnen. Betrifft alle fuenf Seiten des Einstellungsfensters,
+/// statt oben zu beginnen. Betrifft alle Seiten des Einstellungsfensters,
 /// sobald es groesser gezogen wird als der Inhalt.
 final class FlippedClipView: NSClipView {
     override var isFlipped: Bool { true }

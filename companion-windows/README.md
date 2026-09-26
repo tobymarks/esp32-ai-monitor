@@ -36,7 +36,7 @@ Umgebungsvariablen für die Entwicklung:
 |---|---|
 | `AIMONITOR_OPEN_SETTINGS=1` | Öffnet das Einstellungsfenster sofort beim Start. |
 | `AIMONITOR_CODEXBAR_FIXTURE_DIR=<dir>` | Provider aus `<provider>.json` bedienen statt über das CLI (siehe Fixture-Modus). |
-| `AIMONITOR_OPEN_PAGE=<seite>` | Startseite des Fensters: `overview`, `connection`, `display`, `updates`, `diagnostics`. |
+| `AIMONITOR_OPEN_PAGE=<seite>` | Startseite des Fensters: `overview`, `connection`, `display`, `plugins`, `updates`, `diagnostics`. |
 | `AIMONITOR_DEV_ACTION=check\|download\|flash` | Führt beim Start einmal `check_updates`, `download_firmware` oder `flash_firmware` aus und schreibt das Ergebnis ins Log (`flash` wartet bis zu 60 s auf ein Gerät). Variante über `AIMONITOR_DEV_VARIANT=ili9341\|st7789`. |
 
 Strg+C oder SIGTERM beenden die App wie „Beenden" im Tray: `standby` ans

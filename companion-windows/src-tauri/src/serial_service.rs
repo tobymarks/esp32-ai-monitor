@@ -7,20 +7,24 @@
 //! Quelle werden nur kurz gehalten, nie über einen blockierenden seriellen
 //! Zugriff hinweg.
 
-use crate::registry;
 use crate::poll;
+use crate::registry;
 use crate::settings::{ViewContent, ViewMode};
 use crate::state::{current_snapshot, AppState};
 use crate::timezone;
 use crate::tray;
-use aimonitor_core::envelope::{diagnostic_envelope, notice_envelope, usage_envelope, FrameContext};
-use aimonitor_core::protocol::{
-    Command, FrameIdCounter, Language, Orientation, ThemeSetting, DIAGNOSTIC_AFTER_CONNECT, DIAGNOSTIC_RESTORE,
-    GET_INFO_TIMEOUT, HEARTBEAT_INTERVAL, LATE_INFO_WINDOW, RECONNECT_BLOCK_WINDOW, REPAIR_COOLDOWN,
-    REPAIR_RECONNECT_DELAY, REPAIR_THRESHOLD, SCAN_INTERVAL, SEND_DEBOUNCE,
+use aimonitor_core::envelope::{
+    diagnostic_envelope, notice_envelope, usage_envelope, FrameContext,
 };
-use aimonitor_core::{DeviceInfo, DeviceProfile, Snapshot};
+use aimonitor_core::plugin::{scene_envelope, status_scene, SceneLayout};
+use aimonitor_core::protocol::{
+    Command, DisplayVariant, FrameIdCounter, Language, Orientation, ThemeSetting, DIAGNOSTIC_AFTER_CONNECT,
+    DIAGNOSTIC_RESTORE, GET_INFO_TIMEOUT, HEARTBEAT_INTERVAL, LATE_INFO_WINDOW,
+    RECONNECT_BLOCK_WINDOW, REPAIR_COOLDOWN, REPAIR_RECONNECT_DELAY, REPAIR_THRESHOLD,
+    SCAN_INTERVAL, SEND_DEBOUNCE,
+};
 use aimonitor_core::protocol::{DeviceMessage, ViewState};
+use aimonitor_core::{DeviceInfo, DeviceProfile, Snapshot};
 use aimonitor_serial::{list_ports, ports::choose_port, FrameReceipt, Link, LinkError};
 use chrono::{DateTime, Local, Utc};
 use serde::Serialize;
@@ -73,7 +77,9 @@ pub enum Job {
     Pause(Sender<()>),
     /// Scan wieder an. Mit `diagnostic_after_connect` geht nach dem nächsten
     /// Connect verzögert der Diagnose-Frame raus, danach der echte Snapshot.
-    Resume { diagnostic_after_connect: bool },
+    Resume {
+        diagnostic_after_connect: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
@@ -288,7 +294,13 @@ impl Service {
     }
 
     fn registry_profile(&self) -> Option<DeviceProfile> {
-        self.app.state::<AppState>().registry.lock().unwrap().current_profile().cloned()
+        self.app
+            .state::<AppState>()
+            .registry
+            .lock()
+            .unwrap()
+            .current_profile()
+            .cloned()
     }
 
     fn snapshot(&self) -> ConnectionSnapshot {
@@ -427,7 +439,11 @@ impl Service {
             return;
         };
         self.state = LinkState::Probing;
-        self.log_event(format!("Öffne {} ({})", candidate.name, candidate.chip.unwrap_or("unbekannter Chip")));
+        self.log_event(format!(
+            "Öffne {} ({})",
+            candidate.name,
+            candidate.chip.unwrap_or("unbekannter Chip")
+        ));
         let mut link = match Link::open(&candidate.name) {
             Ok(l) => l,
             Err(e) => {
@@ -459,7 +475,9 @@ impl Service {
     }
 
     fn poll_late_info(&mut self) {
-        let Some(link) = self.link.as_mut() else { return };
+        let Some(link) = self.link.as_mut() else {
+            return;
+        };
         match link.wait_for_info(LATE_INFO_SLICE) {
             Ok(info) => {
                 self.late_info_until = None;
@@ -479,7 +497,13 @@ impl Service {
     /// abmeldet, kommt unter demselben COM-Namen zurück; der alte Handle
     /// bleibt aber tot und muss neu geöffnet werden.
     fn check_port_still_present(&mut self) {
-        let Some((name, lost)) = self.link.as_ref().map(|l| (l.name().to_string(), l.is_lost())) else { return };
+        let Some((name, lost)) = self
+            .link
+            .as_ref()
+            .map(|l| (l.name().to_string(), l.is_lost()))
+        else {
+            return;
+        };
         if lost {
             self.disconnect("Lesefehler, Port wird neu geöffnet");
         } else if !list_ports().iter().any(|p| p.name == name) {
@@ -502,7 +526,10 @@ impl Service {
             registry::save(&self.app, &registry);
             resolved
         };
-        self.log_event(format!("Profil {:?}: {} ({})", outcome, profile.friendly_name, profile.mac));
+        self.log_event(format!(
+            "Profil {:?}: {} ({})",
+            outcome, profile.friendly_name, profile.mac
+        ));
         self.state = LinkState::Connected(info);
         self.profile = Some(profile.clone());
         self.unacked = 0;
@@ -511,7 +538,9 @@ impl Service {
         if self.diagnostic_after_connect {
             self.diagnostic_after_connect = false;
             self.diagnostic_due = Some(Instant::now() + DIAGNOSTIC_AFTER_CONNECT);
-            self.log_event(format!("Diagnose-Frame in {DIAGNOSTIC_AFTER_CONNECT:?} eingeplant"));
+            self.log_event(format!(
+                "Diagnose-Frame in {DIAGNOSTIC_AFTER_CONNECT:?} eingeplant"
+            ));
         }
         self.publish();
 
@@ -538,7 +567,9 @@ impl Service {
     /// Kommando schreiben; Schreibfehler trennen die Verbindung. Gibt `false`
     /// zurück, wenn danach keine Verbindung mehr besteht.
     fn send_command(&mut self, line: &str) -> bool {
-        let Some(link) = self.link.as_mut() else { return false };
+        let Some(link) = self.link.as_mut() else {
+            return false;
+        };
         let result = link.send_command(line);
         self.log_event(format!("-> {}", line.trim_end()));
         match result {
@@ -584,26 +615,52 @@ impl Service {
 
     fn frame_context(&self, snap: &Snapshot) -> FrameContext {
         let now = Utc::now();
-        let tz = self.app.state::<AppState>().settings.lock().unwrap().timezone.clone();
+        let tz = self
+            .app
+            .state::<AppState>()
+            .settings
+            .lock()
+            .unwrap()
+            .timezone
+            .clone();
         FrameContext::new(now, timezone::offset_minutes(&tz, now), snap.fetching)
     }
 
     /// Usage- oder Notice-Frame aus dem aktuellen Snapshot; `None`, wenn es
     /// nichts zu zeigen gibt (Spec 5.3).
-    fn build_payload(&mut self, info: &DeviceInfo, snap: Snapshot, view_index: Option<usize>) -> Option<(String, &'static str, i64)> {
+    fn build_payload(
+        &mut self,
+        info: &DeviceInfo,
+        snap: Snapshot,
+        view_index: Option<usize>,
+    ) -> Option<(String, &'static str, i64)> {
         let ctx = self.frame_context(&snap);
         let frame_id = self.frame_ids.next();
         let (payload, kind) = if let Some(entry) = &snap.entry {
-            (usage_envelope(entry, snap.percent_mode, &ctx, frame_id), "usage")
+            (
+                usage_envelope(entry, snap.percent_mode, &ctx, frame_id),
+                "usage",
+            )
         } else {
-            let key = snap.status.display_notice_key()
+            let key = snap
+                .status
+                .display_notice_key()
                 .or_else(|| snap.fetching.then_some("dsp.notice.loading"))?;
             if !info.supports_notice() {
-                self.log_event(format!("Hinweis {key} nicht gesendet, Firmware ohne notice-Unterstützung"));
+                self.log_event(format!(
+                    "Hinweis {key} nicht gesendet, Firmware ohne notice-Unterstützung"
+                ));
                 return None;
             }
-            let language = self.profile.as_ref().map(|p| p.language).unwrap_or_default();
-            (notice_envelope(snap.provider, notice_text(key, language), &ctx, frame_id), "notice")
+            let language = self
+                .profile
+                .as_ref()
+                .map(|p| p.language)
+                .unwrap_or_default();
+            (
+                notice_envelope(snap.provider, notice_text(key, language), &ctx, frame_id),
+                "notice",
+            )
         };
         if let Some(index) = view_index {
             let mut value: serde_json::Value = serde_json::from_str(&payload).ok()?;
@@ -614,13 +671,38 @@ impl Service {
     }
 
     fn configure_views(&mut self) {
-        let LinkState::Connected(info) = &self.state else { return };
-        if !info.supports_views() { return; }
-        let settings = self.app.state::<AppState>().settings.lock().unwrap().clone();
-        let contents: Vec<&str> = settings.views.iter().map(|v| match v {
-            ViewContent::Clock => "clock",
-            ViewContent::Provider(p) => p.key(),
-        }).collect();
+        let LinkState::Connected(info) = &self.state else {
+            return;
+        };
+        if !info.supports_views() {
+            return;
+        }
+        let settings = self
+            .app
+            .state::<AppState>()
+            .settings
+            .lock()
+            .unwrap()
+            .clone();
+        if settings
+            .views
+            .iter()
+            .any(|v| matches!(v, ViewContent::Plugin(_)))
+            && !info.supports_plugin_scenes()
+        {
+            self.log_event("Plugin-Fenster brauchen eine Firmware mit sceneProtocol 1");
+            self.publish();
+            return;
+        }
+        let contents: Vec<String> = settings
+            .views
+            .iter()
+            .map(|v| match v {
+                ViewContent::Clock => "clock".into(),
+                ViewContent::Provider(p) => p.key().into(),
+                ViewContent::Plugin(id) => format!("plugin:{id}"),
+            })
+            .collect();
         let line = json!({
             "cmd": "set_views", "views": contents,
             "mode": match settings.view_mode { ViewMode::Manual => "manual", ViewMode::Automatic => "automatic" },
@@ -633,10 +715,17 @@ impl Service {
     /// Nur eine passende Gerätekonfiguration darf die lokale Auswahl übernehmen.
     /// So überschreibt ein Reconnect keinen inzwischen am ESP gewählten Tab.
     fn restore_touch_selection(&mut self) {
-        let LinkState::Connected(info) = &self.state else { return };
-        if !info.supports_views() { return; }
+        let LinkState::Connected(info) = &self.state else {
+            return;
+        };
+        if !info.supports_views() {
+            return;
+        }
         let result = self.link.as_mut().unwrap().command_with_response(
-            "{\"cmd\":\"get_views\"}\n", "view_state", Duration::from_millis(500));
+            "{\"cmd\":\"get_views\"}\n",
+            "view_state",
+            Duration::from_millis(500),
+        );
         match result {
             Ok(Some(DeviceMessage::ViewState(view))) => self.apply_device_selection(view),
             Ok(_) => self.log_event("Keine Fensterantwort vom Gerät"),
@@ -646,11 +735,15 @@ impl Service {
     }
 
     fn poll_view_events(&mut self) {
-        let Some(link) = self.link.as_mut() else { return };
+        let Some(link) = self.link.as_mut() else {
+            return;
+        };
         link.poll_input();
         let events = link.take_view_events();
         self.absorb_link_log();
-        for view in events { self.apply_device_selection(view); }
+        for view in events {
+            self.apply_device_selection(view);
+        }
         if self.link.as_ref().is_some_and(Link::is_lost) {
             self.disconnect("Lesefehler beim Fensterereignis");
         }
@@ -660,38 +753,63 @@ impl Service {
         let app_state = self.app.state::<AppState>();
         let (changed, provider) = {
             let mut settings = app_state.settings.lock().unwrap();
-            let expected: Vec<&str> = settings.views.iter().map(|v| match v {
-                ViewContent::Clock => "clock", ViewContent::Provider(p) => p.key(),
-            }).collect();
-            let mode = match settings.view_mode { ViewMode::Manual => "manual", ViewMode::Automatic => "automatic" };
-            if view.views.iter().map(String::as_str).collect::<Vec<_>>() != expected
-                || view.mode != mode || view.interval != settings.view_interval_seconds
-                || view.active >= settings.views.len() || view.active == settings.active_view {
+            let expected: Vec<String> = settings
+                .views
+                .iter()
+                .map(|v| match v {
+                    ViewContent::Clock => "clock".into(),
+                    ViewContent::Provider(p) => p.key().into(),
+                    ViewContent::Plugin(id) => format!("plugin:{id}"),
+                })
+                .collect();
+            let mode = match settings.view_mode {
+                ViewMode::Manual => "manual",
+                ViewMode::Automatic => "automatic",
+            };
+            if view.views != expected
+                || view.mode != mode
+                || view.interval != settings.view_interval_seconds
+                || view.active >= settings.views.len()
+                || view.active == settings.active_view
+            {
                 return;
             }
             settings.active_view = view.active;
-            let provider = match settings.views[view.active] {
+            let provider = match &settings.views[view.active] {
                 ViewContent::Clock => None,
-                ViewContent::Provider(p) => { settings.provider = p; Some(p) },
+                ViewContent::Provider(p) => Some(*p),
+                ViewContent::Plugin(_) => None,
             };
+            if let Some(p) = provider {
+                settings.provider = p;
+            }
             settings.save(&self.app);
             (true, provider)
         };
         if changed {
             if let Some(provider) = provider {
-                app_state.source.lock().unwrap().set_provider(provider, Utc::now());
+                app_state
+                    .source
+                    .lock()
+                    .unwrap()
+                    .set_provider(provider, Utc::now());
                 poll::start_fetch(&self.app);
                 poll::refresh_views(&self.app);
             }
             let settings = app_state.settings.lock().unwrap().clone();
             let _ = self.app.emit(SETTINGS_EVENT, settings);
-            self.log_event(format!("Touch-Auswahl übernommen: Fenster {}", view.active + 1));
+            self.log_event(format!(
+                "Touch-Auswahl übernommen: Fenster {}",
+                view.active + 1
+            ));
             self.publish();
         }
     }
 
     fn send_data_frame(&mut self, trigger: &str) {
-        let LinkState::Connected(info) = &self.state else { return };
+        let LinkState::Connected(info) = &self.state else {
+            return;
+        };
         let info = info.clone();
         let selected = current_snapshot(&self.app);
         if !info.supports_views() {
@@ -700,19 +818,87 @@ impl Service {
             }
             return;
         }
-        let views = self.app.state::<AppState>().settings.lock().unwrap().views.clone();
-        let cached = self.app.state::<AppState>().view_sources.lock().unwrap().clone();
+        let views = self
+            .app
+            .state::<AppState>()
+            .settings
+            .lock()
+            .unwrap()
+            .views
+            .clone();
+        if views.iter().any(|v| matches!(v, ViewContent::Plugin(_)))
+            && !info.supports_plugin_scenes()
+        {
+            return;
+        }
+        let cached = self
+            .app
+            .state::<AppState>()
+            .view_sources
+            .lock()
+            .unwrap()
+            .clone();
         for (index, view) in views.iter().enumerate() {
-            let ViewContent::Provider(provider) = view else { continue };
+            if let ViewContent::Plugin(id) = view {
+                if !info.supports_plugin_scenes() {
+                    continue;
+                }
+                let orientation = self
+                    .profile
+                    .as_ref()
+                    .map(|profile| profile.orientation)
+                    .or(info.orientation);
+                let layout = if info.display == Some(DisplayVariant::St7701) {
+                    SceneLayout::Square
+                } else if matches!(
+                    orientation,
+                    Some(Orientation::LandscapeLeft | Orientation::LandscapeRight)
+                ) {
+                    SceneLayout::Landscape
+                } else {
+                    SceneLayout::Portrait
+                };
+                let scene = self
+                    .app
+                    .state::<AppState>()
+                    .plugins
+                    .lock()
+                    .unwrap()
+                    .records
+                    .get(id)
+                    .map(|record| record.scene(layout))
+                    .unwrap_or_else(|| {
+                        status_scene("Plugin missing", "Install this plugin in Settings")
+                    });
+                let frame_id = self.frame_ids.next();
+                match scene_envelope(id, index, scene, frame_id) {
+                    Ok(payload) => self.transmit(&info, payload, frame_id, "plugin", trigger),
+                    Err(e) => self.log_event(format!("Plugin-Szene {id} nicht gesendet: {e}")),
+                }
+                if !matches!(self.state, LinkState::Connected(_)) {
+                    break;
+                }
+                continue;
+            }
+            let ViewContent::Provider(provider) = view else {
+                continue;
+            };
             // Nach einem Wechsel lädt die Haupt-Source noch; bis dahin den
             // Fensterstand senden, damit die angezeigten Werte stehen bleiben.
-            let loading = selected.entry.is_none() && selected.fetching && cached.contains_key(provider);
-            let snap = if *provider == selected.provider && !loading { Some(selected.clone()) } else { cached.get(provider).cloned() };
+            let loading =
+                selected.entry.is_none() && selected.fetching && cached.contains_key(provider);
+            let snap = if *provider == selected.provider && !loading {
+                Some(selected.clone())
+            } else {
+                cached.get(provider).cloned()
+            };
             let Some(snap) = snap else { continue };
             if let Some((payload, kind, frame_id)) = self.build_payload(&info, snap, Some(index)) {
                 self.transmit(&info, payload, frame_id, kind, trigger);
             }
-            if !matches!(self.state, LinkState::Connected(_)) { break; }
+            if !matches!(self.state, LinkState::Connected(_)) {
+                break;
+            }
         }
     }
 
@@ -732,9 +918,23 @@ impl Service {
         self.transmit(&info, payload, frame_id, "diagnostic", "Testframe");
     }
 
-    fn transmit(&mut self, info: &DeviceInfo, payload: String, frame_id: i64, kind: &str, trigger: &str) {
-        let Some(link) = self.link.as_mut() else { return };
-        let result = link.send_frame(&payload, frame_id, info.supports_framed(), info.max_frame_bytes());
+    fn transmit(
+        &mut self,
+        info: &DeviceInfo,
+        payload: String,
+        frame_id: i64,
+        kind: &str,
+        trigger: &str,
+    ) {
+        let Some(link) = self.link.as_mut() else {
+            return;
+        };
+        let result = link.send_frame(
+            &payload,
+            frame_id,
+            info.supports_framed(),
+            info.max_frame_bytes(),
+        );
         self.absorb_link_log();
         match result {
             Ok(receipt) => {
@@ -742,11 +942,16 @@ impl Service {
                 self.last_frame_bytes = Some(payload.len());
                 self.last_frame_at = Some(Utc::now());
                 let summary = match &receipt {
-                    FrameReceipt::Ack { bytes, rows, .. } => format!("ack bytes={bytes} rows={rows}"),
+                    FrameReceipt::Ack { bytes, rows, .. } => {
+                        format!("ack bytes={bytes} rows={rows}")
+                    }
                     FrameReceipt::Error { message, .. } => format!("error: {message}"),
                     FrameReceipt::Timeout { .. } => "timeout, kein ACK".into(),
                 };
-                self.log_event(format!("Frame {frame_id} {kind} ({trigger}, {} B) -> {summary}", payload.len()));
+                self.log_event(format!(
+                    "Frame {frame_id} {kind} ({trigger}, {} B) -> {summary}",
+                    payload.len()
+                ));
                 self.last_receipt = Some(receipt.clone());
                 self.account_receipt(info, &receipt);
                 self.publish();
@@ -778,12 +983,21 @@ impl Service {
                 if self.unacked < REPAIR_THRESHOLD {
                     return;
                 }
-                let cooled = self.last_repair.map(|t| t.elapsed() >= REPAIR_COOLDOWN).unwrap_or(true);
+                let cooled = self
+                    .last_repair
+                    .map(|t| t.elapsed() >= REPAIR_COOLDOWN)
+                    .unwrap_or(true);
                 if !cooled {
-                    self.log_event(format!("{} unbestätigte Frames, Reparatur noch in Abkühlung", self.unacked));
+                    self.log_event(format!(
+                        "{} unbestätigte Frames, Reparatur noch in Abkühlung",
+                        self.unacked
+                    ));
                     return;
                 }
-                self.log_event(format!("{} unbestätigte Frames in Folge, Verbindung wird neu aufgebaut", self.unacked));
+                self.log_event(format!(
+                    "{} unbestätigte Frames in Folge, Verbindung wird neu aufgebaut",
+                    self.unacked
+                ));
                 self.last_repair = Some(Instant::now());
                 self.disconnect("Auto-Reparatur");
                 self.next_scan = Instant::now() + REPAIR_RECONNECT_DELAY;
@@ -822,7 +1036,11 @@ impl Service {
                 self.schedule_send();
             }
             Job::SendDiagnostic => self.send_diagnostic_frame(),
-            Job::ApplyProfile { theme, orientation, language } => {
+            Job::ApplyProfile {
+                theme,
+                orientation,
+                language,
+            } => {
                 self.profile = self.registry_profile();
                 if matches!(self.state, LinkState::Connected(_)) {
                     let mut ok = true;
@@ -871,14 +1089,20 @@ impl Service {
                 self.publish();
                 let _ = done.send(());
             }
-            Job::Resume { diagnostic_after_connect } => {
+            Job::Resume {
+                diagnostic_after_connect,
+            } => {
                 self.paused = false;
                 self.diagnostic_after_connect = diagnostic_after_connect;
                 self.last_disconnect = None;
                 self.next_scan = Instant::now();
                 self.log_event(format!(
                     "Fortgesetzt: Scan läuft wieder{}",
-                    if diagnostic_after_connect { ", Diagnose-Frame nach dem nächsten Connect" } else { "" }
+                    if diagnostic_after_connect {
+                        ", Diagnose-Frame nach dem nächsten Connect"
+                    } else {
+                        ""
+                    }
                 ));
                 self.publish();
             }
@@ -912,7 +1136,10 @@ mod tests {
         ] {
             assert!(!notice_text(key, Language::De).is_empty(), "{key} de");
             assert!(!notice_text(key, Language::En).is_empty(), "{key} en");
-            assert!(aimonitor_core::protocol::display_safe_text(notice_text(key, Language::De)).len() <= 63);
+            assert!(
+                aimonitor_core::protocol::display_safe_text(notice_text(key, Language::De)).len()
+                    <= 63
+            );
         }
         assert_eq!(notice_text("dsp.notice.nope", Language::De), "");
     }

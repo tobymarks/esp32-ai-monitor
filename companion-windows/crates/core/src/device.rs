@@ -5,7 +5,9 @@
 //! Das Format ist nicht mit den UserDefaults der Mac-App kompatibel, dort
 //! liegen Datumswerte als Sekunden seit 2001; hier RFC 3339.
 
-use crate::protocol::{DeviceInfo, DisplayVariant, Language, Orientation, ThemeSetting, LEGACY_DEVICE_MAC};
+use crate::protocol::{
+    DeviceInfo, DisplayVariant, Language, Orientation, ThemeSetting, LEGACY_DEVICE_MAC,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -101,7 +103,10 @@ impl DeviceRegistry {
     }
 
     pub fn current_profile_mut(&mut self) -> Option<&mut DeviceProfile> {
-        let mac = self.current_mac.clone().or_else(|| self.last_known_mac.clone())?;
+        let mac = self
+            .current_mac
+            .clone()
+            .or_else(|| self.last_known_mac.clone())?;
         self.devices.get_mut(&mac)
     }
 
@@ -131,7 +136,11 @@ impl DeviceRegistry {
     }
 
     /// Profil nach dem `info`-Handshake auflösen (main.swift:1967-2046).
-    pub fn resolve(&mut self, info: &DeviceInfo, now: DateTime<Utc>) -> (DeviceProfile, ResolveOutcome) {
+    pub fn resolve(
+        &mut self,
+        info: &DeviceInfo,
+        now: DateTime<Utc>,
+    ) -> (DeviceProfile, ResolveOutcome) {
         let mac = info.mac.clone();
 
         if let Some(existing) = self.devices.get_mut(&mac) {
@@ -170,7 +179,11 @@ impl DeviceRegistry {
         }
 
         // Neues Gerät: Auto-Name, Defaults aus dem zuletzt aktiven Profil.
-        let existing_names: HashSet<String> = self.devices.values().map(|p| p.friendly_name.clone()).collect();
+        let existing_names: HashSet<String> = self
+            .devices
+            .values()
+            .map(|p| p.friendly_name.clone())
+            .collect();
         let name = generate_auto_name(&existing_names, seed_from_time(now));
         let template = self.current_profile().cloned();
         let mut fresh = DeviceProfile::new(&mac, &name);
@@ -317,7 +330,12 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn info(mac: &str, version: &str, brightness: Option<i64>, display: Option<DisplayVariant>) -> DeviceInfo {
+    fn info(
+        mac: &str,
+        version: &str,
+        brightness: Option<i64>,
+        display: Option<DisplayVariant>,
+    ) -> DeviceInfo {
         DeviceInfo {
             version: version.into(),
             mac: mac.into(),
@@ -328,6 +346,7 @@ mod tests {
             brightness,
             serial_transport: None,
             max_frame_bytes: None,
+            scene_protocol: None,
             wifi_configured: None,
             wifi_connected: None,
             time_synced: None,
@@ -343,7 +362,10 @@ mod tests {
     #[test]
     fn creates_matches_and_updates() {
         let mut reg = DeviceRegistry::default();
-        let (p, o) = reg.resolve(&info("aa:bb", "2.17.0", Some(60), Some(DisplayVariant::Ili9341)), now());
+        let (p, o) = reg.resolve(
+            &info("aa:bb", "2.17.0", Some(60), Some(DisplayVariant::Ili9341)),
+            now(),
+        );
         assert_eq!(o, ResolveOutcome::Created);
         assert_eq!(p.brightness, 60);
         assert_eq!(p.display_variant, Some(DisplayVariant::Ili9341));
@@ -353,9 +375,17 @@ mod tests {
         reg.profile_mut("aa:bb").unwrap().orientation = Orientation::LandscapeLeft;
         let (p2, o2) = reg.resolve(&info("aa:bb", "2.18.0", Some(70), None), now());
         assert_eq!(o2, ResolveOutcome::Matched);
-        assert_eq!(p2.orientation, Orientation::LandscapeLeft, "Nutzereinstellung bleibt");
+        assert_eq!(
+            p2.orientation,
+            Orientation::LandscapeLeft,
+            "Nutzereinstellung bleibt"
+        );
         assert_eq!(p2.brightness, 70);
-        assert_eq!(p2.display_variant, Some(DisplayVariant::Ili9341), "unknown überschreibt nicht");
+        assert_eq!(
+            p2.display_variant,
+            Some(DisplayVariant::Ili9341),
+            "unknown überschreibt nicht"
+        );
         assert_eq!(p2.firmware_version.as_deref(), Some("2.18.0"));
     }
 
@@ -404,7 +434,10 @@ mod tests {
     #[test]
     fn json_round_trip_keeps_fields() {
         let mut reg = DeviceRegistry::default();
-        reg.resolve(&info("aa:bb", "2.17.0", Some(80), Some(DisplayVariant::St7789)), now());
+        reg.resolve(
+            &info("aa:bb", "2.17.0", Some(80), Some(DisplayVariant::St7789)),
+            now(),
+        );
         let json = reg.to_json();
         assert!(json.contains("\"friendlyName\""));
         assert!(json.contains("\"displayVariant\": \"st7789\""));

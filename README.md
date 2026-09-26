@@ -14,6 +14,20 @@ AI providers -> CodexBar CLI -> AI Monitor app (macOS / Windows) -> USB serial -
 
 The Mac app can also flash firmware, check GitHub Releases for app and firmware updates, and remember per-device display settings.
 
+### Display plugins (in development)
+
+The companion apps can install declarative `.aimplugin` files from disk or an
+HTTPS release URL. Each installed plugin appears as a placeable window in the
+display manager. Plugins can define separate portrait, landscape, and square
+layouts; the built-in AI dashboards remain the main purpose of the device.
+The desktop fetches plugin data and
+sends bounded drawing scenes to firmware with `sceneProtocol: 1`. Install that
+firmware once; installing another compatible plugin does not require flashing
+again. Plugins in this format contain no executable code, and the app shows
+their data origin and unsigned status before installation. See the
+[plugin architecture](docs/display-plugins.md), [authoring guide](docs/display-plugin-authoring.md),
+and [acceptance test](docs/display-plugin-test.md).
+
 ## Features
 
 - Provider views for Claude, ChatGPT, Antigravity, Gemini CLI, GitHub Copilot, and Cursor
@@ -81,15 +95,16 @@ Supported board family:
 
 - **ESP32-2432S028R / R board:** ILI9341 display controller
 - **ESP32-2432S028 / Hybrid board:** ST7789 display controller
+- **Guition ESP32-S3-4848S040:** 480×480 ST7701 display controller
 
-Common hardware:
+CYD hardware:
 
 - **Display:** [ESP32-2432S028 2.8" 320x240 TFT](https://de.aliexpress.com/item/1005007731775734.html)
 - **Touch:** XPT2046
 - **MCU:** ESP32-WROOM-32
 - **Backlight:** GPIO 21
 
-If the display stays white or shows noise after flashing, flash the other panel variant from the AI Monitor app.
+If a CYD stays white or shows noise after flashing, flash the other CYD panel variant from the AI Monitor app. Select the ST7701 image only for the Guition S3 board.
 
 ## Enclosures
 
@@ -113,6 +128,7 @@ Firmware targets:
 
 - `esp32dev`: ILI9341 / R-board build
 - `esp32dev-st7789`: ST7789 / Hybrid-board build
+- `esp32s3-4848s040`: ST7701 / Guition S3 square build
 
 ### Installer Binaries
 
@@ -147,7 +163,7 @@ The Windows app lives in `companion-windows/` and is built with Tauri 2 (Rust ba
 - Mac app releases use tags like `app-v1.17.1`.
 - Windows app releases use tags like `win-v1.0.0`; betas use `win-beta-v*` and are marked as prereleases.
 - Pushes to `main` that touch firmware or installer files build and deploy the GitHub Pages installer.
-- Firmware tags build release assets for both ILI9341 and ST7789 variants.
+- Firmware tags build release assets for ILI9341, ST7789, and ST7701 variants.
 - App tags build `AIMonitor.zip` and `AIMonitor.dmg` via the macOS workflow.
 - Windows tags build `AIMonitor-Setup.exe` plus a `.sha256` sidecar via the Windows workflow (Tauri NSIS bundler, silent install smoke test).
 - App release assets are signed with a Developer ID, notarized by Apple and stapled,
@@ -161,7 +177,7 @@ The Windows app lives in `companion-windows/` and is built with Tauri 2 (Rust ba
 | ESP32 Firmware | PlatformIO, Arduino-ESP32, TFT_eSPI, LVGL v9, ArduinoJson |
 | Mac App | Swift, AppKit, POSIX serial, GitHub Releases API |
 | Windows App | Tauri 2, Rust (serialport, espflash), React, GitHub Releases API |
-| Data Source | Local CodexBar CLI (macOS), Win-CodexBar CLI (Windows) |
+| Data Source | Local CodexBar CLI (macOS), Win-CodexBar CLI (Windows); explicit HTTPS JSON sources for display plugins |
 | Website | GitHub Pages |
 
 ## License

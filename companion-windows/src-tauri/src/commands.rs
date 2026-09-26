@@ -1,6 +1,7 @@
 //! Tauri-Commands für das Einstellungsfenster.
 
 use crate::flash::{self, FlashOutcome};
+use crate::plugins::{self, PluginInfo, PluginPreview};
 use crate::poll;
 use crate::registry;
 use crate::serial_service::{self, ConnectionSnapshot, Job};
@@ -9,11 +10,14 @@ use crate::state::{current_snapshot, AppState};
 use crate::timezone::{self, TimeZoneOption};
 use crate::updates::{self, FirmwareFile, InstallOutcome, UpdateStatus};
 use crate::window;
-use aimonitor_core::protocol::{DisplayVariant, Language as DisplayLanguage, Orientation, ThemeSetting};
+use aimonitor_core::protocol::{
+    DisplayVariant, Language as DisplayLanguage, Orientation, ThemeSetting,
+};
 use aimonitor_core::{DeviceProfile, Provider, Snapshot};
 use aimonitor_serial::PortCandidate;
 use chrono::Utc;
 use serde::Serialize;
+use serde_json::{Map, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -32,7 +36,11 @@ pub struct ProviderInfo {
 /// Wird von Tray und Frontend benutzt.
 pub fn apply_provider(app: &AppHandle, provider: Provider) {
     let state = app.state::<AppState>();
-    let changed = state.source.lock().unwrap().set_provider(provider, Utc::now());
+    let changed = state
+        .source
+        .lock()
+        .unwrap()
+        .set_provider(provider, Utc::now());
     let views_changed = {
         let mut settings = state.settings.lock().unwrap();
         // Im manuellen Modus zeigt das Display das aktive Fenster. Die Wahl
@@ -70,7 +78,11 @@ pub fn apply_provider(app: &AppHandle, provider: Provider) {
 /// Autostart über das Plugin setzen. Fehler werden gemeldet, nicht verschluckt.
 fn apply_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let manager = app.autolaunch();
-    let result = if enabled { manager.enable() } else { manager.disable() };
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
     result.map_err(|e| format!("Autostart: {e}"))
 }
 
@@ -129,11 +141,14 @@ pub fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, Stri
     if next.timezone != previous.timezone {
         serial_service::request_resend(&app);
     }
-    if next.views != previous.views || next.view_mode != previous.view_mode
+    if next.views != previous.views
+        || next.view_mode != previous.view_mode
         || next.view_interval_seconds != previous.view_interval_seconds
-        || next.active_view != previous.active_view {
+        || next.active_view != previous.active_view
+    {
         serial_service::send(&app, Job::ConfigureViews);
         poll::refresh_views(&app);
+        poll::refresh_plugins(&app);
     }
     if next.update_channel != previous.update_channel {
         // Anderer Kanal, andere Auswahl aus demselben Cache: Status neu melden.
@@ -162,6 +177,100 @@ pub fn list_providers() -> Vec<ProviderInfo> {
 pub fn rescan_cli(app: AppHandle) {
     app.state::<AppState>().source.lock().unwrap().rescan_cli();
     poll::emit_snapshot(&app);
+}
+
+#[tauri::command]
+pub fn list_plugins(state: State<'_, AppState>) -> Vec<PluginInfo> {
+    state.plugins.lock().unwrap().list()
+}
+
+#[tauri::command]
+pub async fn inspect_plugin(source: String) -> Result<PluginPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = plugins::read_source(&source)?;
+        plugins::inspect(&bytes)
+    })
+    .await
+    .map_err(|e| format!("plugin worker: {e}"))?
+}
+
+#[tauri::command]
+pub async fn install_plugin(
+    app: AppHandle,
+    source: String,
+    expected_sha256: String,
+) -> Result<PluginInfo, String> {
+    let bytes = tauri::async_runtime::spawn_blocking(move || plugins::read_source(&source))
+        .await
+        .map_err(|e| format!("plugin worker: {e}"))??;
+    let preview = plugins::inspect(&bytes)?;
+    if preview.sha256 != expected_sha256 {
+        return Err("plugin changed since inspection".into());
+    }
+    let state = app.state::<AppState>();
+    let (info, list) = {
+        let mut store = state.plugins.lock().unwrap();
+        let info = store.install(&bytes)?;
+        let list = store.list();
+        (info, list)
+    };
+    let _ = app.emit(plugins::PLUGINS_EVENT, list);
+    poll::refresh_plugins(&app);
+    serial_service::request_resend(&app);
+    Ok(info)
+}
+
+#[tauri::command]
+pub fn configure_plugin(
+    app: AppHandle,
+    id: String,
+    settings: Map<String, Value>,
+) -> Result<PluginInfo, String> {
+    let state = app.state::<AppState>();
+    let (info, list) = {
+        let mut store = state.plugins.lock().unwrap();
+        let info = store.configure(&id, settings)?;
+        let list = store.list();
+        (info, list)
+    };
+    let _ = app.emit(plugins::PLUGINS_EVENT, list);
+    poll::refresh_plugins(&app);
+    serial_service::request_resend(&app);
+    Ok(info)
+}
+
+#[tauri::command]
+pub fn remove_plugin(app: AppHandle, id: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let list = {
+        let mut store = state.plugins.lock().unwrap();
+        store.remove(&id)?;
+        store.list()
+    };
+    // Removing a plugin resolves its window assignments explicitly to clock.
+    let updated_settings = {
+        let mut settings = state.settings.lock().unwrap();
+        let mut changed = false;
+        for view in &mut settings.views {
+            if matches!(view, ViewContent::Plugin(plugin_id) if plugin_id == &id) {
+                *view = ViewContent::Clock;
+                changed = true;
+            }
+        }
+        if changed {
+            settings.save(&app);
+            Some(settings.clone())
+        } else {
+            None
+        }
+    };
+    if let Some(settings) = updated_settings {
+        serial_service::send(&app, Job::ConfigureViews);
+        let _ = app.emit(serial_service::SETTINGS_EVENT, settings);
+    }
+    let _ = app.emit(plugins::PLUGINS_EVENT, list);
+    serial_service::request_resend(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -201,7 +310,14 @@ pub fn set_manual_port(app: AppHandle, port: Option<String>) {
 
 #[tauri::command]
 pub fn get_devices(state: State<'_, AppState>) -> Vec<DeviceProfile> {
-    state.registry.lock().unwrap().devices.values().cloned().collect()
+    state
+        .registry
+        .lock()
+        .unwrap()
+        .devices
+        .values()
+        .cloned()
+        .collect()
 }
 
 /// Gerät umbenennen. Fehler kommen als i18n-Schlüssel zurück (disp.name.err.*).
@@ -220,7 +336,9 @@ pub fn rename_device(app: AppHandle, mac: String, name: String) -> Result<Device
         if registry.is_name_taken(&name, Some(&mac)) {
             return Err("disp.name.err.dup".into());
         }
-        let profile = registry.profile_mut(&mac).ok_or_else(|| "disp.profile.none".to_string())?;
+        let profile = registry
+            .profile_mut(&mac)
+            .ok_or_else(|| "disp.profile.none".to_string())?;
         profile.friendly_name = name;
         let profile = profile.clone();
         registry::save(&app, &registry);
@@ -244,7 +362,9 @@ pub fn update_profile(
         let state = app.state::<AppState>();
         let mut registry = state.registry.lock().unwrap();
         let is_current = registry.current_mac.as_deref() == Some(mac.as_str());
-        let profile = registry.profile_mut(&mac).ok_or_else(|| "disp.profile.none".to_string())?;
+        let profile = registry
+            .profile_mut(&mac)
+            .ok_or_else(|| "disp.profile.none".to_string())?;
         let job = Job::ApplyProfile {
             theme: (profile.theme != theme).then_some(theme),
             orientation: (profile.orientation != orientation).then_some(orientation),
@@ -327,7 +447,10 @@ pub fn get_update_status(app: AppHandle) -> UpdateStatus {
 
 /// Firmware-Asset der Variante in den Cache laden (Event `firmware-download`).
 #[tauri::command]
-pub async fn download_firmware(app: AppHandle, variant: DisplayVariant) -> Result<FirmwareFile, String> {
+pub async fn download_firmware(
+    app: AppHandle,
+    variant: DisplayVariant,
+) -> Result<FirmwareFile, String> {
     tauri::async_runtime::spawn_blocking(move || updates::download_firmware(&app, variant))
         .await
         .map_err(|e| e.to_string())?
@@ -335,16 +458,26 @@ pub async fn download_firmware(app: AppHandle, variant: DisplayVariant) -> Resul
 
 /// Firmware flashen (Event `flash-progress`). Fehler als Schlüssel flash.err.*.
 #[tauri::command]
-pub async fn flash_firmware(app: AppHandle, variant: DisplayVariant) -> Result<FlashOutcome, String> {
+pub async fn flash_firmware(
+    app: AppHandle,
+    variant: DisplayVariant,
+) -> Result<FlashOutcome, String> {
     tauri::async_runtime::spawn_blocking(move || flash::run(&app, variant))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn flash_local_firmware(app: AppHandle, variant: DisplayVariant, path: String) -> Result<FlashOutcome, String> {
-    tauri::async_runtime::spawn_blocking(move || flash::run_with_image(&app, variant, Some(path.into())))
-        .await.map_err(|e| e.to_string())?
+pub async fn flash_local_firmware(
+    app: AppHandle,
+    variant: DisplayVariant,
+    path: String,
+) -> Result<FlashOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        flash::run_with_image(&app, variant, Some(path.into()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Installer laden, prüfen, starten (Event `update-progress`); sonst Browser.
