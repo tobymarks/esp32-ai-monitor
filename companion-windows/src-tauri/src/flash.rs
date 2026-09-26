@@ -108,8 +108,8 @@ pub fn run_with_image(app: &AppHandle, variant: DisplayVariant, local_path: Opti
             msg
         })?;
         if !valid_extension || !metadata.is_file() || metadata.len() > MAX_IMAGE_BYTES {
-            emit_failed(app, variant, "flash.err.invalid.title", "flash.local.format", String::new());
-            return Err("flash.local.format".into());
+            emit_failed(app, variant, "flash.err.invalid.title", "flash.local.format.required", String::new());
+            return Err("flash.local.format.required".into());
         }
         let image = std::fs::read(&path).map_err(|e| {
             let msg = e.to_string();
@@ -141,7 +141,7 @@ pub fn run_with_image(app: &AppHandle, variant: DisplayVariant, local_path: Opti
             }
             "flash.release.corrupt"
         } else {
-            "flash.local.format"
+            "flash.local.format.required"
         };
         emit_failed(app, variant, "flash.err.invalid.title", detail, String::new());
         return Err(detail.into());

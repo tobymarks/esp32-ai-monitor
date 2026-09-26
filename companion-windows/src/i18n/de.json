@@ -140,6 +140,7 @@
   "flash.action.short": "Firmware flashen …",
   "flash.local.choose": "Firmware-Datei auswählen …",
   "flash.local.format": "Vollständiges ESP32-Image ab 0x0 (.bin)",
+  "flash.local.format.required": "Ein vollständiges ESP32-Image ab 0x0 (.bin) ist erforderlich.",
   "flash.local.version": "Lokale Datei",
   "flash.local.recovery": "Du kannst dieselbe Datei erneut versuchen oder eine andere Datei auswählen.",
   "flash.err.invalid.title": "Firmware-Image ungültig.",

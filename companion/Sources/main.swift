@@ -1601,6 +1601,8 @@ class FirmwareManager {
 
     var hasUpdate: Bool {
         guard let release = latestRelease else { return false }
+        // Nach einem lokalen Flash bleibt diese Markierung bis zum nächsten Flash gesetzt.
+        // Ohne gemeldete Geräteversion darf deshalb kein Release-Update angeboten werden.
         guard let installed = Settings.shared.installedFirmwareVersion else { return !flashingLocalImage }
         // Siehe AppUpdateManager.hasUpdate: `!=` bot Downgrades als Updates an.
         // Ein Downgrade setzt zusaetzlich die Geraete-Einstellungen zurueck.
