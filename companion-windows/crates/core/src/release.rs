@@ -125,10 +125,14 @@ pub fn is_newer(current_version: &str, latest_version: &str) -> bool {
 }
 
 /// Asset für die Board-Variante; alte Releases ohne ST7789-Asset fallen auf
-/// das Standard-Asset zurück (main.swift:1326-1331).
+/// das Standard-Asset zurück (main.swift:1326-1331). Für das S3-Board gibt es
+/// keinen Rückgriff: ein ESP32-Image liefe dort nicht.
 pub fn firmware_asset<'a>(release: &'a GitHubRelease, variant: DisplayVariant) -> Option<(&'a GitHubAsset, bool)> {
     if let Some(a) = release.asset(variant.firmware_asset()) {
         return Some((a, false));
+    }
+    if variant.is_esp32s3() {
+        return None;
     }
     release
         .asset(DisplayVariant::Ili9341.firmware_asset())
@@ -222,6 +226,10 @@ mod tests {
         assert_eq!(missing_firmware_assets(old), ["ai-monitor-st7789.bin"]);
         assert!(missing_firmware_assets(&r[2]).is_empty());
         assert_eq!(cached_firmware_name(DisplayVariant::St7789, "v2.17.0"), "ai-monitor-st7789-v2.17.0.bin");
+        // Kein S3-Image im Release: kein Rückgriff auf das ESP32-Image, und
+        // das fehlende S3-Asset blockiert den Flash der CYDs nicht.
+        assert!(firmware_asset(old, DisplayVariant::St7701).is_none());
+        assert_eq!(missing_firmware_assets(old), ["ai-monitor-st7789.bin"]);
         assert_eq!(r[3].version(), "2.18.0-beta.1");
         assert_eq!(normalize_version("win-beta-v1.1.0-beta.2"), "1.1.0-beta.2");
     }

@@ -17,8 +17,45 @@ pub const FLASH_BAUD: u32 = 460_800;
 /// Gemergte Images beginnen beim Bootloader.
 pub const FLASH_ADDRESS: u32 = 0x0;
 
-/// Layout aus scripts/build_firmware.sh für die unterstützten 4-MB-CYD-Boards.
-pub const MAX_IMAGE_BYTES: u64 = 0x400000;
+/// Zielchip eines gemergten Images (Layout aus scripts/build_firmware.sh).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetChip {
+    /// CYD: ESP32 mit 4 MB, Bootloader an 0x1000.
+    Esp32,
+    /// Guition 4848S040: ESP32-S3 mit 16 MB, Bootloader an 0x0.
+    Esp32S3,
+}
+
+impl TargetChip {
+    pub fn max_image_bytes(self) -> u64 {
+        match self {
+            TargetChip::Esp32 => 0x400000,
+            TargetChip::Esp32S3 => 0x1000000,
+        }
+    }
+
+    fn bootloader_offset(self) -> usize {
+        match self {
+            TargetChip::Esp32 => 0x1000,
+            TargetChip::Esp32S3 => 0x0,
+        }
+    }
+
+    /// `chip_id` im Image-Header (Byte 12–13).
+    fn image_chip_id(self) -> u16 {
+        match self {
+            TargetChip::Esp32 => 0,
+            TargetChip::Esp32S3 => 9,
+        }
+    }
+
+    fn espflash(self) -> Chip {
+        match self {
+            TargetChip::Esp32 => Chip::Esp32,
+            TargetChip::Esp32S3 => Chip::Esp32s3,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageValidationError {
@@ -26,11 +63,16 @@ pub enum ImageValidationError {
     Layout,
 }
 
-pub fn validate_merged_image(image: &[u8]) -> Result<(), ImageValidationError> {
-    if image.len() < 0x11000 || image.len() as u64 > MAX_IMAGE_BYTES {
+/// Prüft Größe, Bootloader, Partitionstabelle und App sowie die Chip-Kennung
+/// im Bootloader-Header — so landet kein Image auf dem falschen Board.
+pub fn validate_merged_image(image: &[u8], chip: TargetChip) -> Result<(), ImageValidationError> {
+    if image.len() < 0x11000 || image.len() as u64 > chip.max_image_bytes() {
         return Err(ImageValidationError::Size);
     }
-    if image[0x1000] != 0xE9 || image[0x8000..0x8002] != [0xAA, 0x50] || image[0x10000] != 0xE9 {
+    let boot = chip.bootloader_offset();
+    let chip_id = u16::from_le_bytes([image[boot + 12], image[boot + 13]]);
+    if image[boot] != 0xE9 || chip_id != chip.image_chip_id()
+        || image[0x8000..0x8002] != [0xAA, 0x50] || image[0x10000] != 0xE9 {
         return Err(ImageValidationError::Layout);
     }
     Ok(())
@@ -118,7 +160,7 @@ fn usb_info_for(port_name: &str) -> UsbPortInfo {
 
 /// Image ab Offset 0 schreiben, verifizieren, Hard-Reset. Der Port muss
 /// frei sein; der Aufrufer trennt vorher die normale Verbindung.
-pub fn flash_image(port_name: &str, image: &[u8], baud: u32, on_event: &mut dyn FnMut(FlashEvent)) -> Result<(), FlashError> {
+pub fn flash_image(port_name: &str, image: &[u8], baud: u32, chip: TargetChip, on_event: &mut dyn FnMut(FlashEvent)) -> Result<(), FlashError> {
     if image.is_empty() {
         return Err(FlashError::EmptyImage);
     }
@@ -138,7 +180,7 @@ pub fn flash_image(port_name: &str, image: &[u8], baud: u32, on_event: &mut dyn 
         115_200,
     );
 
-    let mut flasher = Flasher::connect(connection, true, true, false, Some(Chip::Esp32), Some(baud))
+    let mut flasher = Flasher::connect(connection, true, true, false, Some(chip.espflash()), Some(baud))
         .map_err(|e| FlashError::Connect(e.to_string()))?;
     let chip = flasher.chip();
     on_event(FlashEvent::Connected { chip: format!("{chip:?}") });
@@ -172,7 +214,7 @@ mod tests {
     #[test]
     fn empty_image_is_rejected_before_touching_the_port() {
         let mut events = Vec::new();
-        let r = flash_image("/dev/does-not-exist", &[], FLASH_BAUD, &mut |e| events.push(e));
+        let r = flash_image("/dev/does-not-exist", &[], FLASH_BAUD, TargetChip::Esp32, &mut |e| events.push(e));
         assert!(matches!(r, Err(FlashError::EmptyImage)));
         assert!(events.is_empty());
     }
@@ -181,12 +223,30 @@ mod tests {
     fn merged_image_validation_distinguishes_app_image() {
         let mut image = vec![0xff; 0x11000];
         image[0x1000] = 0xe9;
+        image[0x100c..0x100e].copy_from_slice(&[0, 0]);
         image[0x8000..0x8002].copy_from_slice(&[0xaa, 0x50]);
         image[0x10000] = 0xe9;
-        assert!(validate_merged_image(&image).is_ok());
+        assert!(validate_merged_image(&image, TargetChip::Esp32).is_ok());
+        // Dasselbe Image passt nicht zum S3: Bootloader liegt dort an 0x0.
+        assert_eq!(validate_merged_image(&image, TargetChip::Esp32S3), Err(ImageValidationError::Layout));
         image[0x1000] = 0xff;
-        assert_eq!(validate_merged_image(&image), Err(ImageValidationError::Layout));
-        assert_eq!(validate_merged_image(&vec![0xe9; 0x10000]), Err(ImageValidationError::Size));
-        assert_eq!(validate_merged_image(&vec![0xe9; MAX_IMAGE_BYTES as usize + 1]), Err(ImageValidationError::Size));
+        assert_eq!(validate_merged_image(&image, TargetChip::Esp32), Err(ImageValidationError::Layout));
+        assert_eq!(validate_merged_image(&vec![0xe9; 0x10000], TargetChip::Esp32), Err(ImageValidationError::Size));
+        assert_eq!(validate_merged_image(&vec![0xe9; TargetChip::Esp32.max_image_bytes() as usize + 1], TargetChip::Esp32), Err(ImageValidationError::Size));
+    }
+
+    #[test]
+    fn s3_image_needs_bootloader_at_zero_with_s3_chip_id() {
+        let mut image = vec![0xff; 0x11000];
+        image[0] = 0xe9;
+        image[12..14].copy_from_slice(&9u16.to_le_bytes());
+        image[0x8000..0x8002].copy_from_slice(&[0xaa, 0x50]);
+        image[0x10000] = 0xe9;
+        assert!(validate_merged_image(&image, TargetChip::Esp32S3).is_ok());
+        // ESP32-Kennung im Header: falsches Board.
+        image[12..14].copy_from_slice(&0u16.to_le_bytes());
+        assert_eq!(validate_merged_image(&image, TargetChip::Esp32S3), Err(ImageValidationError::Layout));
+        // 16 MB sind für den S3 erlaubt, für den ESP32 nicht.
+        assert_eq!(validate_merged_image(&vec![0xe9; 0x400001], TargetChip::Esp32), Err(ImageValidationError::Size));
     }
 }

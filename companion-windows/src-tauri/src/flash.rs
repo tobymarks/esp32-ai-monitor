@@ -11,7 +11,7 @@ use crate::serial_service::{self, Job};
 use crate::state::AppState;
 use crate::updates;
 use aimonitor_core::protocol::DisplayVariant;
-use aimonitor_flash::{flash_image, validate_merged_image, FlashError, FlashEvent, MAX_IMAGE_BYTES, FLASH_BAUD};
+use aimonitor_flash::{flash_image, validate_merged_image, FlashError, FlashEvent, TargetChip, FLASH_BAUD};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -98,6 +98,7 @@ pub fn run_with_image(app: &AppHandle, variant: DisplayVariant, local_path: Opti
 
     let port = state.connection.lock().unwrap().port.clone().ok_or_else(|| "esp32.none.info".to_string())?;
     println!("[flash] Start: Variante {} auf {port}", variant.wire());
+    let chip = if variant.is_esp32s3() { TargetChip::Esp32S3 } else { TargetChip::Esp32 };
 
     // Firmware-Datei sicherstellen; der Download meldet sich über firmware-download.
     let (image, release) = if let Some(path) = local_path {
@@ -107,7 +108,7 @@ pub fn run_with_image(app: &AppHandle, variant: DisplayVariant, local_path: Opti
             emit_failed(app, variant, "flash.err.nofile.title", "flash.err.nofile.detail", msg.clone());
             msg
         })?;
-        if !valid_extension || !metadata.is_file() || metadata.len() > MAX_IMAGE_BYTES {
+        if !valid_extension || !metadata.is_file() || metadata.len() > chip.max_image_bytes() {
             emit_failed(app, variant, "flash.err.invalid.title", "flash.local.format.required", String::new());
             return Err("flash.local.format.required".into());
         }
@@ -133,7 +134,7 @@ pub fn run_with_image(app: &AppHandle, variant: DisplayVariant, local_path: Opti
         })?;
         (image, Some(file))
     };
-    if let Err(reason) = validate_merged_image(&image) {
+    if let Err(reason) = validate_merged_image(&image, chip) {
         eprintln!("[flash] Ungültiges Image: {reason:?}");
         let detail = if let Some(file) = &release {
             if let Err(e) = std::fs::remove_file(&file.path) {
@@ -162,7 +163,7 @@ pub fn run_with_image(app: &AppHandle, variant: DisplayVariant, local_path: Opti
     let started = Instant::now();
     let app_events = app.clone();
     let mut last_percent: Option<u32> = None;
-    let result = flash_image(&port, &image, FLASH_BAUD, &mut |event| {
+    let result = flash_image(&port, &image, FLASH_BAUD, chip, &mut |event| {
         let (phase, percent, message) = match &event {
             FlashEvent::Connecting => ("connecting", None, None),
             FlashEvent::Connected { chip } => ("connected", None, Some(chip.clone())),

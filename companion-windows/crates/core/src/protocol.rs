@@ -160,6 +160,8 @@ impl Language {
 pub enum DisplayVariant {
     Ili9341,
     St7789,
+    /// Guition ESP32-S3-4848S040 (480x480), ab Firmware 2.19.0.
+    St7701,
 }
 
 impl DisplayVariant {
@@ -167,6 +169,7 @@ impl DisplayVariant {
         match self {
             DisplayVariant::Ili9341 => "ili9341",
             DisplayVariant::St7789 => "st7789",
+            DisplayVariant::St7701 => "st7701",
         }
     }
 
@@ -175,6 +178,7 @@ impl DisplayVariant {
         match s.trim().to_ascii_lowercase().as_str() {
             "ili9341" => Some(Self::Ili9341),
             "st7789" => Some(Self::St7789),
+            "st7701" => Some(Self::St7701),
             _ => None,
         }
     }
@@ -184,7 +188,13 @@ impl DisplayVariant {
         match self {
             DisplayVariant::Ili9341 => "ai-monitor.bin",
             DisplayVariant::St7789 => "ai-monitor-st7789.bin",
+            DisplayVariant::St7701 => "ai-monitor-st7701.bin",
         }
+    }
+
+    /// Board mit ESP32-S3 statt ESP32: anderer Chip und anderes Speicherlayout.
+    pub fn is_esp32s3(self) -> bool {
+        self == DisplayVariant::St7701
     }
 }
 

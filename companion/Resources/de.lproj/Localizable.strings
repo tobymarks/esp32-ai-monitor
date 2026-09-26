@@ -134,6 +134,8 @@
 "flashdlg.variant" = "Board-Variante";
 "flashdlg.variant.alt" = "Alternative (ST7789) — CYD-2432S028";
 "flashdlg.variant.hint" = "Im Zweifel zuerst Standard probieren. Wenn das Display nach dem Flash rauscht oder gekippt ist, die Alternative wählen.";
+"flashdlg.variant.s3" = "Guition 4848S040 (ESP32-S3, 480×480)";
+"flashdlg.variant.s3.missing" = "Guition 4848S040 (ESP32-S3) — im aktuellen Release noch nicht enthalten";
 "flashdlg.variant.standard" = "Standard (ILI9341) — CYD-2432S028R";
 "frame.unconfirmed" = " · noch nicht bestätigt";
 "fw.foreign.cta" = "Dieses Gerät hat keine AI-Monitor-Firmware. Jetzt flashen, um loszulegen.";

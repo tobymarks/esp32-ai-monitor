@@ -134,6 +134,8 @@
 "flashdlg.variant" = "Board variant";
 "flashdlg.variant.alt" = "Alternative (ST7789) — CYD-2432S028";
 "flashdlg.variant.hint" = "When in doubt, try Standard first. If the display shows noise or looks wrong after flashing, pick the alternative.";
+"flashdlg.variant.s3" = "Guition 4848S040 (ESP32-S3, 480×480)";
+"flashdlg.variant.s3.missing" = "Guition 4848S040 (ESP32-S3) — not in the current release yet";
 "flashdlg.variant.standard" = "Standard (ILI9341) — CYD-2432S028R";
 "frame.unconfirmed" = " · not confirmed yet";
 "fw.foreign.cta" = "This device has no AI Monitor firmware. Flash it to get started.";

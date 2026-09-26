@@ -69,6 +69,7 @@ pub struct AppUpdate {
 pub struct CachedFirmware {
     pub ili9341: bool,
     pub st7789: bool,
+    pub st7701: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +82,8 @@ pub struct FirmwareUpdate {
     pub installed_version: Option<String>,
     pub has_update: bool,
     pub missing_assets: Vec<String>,
+    /// Liegt im Release ein Image für das S3-Board (ab Firmware 2.19.0)?
+    pub s3_available: bool,
     pub cached: CachedFirmware,
 }
 
@@ -290,6 +293,7 @@ pub fn status(app: &AppHandle) -> UpdateStatus {
         .map(|(r, dir)| CachedFirmware {
             ili9341: dir.join(release::cached_firmware_name(DisplayVariant::Ili9341, &r.tag_name)).is_file(),
             st7789: dir.join(release::cached_firmware_name(DisplayVariant::St7789, &r.tag_name)).is_file(),
+            st7701: dir.join(release::cached_firmware_name(DisplayVariant::St7701, &r.tag_name)).is_file(),
         })
         .unwrap_or_default();
     let latest_version = fw_release.as_ref().map(|r| r.version());
@@ -307,6 +311,9 @@ pub fn status(app: &AppHandle) -> UpdateStatus {
             .as_ref()
             .map(|r| release::missing_firmware_assets(r).iter().map(|s| s.to_string()).collect())
             .unwrap_or_default(),
+        s3_available: fw_release
+            .as_ref()
+            .is_some_and(|r| r.asset(DisplayVariant::St7701.firmware_asset()).is_some()),
         cached,
     };
 

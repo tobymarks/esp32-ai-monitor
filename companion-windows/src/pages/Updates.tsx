@@ -354,12 +354,16 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
 
               <h4>{t("flashdlg.variant")}</h4>
               <div className="radio-group" role="radiogroup" aria-label={t("flashdlg.variant")}>
-                {(["ili9341", "st7789"] as DisplayVariant[]).map((v) => (
-                  <label key={v} className="radio-row">
-                    <input type="radio" name="variant" value={v} checked={variant === v} onChange={() => setVariant(v)} />
-                    <span>{t(v === "ili9341" ? "flashdlg.variant.standard" : "flashdlg.variant.alt")}</span>
-                  </label>
-                ))}
+                {(["ili9341", "st7789", "st7701"] as DisplayVariant[]).map((v) => {
+                  // Das S3-Image gibt es erst ab Firmware 2.19.0; eine lokale Datei geht immer.
+                  const unavailable = v === "st7701" && !localPath && !fw?.s3Available;
+                  return (
+                    <label key={v} className="radio-row">
+                      <input type="radio" name="variant" value={v} checked={variant === v} disabled={unavailable} onChange={() => setVariant(v)} />
+                      <span>{t(v === "ili9341" ? "flashdlg.variant.standard" : v === "st7789" ? "flashdlg.variant.alt" : unavailable ? "flashdlg.variant.s3.missing" : "flashdlg.variant.s3")}</span>
+                    </label>
+                  );
+                })}
               </div>
               <p className="muted small">{t("flashdlg.variant.hint")}</p>
 
@@ -421,7 +425,7 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
                       <button type="button" className="btn" onClick={() => runFlash(variant)} disabled={!port}>
                         {t("flash.retry")}
                       </button>
-                      {!localPath && <button
+                      {!localPath && variant !== "st7701" && <button
                         type="button"
                         className="btn"
                         onClick={() => runFlash(variant === "ili9341" ? "st7789" : "ili9341")}

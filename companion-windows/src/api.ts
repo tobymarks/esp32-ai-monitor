@@ -104,7 +104,7 @@ export type ConnectionState = "disconnected" | "probing" | "connected" | "foreig
 export type Orientation = "portrait" | "landscape_left" | "landscape_right";
 export type ThemeSetting = "system" | "dark" | "light";
 export type DisplayLanguage = "de" | "en";
-export type DisplayVariant = "ili9341" | "st7789";
+export type DisplayVariant = "ili9341" | "st7789" | "st7701";
 
 export interface DeviceInfo {
   version: string;
@@ -210,7 +210,8 @@ export interface FirmwareUpdate {
   installedVersion: string | null;
   hasUpdate: boolean;
   missingAssets: string[];
-  cached: { ili9341: boolean; st7789: boolean };
+  s3Available: boolean;
+  cached: { ili9341: boolean; st7789: boolean; st7701: boolean };
 }
 
 export interface UpdateStatus {

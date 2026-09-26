@@ -1053,12 +1053,14 @@ final class FlashDialogController: NSWindowController {
                              preflightItems: [String],
                              warning: String?,
                              canStart: Bool,
+                             s3Available: Bool,
                              completion: @escaping (String?) -> Void) {
         let controller = FlashDialogController(info: info,
                                                defaultVariant: defaultVariant,
                                                preflightItems: preflightItems,
                                                warning: warning,
-                                               canStart: canStart)
+                                               canStart: canStart,
+                                               s3Available: s3Available)
         controller.completion = completion
         guard let window = controller.window else { completion(nil); return }
         // Modal gegenueber dem Settings-Fenster (falls offen), sonst
@@ -1072,24 +1074,29 @@ final class FlashDialogController: NSWindowController {
     private var completion: ((String?) -> Void)?
     private var radioStandard: NSButton!
     private var radioAlternative: NSButton!
+    private var radioS3: NSButton!
     private var startBtn: NSButton!
     private let defaultVariant: String
     private let infoText: String
     private let preflightItems: [String]
     private let warning: String?
     private let canStart: Bool
+    /// Liegt ein S3-Image vor (Release ab 2.19.0 oder lokale Datei)?
+    private let s3Available: Bool
 
     init(info: String,
          defaultVariant: String,
          preflightItems: [String],
          warning: String?,
-         canStart: Bool) {
+         canStart: Bool,
+         s3Available: Bool) {
         self.infoText = info
         self.defaultVariant = defaultVariant
         self.preflightItems = preflightItems
         self.warning = warning
         self.canStart = canStart
-        let rect = NSRect(x: 0, y: 0, width: 520, height: 380)
+        self.s3Available = s3Available
+        let rect = NSRect(x: 0, y: 0, width: 520, height: 410)
         let mask: NSWindow.StyleMask = [.titled, .closable]
         let window = NSWindow(contentRect: rect, styleMask: mask,
                               backing: .buffered, defer: false)
@@ -1148,8 +1155,16 @@ final class FlashDialogController: NSWindowController {
         radioAlternative.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(radioAlternative)
 
+        radioS3 = NSButton(radioButtonWithTitle: L(s3Available ? "flashdlg.variant.s3" : "flashdlg.variant.s3.missing"),
+                           target: self, action: #selector(variantChanged(_:)))
+        radioS3.isEnabled = s3Available
+        radioS3.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(radioS3)
+
         // Default-Auswahl setzen.
-        if defaultVariant == kDisplayVariantST7789 {
+        if defaultVariant == kDisplayVariantST7701 && s3Available {
+            radioS3.state = .on
+        } else if defaultVariant == kDisplayVariantST7789 {
             radioAlternative.state = .on
         } else {
             radioStandard.state = .on
@@ -1209,7 +1224,11 @@ final class FlashDialogController: NSWindowController {
             radioAlternative.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
             radioAlternative.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
 
-            hint.topAnchor.constraint(equalTo: radioAlternative.bottomAnchor, constant: 12),
+            radioS3.topAnchor.constraint(equalTo: radioAlternative.bottomAnchor, constant: 6),
+            radioS3.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            radioS3.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+
+            hint.topAnchor.constraint(equalTo: radioS3.bottomAnchor, constant: 12),
             hint.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
             hint.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
 
@@ -1229,8 +1248,14 @@ final class FlashDialogController: NSWindowController {
     }
 
     @objc private func onStart() {
-        let chosen: String = (radioAlternative.state == .on)
-            ? kDisplayVariantST7789 : kDisplayVariantILI9341
+        let chosen: String
+        if radioS3.state == .on {
+            chosen = kDisplayVariantST7701
+        } else if radioAlternative.state == .on {
+            chosen = kDisplayVariantST7789
+        } else {
+            chosen = kDisplayVariantILI9341
+        }
         NSApp.stopModal()
         completion?(chosen)
         completion = nil

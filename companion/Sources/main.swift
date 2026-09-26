@@ -54,13 +54,35 @@ let kFirmwareAssetName = "ai-monitor.bin"
 let kFirmwareAssetByDisplay: [String: String] = [
     "ili9341": "ai-monitor.bin",
     "st7789":  "ai-monitor-st7789.bin",
+    "st7701":  "ai-monitor-st7701.bin",
 ]
 
 /// Display-Variante: stabile String-IDs. Passen zu den FW-Werten im
 /// get_info-`display`-Feld (ab FW v2.10.1).
 let kDisplayVariantILI9341 = "ili9341"
 let kDisplayVariantST7789  = "st7789"
+/// Ab FW 2.19.0: Guition ESP32-S3-4848S040 (480x480, ST7701S).
+let kDisplayVariantST7701  = "st7701"
 let kDisplayVariantDefault = kDisplayVariantILI9341
+/// Varianten, die jedes Firmware-Release mitbringt. Das S3-Image gibt es erst
+/// ab 2.19.0 — fehlt es, bleibt der Flash für die CYDs trotzdem möglich.
+let kRequiredFirmwareVariants = [kDisplayVariantILI9341, kDisplayVariantST7789]
+
+/// Chip und Speicherlayout eines Firmware-Images ab 0x0.
+struct FirmwareChip {
+    /// Wert für `esptool --chip`.
+    let esptoolName: String
+    /// `chip_id` im Image-Header (Byte 12–13): 0 = ESP32, 9 = ESP32-S3.
+    let imageChipId: UInt16
+    let bootloaderOffset: UInt64
+    let maxImageBytes: Int
+}
+let kFirmwareChipESP32   = FirmwareChip(esptoolName: "esp32", imageChipId: 0, bootloaderOffset: 0x1000, maxImageBytes: 0x400000)
+let kFirmwareChipESP32S3 = FirmwareChip(esptoolName: "esp32s3", imageChipId: 9, bootloaderOffset: 0x0, maxImageBytes: 0x1000000)
+
+func firmwareChip(for variant: String) -> FirmwareChip {
+    variant == kDisplayVariantST7701 ? kFirmwareChipESP32S3 : kFirmwareChipESP32
+}
 let kFirmwareCheckInterval: TimeInterval = 6 * 3600
 let kFlashBaudRate = 460800
 let kAppAssetName = "AIMonitor.zip"
@@ -1212,7 +1234,14 @@ class FirmwareManager {
     var missingExpectedAssetNames: [String] {
         guard let release = latestRelease else { return [] }
         let available = Set(release.assets.map { $0.name })
-        return kFirmwareAssetByDisplay.values.sorted().filter { !available.contains($0) }
+        return kRequiredFirmwareVariants.compactMap { kFirmwareAssetByDisplay[$0] }.filter { !available.contains($0) }
+    }
+
+    /// Liegt im aktuellen Release ein Image für diese Variante? Für das S3-Board
+    /// erst ab 2.19.0.
+    func releaseHasAsset(for variant: String) -> Bool {
+        guard let release = latestRelease, let name = kFirmwareAssetByDisplay[variant] else { return false }
+        return release.assets.contains { $0.name == name }
     }
 
     var hasExpectedReleaseAssets: Bool {
@@ -1370,8 +1399,11 @@ class FirmwareManager {
     func downloadFirmware(variant: String, completion: @escaping (Bool, String?) -> Void) {
         guard let release = latestRelease else { completion(false, L("release.none.title")); return }
         let requestedAsset = kFirmwareAssetByDisplay[variant] ?? kFirmwareAssetName
+        // Der Rückgriff auf das ILI9341-Image gilt nur für die CYD-Varianten —
+        // auf dem S3 liefe ein ESP32-Image nicht.
+        let fallbackAllowed = firmwareChip(for: variant).esptoolName == kFirmwareChipESP32.esptoolName
         let asset: GitHubAsset? = release.assets.first(where: { $0.name == requestedAsset })
-            ?? release.assets.first(where: { $0.name == kFirmwareAssetName })
+            ?? (fallbackAllowed ? release.assets.first(where: { $0.name == kFirmwareAssetName }) : nil)
         guard let asset = asset else {
             completion(false, "Kein \(requestedAsset) im Release \(release.tag_name)"); return
         }
@@ -1444,7 +1476,7 @@ class FirmwareManager {
         }
     }
 
-    func flashFirmware(port: String, localPath: String? = nil, completion: @escaping (Bool, String) -> Void) {
+    func flashFirmware(port: String, variant: String, localPath: String? = nil, completion: @escaping (Bool, String) -> Void) {
         guard let binPath = localPath ?? downloadedBinPath, FileManager.default.fileExists(atPath: binPath) else {
             completion(false, recordFlashFailure(L("flash.err.nofile"))); return
         }
@@ -1466,18 +1498,23 @@ class FirmwareManager {
             self.recordFlashFailure(message)
             completion(false, message)
         }
-        // Layout aus scripts/build_firmware.sh für die unterstützten 4-MB-CYD-Boards.
+        // Layout aus scripts/build_firmware.sh: CYD mit 4 MB und Bootloader an
+        // 0x1000, S3 mit 16 MB und Bootloader an 0x0. Die Chip-Kennung im
+        // Header verhindert, dass ein Image auf dem falschen Board landet.
+        let chip = firmwareChip(for: variant)
         let length = ((try? FileManager.default.attributesOfItem(atPath: binPath))?[.size] as? NSNumber)?.intValue ?? 0
-        guard length >= 0x11000 && length <= 0x400000 else {
+        guard length >= 0x11000 && length <= chip.maxImageBytes else {
             rejectInvalidImage(); return
         }
-        handle.seek(toFileOffset: 0x1000)
-        let boot = handle.readData(ofLength: 1)
+        handle.seek(toFileOffset: chip.bootloaderOffset)
+        let boot = handle.readData(ofLength: 14)
         handle.seek(toFileOffset: 0x8000)
         let partitions = handle.readData(ofLength: 2)
         handle.seek(toFileOffset: 0x10000)
         let app = handle.readData(ofLength: 1)
-        guard boot.first == 0xE9 && partitions == Data([0xAA, 0x50]) && app.first == 0xE9 else {
+        let bootChipId = boot.count == 14 ? UInt16(boot[12]) | UInt16(boot[13]) << 8 : UInt16.max
+        guard boot.first == 0xE9 && bootChipId == chip.imageChipId
+                && partitions == Data([0xAA, 0x50]) && app.first == 0xE9 else {
             rejectInvalidImage(); return
         }
         guard let tool = resolveEsptool() else {
@@ -1493,7 +1530,7 @@ class FirmwareManager {
             let outputPipe = Pipe()
             let errorPipe = Pipe()
             let esptoolArgs = [
-                "--chip", "esp32",
+                "--chip", chip.esptoolName,
                 "--port", port,
                 "--baud", "\(kFlashBaudRate)",
                 "write_flash", "0x0", binPath
@@ -3844,7 +3881,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                            defaultVariant: defaultVariant,
                                            preflightItems: preflight,
                                            warning: warning,
-                                           canStart: canStart) { [weak self] chosenVariant in
+                                           canStart: canStart,
+                                           s3Available: fw.releaseHasAsset(for: kDisplayVariantST7701)) { [weak self] chosenVariant in
             guard let self = self else { return }
             guard let variant = chosenVariant else { return }  // Abbrechen
             self.performFlash(port: port, variant: variant)
@@ -3875,7 +3913,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                defaultVariant: variant,
                                                preflightItems: [L("flash.local.format"), L("flash.hint.cable")],
                                                warning: nil,
-                                               canStart: fw.resolveEsptool() != nil) { [weak self] chosenVariant in
+                                               canStart: fw.resolveEsptool() != nil,
+                                               s3Available: true) { [weak self] chosenVariant in
                 guard let chosenVariant = chosenVariant else { return }
                 guard let currentPort = self?.monitor.serialPort.connectedPort else {
                     self?.alert(title: L("esp32.none.title"), info: L("esp32.none.info"), style: .warning)
@@ -3890,7 +3929,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let fw = FirmwareManager.shared
         fw.beginFlashAttempt(port: port, variant: variant)
         monitor.serialPort.stopScanning()
-        fw.flashFirmware(port: port, localPath: path) { [weak self] success, message in
+        fw.flashFirmware(port: port, variant: variant, localPath: path) { [weak self] success, message in
             DispatchQueue.main.async {
                 self?.monitor.serialPort.startScanning()
                 if success {
@@ -3924,7 +3963,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let proceed: () -> Void = { [weak self] in
             guard let self = self else { return }
             self.monitor.serialPort.stopScanning()
-            fw.flashFirmware(port: port) { [weak self] success, message in
+            fw.flashFirmware(port: port, variant: variant) { [weak self] success, message in
                 DispatchQueue.main.async {
                     self?.monitor.serialPort.startScanning()
                     if success {
@@ -3955,17 +3994,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func presentFlashRecovery(message: String, port: String, variant: String) {
         let alert = NSAlert()
         alert.messageText = L("flash.failed.title")
-        alert.informativeText = "\(message)\n\nRecovery: Du kannst denselben Flash erneut versuchen oder die andere Display-Variante flashen."
+        // Die andere Display-Variante gibt es nur bei den CYDs; das S3-Board hat
+        // genau ein Panel.
+        let offerOtherVariant = variant != kDisplayVariantST7701
+        alert.informativeText = offerOtherVariant
+            ? "\(message)\n\nRecovery: Du kannst denselben Flash erneut versuchen oder die andere Display-Variante flashen."
+            : "\(message)\n\nRecovery: Du kannst denselben Flash erneut versuchen."
         alert.alertStyle = .critical
         alert.addButton(withTitle: L("flash.retry"))
-        alert.addButton(withTitle: L("flash.othervariant.short"))
+        if offerOtherVariant { alert.addButton(withTitle: L("flash.othervariant.short")) }
         alert.addButton(withTitle: "Schließen")
         present(alert) { [weak self] response in
             guard let self = self else { return }
             switch response {
             case .alertFirstButtonReturn:
                 self.performFlash(port: port, variant: variant)
-            case .alertSecondButtonReturn:
+            case .alertSecondButtonReturn where offerOtherVariant:
                 self.performFlash(port: port, variant: self.oppositeDisplayVariant(variant))
             default:
                 break
