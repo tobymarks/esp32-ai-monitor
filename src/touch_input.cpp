@@ -1,3 +1,6 @@
+// Nur das CYD hat den XPT2046; das S3-Board liest GT911 in board_s3.cpp.
+#if defined(BOARD_CYD)
+
 #include "touch_input.h"
 #include "config.h"
 
@@ -64,3 +67,5 @@ bool touch_input_read(uint16_t *x, uint16_t *y, uint8_t orientation) {
     }
     return true;
 }
+
+#endif // BOARD_CYD

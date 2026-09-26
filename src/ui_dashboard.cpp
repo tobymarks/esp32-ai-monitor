@@ -46,6 +46,11 @@ static lv_obj_t *scr_dashboard      = nullptr;
 // Standard two-limit layout: landscape arcs or portrait bars.
 // ChatGPT's single-limit ring works in both orientations.
 static bool landscape_layout = false;
+// Quadratisches Panel (Guition 4848S040, 480x480): Woche als grosser Ring,
+// Sitzung als Balken darunter, jeweils mit Countdown und Reset-Zeitpunkt.
+static bool square_layout = false;
+// Ab dieser Auslastung wird der Sitzungsbalken im quadratischen Layout orange.
+static const int SESSION_WARN_PERCENT = 90;
 
 // Header
 static lv_obj_t *lbl_provider       = nullptr;
@@ -66,6 +71,11 @@ static lv_obj_t *bar_weekly         = nullptr;   // null in landscape
 static lv_obj_t *arc_weekly         = nullptr;   // null in portrait
 static lv_obj_t *lbl_weekly_title   = nullptr;
 static lv_obj_t *lbl_weekly_reset   = nullptr;
+
+// Nur im quadratischen Layout: absoluter Reset-Zeitpunkt ("Freitag, 14:00 Uhr")
+static lv_obj_t *lbl_session_reset_abs = nullptr;
+static lv_obj_t *lbl_weekly_reset_abs  = nullptr;
+static lv_obj_t *lbl_single_reset_abs  = nullptr;
 
 // ChatGPT with a single available limit: centered ring in either orientation.
 static lv_obj_t *lbl_single_title   = nullptr;
@@ -134,11 +144,10 @@ static inline bool widgets_ready() {
              && lbl_wifi_status  != nullptr
              && lbl_status_dot   != nullptr;
     if (!base) return false;
-    if (landscape_layout) {
-        return arc_session != nullptr && arc_weekly != nullptr;
-    } else {
-        return bar_session != nullptr && bar_weekly != nullptr;
-    }
+    // Je Limit gibt es entweder einen Bogen oder einen Balken — im
+    // quadratischen Layout die Woche als Bogen und die Sitzung als Balken.
+    return (arc_session != nullptr || bar_session != nullptr)
+        && (arc_weekly != nullptr || bar_weekly != nullptr);
 }
 
 // ============================================================
@@ -425,27 +434,149 @@ static void create_arc_block(
     lv_label_set_long_mode(*out_reset_lbl, LV_LABEL_LONG_DOT);
 }
 
+// ============================================================
+// Quadratisches Layout: grosser Ring mit Titel, Prozent und Countdown im
+// Inneren, darunter der absolute Reset-Zeitpunkt.
+// ============================================================
+static void create_big_ring(
+    lv_obj_t *parent,
+    const char *title,
+    int16_t cx,
+    int16_t top,
+    int16_t diameter,
+    lv_obj_t **out_title_lbl,
+    lv_obj_t **out_arc,
+    lv_obj_t **out_pct_lbl,
+    lv_obj_t **out_reset_lbl,
+    lv_obj_t **out_reset_abs_lbl
+) {
+    const int16_t inner_w = diameter - 70;
+
+    *out_arc = lv_arc_create(parent);
+    lv_obj_set_size(*out_arc, diameter, diameter);
+    lv_obj_set_pos(*out_arc, cx - diameter / 2, top);
+    lv_arc_set_rotation(*out_arc, 270);       // start at 12 o'clock
+    lv_arc_set_bg_angles(*out_arc, 0, 360);
+    lv_arc_set_range(*out_arc, 0, 100);
+    lv_arc_set_value(*out_arc, 0);
+    lv_obj_remove_style(*out_arc, NULL, LV_PART_KNOB);
+    lv_obj_clear_flag(*out_arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(*out_arc, 24, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(*out_arc, UI_COLOR_BAR_BG, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(*out_arc, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(*out_arc, 24, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(*out_arc, ui_bar_color(PROVIDER_CLAUDE), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(*out_arc, LV_OPA_COVER, LV_PART_INDICATOR);
+
+    *out_title_lbl = lv_label_create(parent);
+    lv_label_set_text(*out_title_lbl, title);
+    lv_obj_set_style_text_color(*out_title_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_title_lbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_width(*out_title_lbl, inner_w);
+    lv_obj_set_style_text_align(*out_title_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(*out_title_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_align_to(*out_title_lbl, *out_arc, LV_ALIGN_CENTER, 0, -52);
+
+    *out_pct_lbl = lv_label_create(parent);
+    lv_label_set_text(*out_pct_lbl, "--%");
+    lv_obj_set_style_text_color(*out_pct_lbl, UI_COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_pct_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_width(*out_pct_lbl, inner_w);
+    lv_obj_set_style_text_align(*out_pct_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(*out_pct_lbl, LV_LABEL_LONG_CLIP);
+    lv_obj_align_to(*out_pct_lbl, *out_arc, LV_ALIGN_CENTER, 0, 0);
+
+    *out_reset_lbl = lv_label_create(parent);
+    lv_label_set_text(*out_reset_lbl, "--");
+    lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_width(*out_reset_lbl, inner_w);
+    lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(*out_reset_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_align_to(*out_reset_lbl, *out_arc, LV_ALIGN_CENTER, 0, 52);
+
+    *out_reset_abs_lbl = lv_label_create(parent);
+    lv_label_set_text(*out_reset_abs_lbl, "");
+    lv_obj_set_style_text_color(*out_reset_abs_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_abs_lbl, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_width(*out_reset_abs_lbl, diameter + 80);
+    lv_obj_set_style_text_align(*out_reset_abs_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(*out_reset_abs_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(*out_reset_abs_lbl, cx - (diameter + 80) / 2, top + diameter + 8);
+}
+
+// Quadratisches Layout: Sitzung als breiter Balken. Oben Titel links und
+// Prozent rechts, unten Countdown links und Reset-Zeitpunkt rechts.
+static void create_session_strip(lv_obj_t *parent, int16_t x, int16_t y, int16_t w) {
+    lbl_session_title = lv_label_create(parent);
+    lv_label_set_text(lbl_session_title, L(STR_SESSION));
+    lv_obj_set_style_text_color(lbl_session_title, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_session_title, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_pos(lbl_session_title, x, y + 10);
+
+    lbl_session_pct = lv_label_create(parent);
+    lv_label_set_text(lbl_session_pct, "--%");
+    lv_obj_set_style_text_color(lbl_session_pct, UI_COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_session_pct, &lv_font_montserrat_36, LV_PART_MAIN);
+    lv_obj_set_width(lbl_session_pct, w / 2);
+    lv_obj_set_style_text_align(lbl_session_pct, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_set_pos(lbl_session_pct, x + w / 2, y);
+
+    bar_session = lv_bar_create(parent);
+    lv_obj_set_size(bar_session, w, 18);
+    lv_obj_set_pos(bar_session, x, y + 48);
+    lv_bar_set_range(bar_session, 0, 100);
+    lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(bar_session, UI_COLOR_BAR_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bar_session, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(bar_session, 9, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar_session, ui_bar_color(PROVIDER_CLAUDE), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(bar_session, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(bar_session, 9, LV_PART_INDICATOR);
+
+    lbl_session_reset = lv_label_create(parent);
+    lv_label_set_text(lbl_session_reset, "--");
+    lv_obj_set_style_text_color(lbl_session_reset, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_session_reset, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_width(lbl_session_reset, w / 2);
+    lv_label_set_long_mode(lbl_session_reset, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(lbl_session_reset, x, y + 76);
+
+    lbl_session_reset_abs = lv_label_create(parent);
+    lv_label_set_text(lbl_session_reset_abs, "");
+    lv_obj_set_style_text_color(lbl_session_reset_abs, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_session_reset_abs, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_width(lbl_session_reset_abs, w / 2);
+    lv_obj_set_style_text_align(lbl_session_reset_abs, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_label_set_long_mode(lbl_session_reset_abs, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(lbl_session_reset_abs, x + w / 2, y + 76);
+}
+
 static void create_antigravity_row(
     lv_obj_t *parent,
     uint8_t idx,
     int16_t x,
     int16_t y,
     int16_t row_w,
-    bool compact
+    bool compact,
+    bool large = false
 ) {
     if (idx >= AG_ROW_COUNT) return;
 
-    const int16_t pad = 8;
-    const int16_t title_y = compact ? 4 : 4;
-    const int16_t bar_y = compact ? 20 : 24;
-    const int16_t meta_y = compact ? 33 : 40;
-    const int16_t bar_h = compact ? 8 : 8;
+    // `large`: quadratisches Panel, groessere Schrift und dickerer Balken.
+    const int16_t pad = large ? 12 : 8;
+    const int16_t title_y = 4;
+    const int16_t bar_y = large ? 40 : (compact ? 20 : 24);
+    const int16_t meta_y = large ? 66 : (compact ? 33 : 40);
+    const int16_t bar_h = large ? 16 : 8;
     const int16_t bar_w = row_w - (pad * 2);
+    const lv_font_t *title_font = large ? &lv_font_montserrat_24 : &lv_font_montserrat_14;
+    const lv_font_t *meta_font  = large ? &lv_font_montserrat_16 : &lv_font_montserrat_12;
 
     ag_title[idx] = lv_label_create(parent);
     lv_label_set_text(ag_title[idx], ag_default_title(idx));
     lv_obj_set_style_text_color(ag_title[idx], UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(ag_title[idx], &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ag_title[idx], title_font, LV_PART_MAIN);
     lv_obj_set_pos(ag_title[idx], x + pad, y + title_y);
 
     ag_bar[idx] = lv_bar_create(parent);
@@ -463,7 +594,7 @@ static void create_antigravity_row(
     ag_pct[idx] = lv_label_create(parent);
     lv_label_set_text(ag_pct[idx], "--%");
     lv_obj_set_style_text_color(ag_pct[idx], UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(ag_pct[idx], &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ag_pct[idx], meta_font, LV_PART_MAIN);
     lv_obj_set_width(ag_pct[idx], bar_w / 2);
     lv_obj_set_pos(ag_pct[idx], x + pad, y + meta_y);
     lv_obj_set_style_text_align(ag_pct[idx], LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
@@ -471,7 +602,7 @@ static void create_antigravity_row(
     ag_reset[idx] = lv_label_create(parent);
     lv_label_set_text(ag_reset[idx], "--");
     lv_obj_set_style_text_color(ag_reset[idx], UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(ag_reset[idx], &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ag_reset[idx], meta_font, LV_PART_MAIN);
     lv_obj_set_width(ag_reset[idx], bar_w / 2);
     lv_obj_set_pos(ag_reset[idx], x + pad + (bar_w / 2), y + meta_y);
     lv_obj_set_style_text_align(ag_reset[idx], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
@@ -492,6 +623,8 @@ static void set_standard_widgets_visible(bool visible) {
     set_obj_hidden(lbl_session_title, hidden);
     set_obj_hidden(lbl_session_pct, hidden);
     set_obj_hidden(lbl_session_reset, hidden);
+    set_obj_hidden(lbl_session_reset_abs, hidden);
+    set_obj_hidden(lbl_weekly_reset_abs, hidden);
     set_obj_hidden(lbl_weekly_title, hidden);
     set_obj_hidden(lbl_weekly_pct, hidden);
     set_obj_hidden(lbl_weekly_reset, hidden);
@@ -517,6 +650,7 @@ static void set_single_widgets_visible(bool visible) {
     set_obj_hidden(arc_single, !visible);
     set_obj_hidden(lbl_single_pct, !visible);
     set_obj_hidden(lbl_single_reset, !visible);
+    set_obj_hidden(lbl_single_reset_abs, !visible);
 }
 
 // ============================================================
@@ -646,8 +780,9 @@ void ui_dashboard_create() {
     int16_t sw = SCREEN_WIDTH;
     int16_t sh = SCREEN_HEIGHT;
 
-    // Landscape = wider than tall (320x240)
+    // Landscape = wider than tall (320x240); square = 480x480 (S3-Board)
     landscape_layout = (sw > sh);
+    square_layout = (sw == sh);
 
     scr_dashboard = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(scr_dashboard, UI_COLOR_BG, LV_PART_MAIN);
@@ -700,8 +835,45 @@ void ui_dashboard_create() {
     // left stale globals from the opposite layout after orientation switch)
     bar_session = nullptr; bar_weekly = nullptr;
     arc_session = nullptr; arc_weekly = nullptr;
+    lbl_session_reset_abs = nullptr;
+    lbl_weekly_reset_abs = nullptr;
+    lbl_single_reset_abs = nullptr;
 
-    if (landscape_layout) {
+    if (square_layout) {
+        // ---- Quadratisch: Woche als grosser Ring, Sitzung als Balken ----
+        // Die Woche sperrt bei Erreichen die ganze Woche, deshalb bekommt sie
+        // den meisten Platz.
+        const int16_t ring_d   = 270;
+        const int16_t ring_top = header_h + 14;
+        create_big_ring(
+            scr_dashboard, L(STR_WEEKLY),
+            sw / 2, ring_top, ring_d,
+            &lbl_weekly_title, &arc_weekly, &lbl_weekly_pct,
+            &lbl_weekly_reset, &lbl_weekly_reset_abs
+        );
+
+        const int16_t strip_y = ring_top + ring_d + 38;
+        divider_middle = ui_create_divider(scr_dashboard, strip_y - 6);
+        create_session_strip(scr_dashboard, 24, strip_y, sw - 48);
+
+        // ---- Mehrere Modell-Zeilen (Antigravity u. a.): drei grosse Zeilen ----
+        const int16_t row_x   = 12;
+        const int16_t row_w   = sw - 24;
+        const int16_t row_gap = 10;
+        const int16_t row_y0  = header_h + 12;
+        const int16_t row_h   = ((int16_t)sh - row_y0 - 12 - 2 * row_gap) / AG_ROW_COUNT;
+        for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
+            create_antigravity_row(
+                scr_dashboard,
+                i,
+                row_x,
+                row_y0 + (int16_t)i * (row_h + row_gap),
+                row_w,
+                false,
+                true
+            );
+        }
+    } else if (landscape_layout) {
         // ---- Landscape: two filled-arc cells side by side ----
         int16_t cell_top = header_h + 2;
         int16_t cell_h   = (int16_t)sh - header_h - 2;
@@ -713,16 +885,17 @@ void ui_dashboard_create() {
         int16_t left_cx  = cell_w / 2;
         int16_t right_cx = cell_w + cell_w / 2;
 
+        // Woche links, Sitzung rechts: die Woche ist das wichtigere Limit.
         create_arc_block(
-            scr_dashboard, L(STR_SESSION),
+            scr_dashboard, L(STR_WEEKLY),
             left_cx, cell_top, cell_w, cell_h, arc_d,
-            &lbl_session_title, &arc_session, &lbl_session_pct, &lbl_session_reset
+            &lbl_weekly_title, &arc_weekly, &lbl_weekly_pct, &lbl_weekly_reset
         );
 
         create_arc_block(
-            scr_dashboard, L(STR_WEEKLY),
+            scr_dashboard, L(STR_SESSION),
             right_cx, cell_top, cell_w, cell_h, arc_d,
-            &lbl_weekly_title, &arc_weekly, &lbl_weekly_pct, &lbl_weekly_reset
+            &lbl_session_title, &arc_session, &lbl_session_pct, &lbl_session_reset
         );
 
         // ---- Landscape Antigravity: three compact rows ----
@@ -746,22 +919,23 @@ void ui_dashboard_create() {
         const int16_t block_h       = 114;
         int16_t available_h         = (int16_t)sh - header_h;
         int16_t zone_h              = available_h / 2;
-        int16_t session_y           = header_h + (zone_h - block_h) / 2;
+        // Woche oben, Sitzung darunter: die Woche ist das wichtigere Limit.
+        int16_t weekly_y            = header_h + (zone_h - block_h) / 2;
         int16_t middle_divider_y    = header_h + zone_h;
-        int16_t weekly_y            = middle_divider_y + (zone_h - block_h) / 2;
-
-        create_usage_block(
-            scr_dashboard, L(STR_SESSION),
-            session_y,
-            &lbl_session_title, &lbl_session_pct, &bar_session, &lbl_session_reset
-        );
-
-        divider_middle = ui_create_divider(scr_dashboard, middle_divider_y);
+        int16_t session_y           = middle_divider_y + (zone_h - block_h) / 2;
 
         create_usage_block(
             scr_dashboard, L(STR_WEEKLY),
             weekly_y,
             &lbl_weekly_title, &lbl_weekly_pct, &bar_weekly, &lbl_weekly_reset
+        );
+
+        divider_middle = ui_create_divider(scr_dashboard, middle_divider_y);
+
+        create_usage_block(
+            scr_dashboard, L(STR_SESSION),
+            session_y,
+            &lbl_session_title, &lbl_session_pct, &bar_session, &lbl_session_reset
         );
 
         // ---- Portrait Antigravity: three rows ----
@@ -783,11 +957,20 @@ void ui_dashboard_create() {
     }
 
     // Reuse the existing ring style, centered in the area below the header.
-    create_arc_block(
-        scr_dashboard, L(STR_WEEKLY),
-        sw / 2, header_h + 2, sw - 24, sh - header_h - 2, 140,
-        &lbl_single_title, &arc_single, &lbl_single_pct, &lbl_single_reset
-    );
+    if (square_layout) {
+        create_big_ring(
+            scr_dashboard, L(STR_WEEKLY),
+            sw / 2, header_h + 50, 300,
+            &lbl_single_title, &arc_single, &lbl_single_pct,
+            &lbl_single_reset, &lbl_single_reset_abs
+        );
+    } else {
+        create_arc_block(
+            scr_dashboard, L(STR_WEEKLY),
+            sw / 2, header_h + 2, sw - 24, sh - header_h - 2, 140,
+            &lbl_single_title, &arc_single, &lbl_single_pct, &lbl_single_reset
+        );
+    }
     set_single_widgets_visible(false);
 
     // Default screen mode is Session + Weekly.
@@ -951,6 +1134,10 @@ void ui_dashboard_update(const MonitorState &state) {
             lv_obj_set_style_arc_color(arc_single, ui_bar_color(state.provider), LV_PART_INDICATOR);
             format_reset_compact(state.usage.row_reset_epoch[0], buf, sizeof(buf));
             lv_label_set_text(lbl_single_reset, buf);
+            if (lbl_single_reset_abs) {
+                format_reset_date(state.usage.row_reset_epoch[0], buf, sizeof(buf));
+                lv_label_set_text(lbl_single_reset_abs, buf);
+            }
         } else if (uses_compact_rows) {
             lv_color_t ag_color = ui_bar_color(state.provider);
             for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
@@ -990,8 +1177,10 @@ void ui_dashboard_update(const MonitorState &state) {
             if (s_val < 0) s_val = 0;
             if (s_val > 100) s_val = 100;
             lv_color_t session_color = ui_bar_color(state.provider);
+            // Quadratisches Layout: kurz vor der Sitzungsgrenze warnen.
+            if (square_layout && s_val >= SESSION_WARN_PERCENT) session_color = UI_COLOR_BAR_ORANGE;
 
-            if (landscape_layout && arc_session) {
+            if (arc_session) {
                 lv_arc_set_value(arc_session, s_val);
                 lv_obj_set_style_arc_color(arc_session, session_color, LV_PART_INDICATOR);
                 lv_obj_set_style_text_color(lbl_session_pct, UI_COLOR_TEXT, LV_PART_MAIN);
@@ -1003,6 +1192,10 @@ void ui_dashboard_update(const MonitorState &state) {
             // --- Session reset (compact, no "Reset in" prefix) ---
             format_reset_compact(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
             lv_label_set_text(lbl_session_reset, buf);
+            if (lbl_session_reset_abs) {
+                format_reset_date(state.usage.five_hour_reset_epoch, buf, sizeof(buf));
+                lv_label_set_text(lbl_session_reset_abs, buf);
+            }
 
             // --- Weekly percent ---
             format_percentage(state.usage.seven_day_utilization, buf, sizeof(buf));
@@ -1013,7 +1206,7 @@ void ui_dashboard_update(const MonitorState &state) {
             if (w_val > 100) w_val = 100;
             lv_color_t weekly_color = ui_bar_color(state.provider);
 
-            if (landscape_layout && arc_weekly) {
+            if (arc_weekly) {
                 lv_arc_set_value(arc_weekly, w_val);
                 lv_obj_set_style_arc_color(arc_weekly, weekly_color, LV_PART_INDICATOR);
                 lv_obj_set_style_text_color(lbl_weekly_pct, UI_COLOR_TEXT, LV_PART_MAIN);
@@ -1028,6 +1221,10 @@ void ui_dashboard_update(const MonitorState &state) {
                 char wbuf[32];
                 format_reset_compact(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
                 lv_label_set_text(lbl_weekly_reset, wbuf);
+                if (lbl_weekly_reset_abs) {
+                    format_reset_date(state.usage.seven_day_reset_epoch, wbuf, sizeof(wbuf));
+                    lv_label_set_text(lbl_weekly_reset_abs, wbuf);
+                }
             }
         }
 
@@ -1040,6 +1237,7 @@ void ui_dashboard_update(const MonitorState &state) {
             lv_label_set_text(lbl_single_title, L(STR_WEEKLY));
             lv_label_set_text(lbl_single_pct, pct_placeholder);
             lv_label_set_text(lbl_single_reset, state.usage.error);
+            if (lbl_single_reset_abs) lv_label_set_text(lbl_single_reset_abs, "");
             lv_arc_set_value(arc_single, 0);
         } else if (uses_compact_rows) {
             for (uint8_t i = 0; i < AG_ROW_COUNT; i++) {
@@ -1060,6 +1258,8 @@ void ui_dashboard_update(const MonitorState &state) {
             lv_label_set_text(lbl_session_reset, state.usage.error);
             lv_label_set_text(lbl_weekly_pct,    pct_placeholder);
             lv_label_set_text(lbl_weekly_reset,  "");
+            if (lbl_session_reset_abs) lv_label_set_text(lbl_session_reset_abs, "");
+            if (lbl_weekly_reset_abs)  lv_label_set_text(lbl_weekly_reset_abs, "");
             if (bar_session) lv_bar_set_value(bar_session, 0, LV_ANIM_OFF);
             if (bar_weekly)  lv_bar_set_value(bar_weekly,  0, LV_ANIM_OFF);
             if (arc_session) lv_arc_set_value(arc_session, 0);
@@ -1159,6 +1359,9 @@ void ui_dashboard_recreate() {
         arc_single         = nullptr;
         lbl_single_pct     = nullptr;
         lbl_single_reset   = nullptr;
+        lbl_session_reset_abs = nullptr;
+        lbl_weekly_reset_abs  = nullptr;
+        lbl_single_reset_abs  = nullptr;
         lbl_wifi_status    = nullptr;
         lbl_status_dot     = nullptr;
         divider_middle     = nullptr;

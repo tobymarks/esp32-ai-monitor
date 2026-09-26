@@ -6,6 +6,7 @@
  */
 
 #include "config_store.h"
+#include "board.h"
 #include "config.h"
 #include <Preferences.h>
 
@@ -20,6 +21,18 @@ static Preferences prefs;
 // Load config from NVS
 // ============================================================
 void config_load(AppConfig &cfg) {
+    if (!board_persists_config()) {
+        // Board ohne dauerhafte Ablage (siehe board.h): Voreinstellungen, bis
+        // der Host sein Geraeteprofil schickt.
+        cfg.poll_interval_sec = DEFAULT_POLL_INTERVAL_SEC;
+        cfg.orientation       = ORIENTATION_PORTRAIT;
+        cfg.theme             = THEME_DARK;
+        cfg.language          = LANG_DE;
+        cfg.brightness_pct    = BRIGHTNESS_DEFAULT_PERCENT;
+        Serial.println("[Config] Voreinstellungen (dieses Board speichert nicht)");
+        return;
+    }
+
     prefs.begin(NVS_NAMESPACE, true);  // read-only
 
     cfg.poll_interval_sec = prefs.getUInt("poll_sec", DEFAULT_POLL_INTERVAL_SEC);
@@ -53,6 +66,12 @@ void config_load(AppConfig &cfg) {
 // Save config to NVS
 // ============================================================
 void config_save(const AppConfig &cfg) {
+    if (!board_persists_config()) {
+        // Absichtlich nichts tun: ein Schreibzugriff ins Flash wuerde auf dem
+        // RGB-Board das Bild dauerhaft verschieben.
+        return;
+    }
+
     prefs.begin(NVS_NAMESPACE, false);  // read-write
 
     prefs.putUInt("poll_sec", cfg.poll_interval_sec);

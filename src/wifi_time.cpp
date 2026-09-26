@@ -96,6 +96,13 @@ static void ensure_ntp_started() {
 }
 
 void wifi_time_init() {
+#if defined(BOARD_S3_4848)
+    // Auf dem RGB-Board bleibt das Funkmodul aus. Es wird nicht gebraucht
+    // (Uhrzeit kommt ueber USB vom Host) und war im Hardware-Test die Last,
+    // unter der das Bild zuerst verrutschte.
+    Serial.println("[WiFi] Auf diesem Board deaktiviert");
+    return;
+#else
     load_credentials();
 
     // v2.18.1: Funkmodul nur mit Zugangsdaten starten. Nach einem Flash sind
@@ -108,9 +115,13 @@ void wifi_time_init() {
     } else {
         Serial.println("[WiFi] No stored credentials — radio stays off");
     }
+#endif
 }
 
 void wifi_time_tick() {
+#if defined(BOARD_S3_4848)
+    return;
+#else
     if (!has_credentials) return;
 
     if (WiFi.status() == WL_CONNECTED) {
@@ -131,6 +142,7 @@ void wifi_time_tick() {
     if (now_ms - last_connect_attempt >= WIFI_RECONNECT_INTERVAL_MS) {
         start_connect();
     }
+#endif
 }
 
 bool wifi_time_has_credentials() {
@@ -148,6 +160,12 @@ bool wifi_time_is_synced() {
 }
 
 void wifi_time_save_credentials(const char *ssid, const char *password) {
+#if defined(BOARD_S3_4848)
+    // Kein WLAN auf diesem Board — und kein Schreibzugriff ins Flash.
+    (void)ssid; (void)password;
+    Serial.println("[WiFi] Auf diesem Board deaktiviert");
+    return;
+#else
     if (ssid == nullptr) ssid = "";
     if (password == nullptr) password = "";
 
@@ -165,9 +183,13 @@ void wifi_time_save_credentials(const char *ssid, const char *password) {
     if (has_credentials) {
         start_connect();
     }
+#endif
 }
 
 void wifi_time_forget_credentials() {
+#if defined(BOARD_S3_4848)
+    return;
+#else
     prefs.begin(NVS_NAMESPACE, false);
     prefs.remove("wifi_ssid");
     prefs.remove("wifi_pass");
@@ -180,6 +202,7 @@ void wifi_time_forget_credentials() {
     WiFi.disconnect(true, true);
     WiFi.mode(WIFI_STA);
     Serial.println("[WiFi] Credentials forgotten");
+#endif
 }
 
 bool wifi_time_connect_now(uint32_t timeout_ms) {

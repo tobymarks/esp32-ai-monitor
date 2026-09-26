@@ -18,12 +18,10 @@
  */
 
 #include <Arduino.h>
-#include <SPI.h>
-#include <TFT_eSPI.h>
 #include <lvgl.h>
 #include <Preferences.h>
+#include "board.h"
 #include "config.h"
-#include "touch_input.h"
 #include "config_store.h"
 #include "localization.h"
 #include "serial_receiver.h"
@@ -36,16 +34,9 @@
 // Globals
 // ============================================================
 
-TFT_eSPI tft = TFT_eSPI();
-
 // Runtime screen dimensions (defined here, declared extern in config.h)
 uint16_t SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;   // Default: Portrait 240
 uint16_t SCREEN_HEIGHT = DISPLAY_LONG_SIDE;     // Default: Portrait 320
-
-// LVGL display buffer (one 10-line strip, double-buffered)
-static const uint32_t LV_BUF_SIZE = DISPLAY_SHORT_SIDE * 10;
-static lv_color_t lv_buf1[LV_BUF_SIZE];
-static lv_color_t lv_buf2[LV_BUF_SIZE];
 
 // LVGL display and input device
 static lv_display_t  *lv_disp = nullptr;
@@ -68,11 +59,7 @@ static unsigned long lastLoopLog = 0;
 // ============================================================
 void backlight_apply_percent(uint8_t pct)
 {
-    if (pct < BRIGHTNESS_MIN_PERCENT) pct = BRIGHTNESS_MIN_PERCENT;
-    if (pct > BRIGHTNESS_MAX_PERCENT) pct = BRIGHTNESS_MAX_PERCENT;
-    // Map 0..100 -> 0..255 (8-bit LEDC duty)
-    uint32_t duty = (uint32_t)pct * 255u / 100u;
-    ledcWrite(BACKLIGHT_LEDC_CHANNEL, duty);
+    board_backlight_set_percent(pct);
 }
 
 // ============================================================
@@ -92,37 +79,12 @@ static const char *orientation_name(uint8_t orientation)
     }
 }
 
-// Setzt TFT-Rotation und Runtime-Screen-Dimensionen passend zur Orientierung.
-// Gemeinsam genutzt von setup() (Boot, vor LVGL) und apply_orientation()
-// (Live-Wechsel) — frueher an beiden Stellen identisch dupliziert.
-static void apply_rotation(uint8_t orientation)
-{
-    switch (orientation) {
-        case ORIENTATION_LANDSCAPE_LEFT:
-            tft.setRotation(3);
-            SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
-            SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
-            break;
-        case ORIENTATION_LANDSCAPE_RIGHT:
-            tft.setRotation(1);
-            SCREEN_WIDTH  = DISPLAY_LONG_SIDE;
-            SCREEN_HEIGHT = DISPLAY_SHORT_SIDE;
-            break;
-        case ORIENTATION_PORTRAIT:
-        default:
-            tft.setRotation(0);
-            SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
-            SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
-            break;
-    }
-}
-
 void apply_orientation(uint8_t orientation)
 {
-    apply_rotation(orientation);
+    board_set_rotation(orientation);
 
     // Blank the panel so no garbled pixels leak through during recreate
-    tft.fillScreen(TFT_BLACK);
+    board_fill_black();
 
     // Tell LVGL the new resolution — it reallocates the rendering state and
     // clips subsequent draws to the new extent.
@@ -142,32 +104,23 @@ void apply_orientation(uint8_t orientation)
 }
 
 // ============================================================
-// LVGL flush callback - sends pixels to TFT_eSPI
+// LVGL flush callback — geht ueber die Board-Schnittstelle
 // ============================================================
 static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
-    uint32_t w = (area->x2 - area->x1 + 1);
-    uint32_t h = (area->y2 - area->y1 + 1);
-
-    tft.startWrite();
-    tft.setAddrWindow(area->x1, area->y1, w, h);
-    // LVGL stores RGB565 in host byte order; TFT_eSPI sends SPI pixels MSB first.
-    // Panel RGB/BGR order is configured per PlatformIO env via TFT_RGB_ORDER.
-    tft.pushColors((uint16_t *)px_map, w * h, true);
-    tft.endWrite();
-
+    board_flush(area, px_map);
     lv_display_flush_ready(disp);
 }
 
 // ============================================================
-// LVGL touch read callback - reads XPT2046
+// LVGL touch read callback
 // ============================================================
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     (void)indev;
     static bool was_touched = false;
     uint16_t x = 0, y = 0;
-    bool touched = touch_input_read(&x, &y, g_config.orientation);
+    bool touched = board_touch_read(&x, &y);
 
     if (touched) {
         if (!was_touched) Serial.printf("[Touch] Press at %u,%u\n", x, y);
@@ -182,35 +135,48 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 }
 
 // ============================================================
-// Boot screen — direct TFT drawing (no LVGL!)
+// Boot screen — LVGL, damit er auf beiden Boards gleich aussieht
 // ============================================================
+static lv_obj_t *boot_screen = nullptr;
+static lv_obj_t *boot_status = nullptr;
+
 static void draw_boot_screen(void)
 {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextDatum(MC_DATUM);
+    boot_screen = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(boot_screen, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(boot_screen, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_clear_flag(boot_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setFreeFont(nullptr);
-    tft.setTextSize(2);
-    tft.drawString("AI Usage Monitor", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 30);
+    lv_obj_t *title = lv_label_create(boot_screen);
+    lv_label_set_text(title, APP_NAME);
+    lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -30);
 
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.drawString("Initializing...", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 10);
+    boot_status = lv_label_create(boot_screen);
+    lv_label_set_text(boot_status, L(STR_INITIALIZING));
+    lv_obj_set_style_text_color(boot_status, lv_palette_main(LV_PALETTE_GREY), LV_PART_MAIN);
+    lv_obj_set_style_text_font(boot_status, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(boot_status, LV_ALIGN_CENTER, 0, 10);
 
-    tft.setTextDatum(BR_DATUM);
-    tft.drawString("v" APP_VERSION, SCREEN_WIDTH - 10, SCREEN_HEIGHT - 10);
+    lv_obj_t *version = lv_label_create(boot_screen);
+    lv_label_set_text(version, "v" APP_VERSION);
+    lv_obj_set_style_text_color(version, lv_palette_main(LV_PALETTE_GREY), LV_PART_MAIN);
+    lv_obj_set_style_text_font(version, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_align(version, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+
+    lv_screen_load(boot_screen);
+    lv_refr_now(NULL);
 }
 
 // ============================================================
-// Update boot status text on display (direct TFT)
+// Update boot status text on display
 // ============================================================
 static void update_boot_status(const char *msg) {
-    tft.fillRect(0, SCREEN_HEIGHT / 2, SCREEN_WIDTH, 30, TFT_BLACK);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.drawString(msg, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 10);
+    if (boot_status != nullptr) {
+        lv_label_set_text(boot_status, msg);
+        lv_refr_now(NULL);
+    }
     Serial.printf("[Boot] %s\n", msg);
 }
 
@@ -245,58 +211,39 @@ void setup()
     Serial.printf("%s v%s (USB-Serial)\n", APP_NAME, APP_VERSION);
     Serial.println("========================================");
 
-    // --- TFT init FIRST ---
-    // Wichtig: tft.init() darf NICHT nach unserem LEDC-Attach laufen —
-    // TFT_eSPI wuerde den Pin sonst ueberschreiben, falls TFT_BL definiert
-    // waere. Wir haben TFT_BL bewusst NICHT in platformio.ini gesetzt,
-    // aber tft.init() bleibt trotzdem vor dem Backlight-Attach, um die
-    // SPI-Peripherie (inkl. Panel-Reset-Sequenz) sauber hochzubringen.
-    tft.init();
+    // --- Display + Touch ueber die Board-Schnittstelle ---
+    // Muss vor dem Backlight laufen: die SPI-Boards bringen dabei ihre
+    // Panel-Reset-Sequenz hoch, das RGB-Board legt den Framebuffer an.
+    board_display_init();
+    board_backlight_init();
 
-    // Deterministischer Reset des Panel-INVON/INVOFF-Registers.
-    // Vorherige Color-Tests koennten Inversion persistent im ST7789-Register
-    // haengen lassen (Hintergrund hell statt dunkel trotz Dark-Mode).
-    // invertDisplay(false) zwingt das Panel explizit in den Nicht-Invertiert-Modus.
-    tft.invertDisplay(false);
-
-    // --- Backlight PWM via LEDC (v2.10.2) ---
-    // Reihenfolge: ledcSetup -> ledcAttachPin -> ledcWrite.
-    // KEIN pinMode / digitalWrite danach — das wuerde den Pin wieder aus
-    // PWM-Mode rausreissen. Channel 7 (nicht 0), um nicht mit TFT_eSPI
-    // internen Channels zu kollidieren.
-    ledcSetup(BACKLIGHT_LEDC_CHANNEL, BACKLIGHT_LEDC_FREQ_HZ, BACKLIGHT_LEDC_RES_BITS);
-    ledcAttachPin(PIN_TFT_BL, BACKLIGHT_LEDC_CHANNEL);
-    ledcWrite(BACKLIGHT_LEDC_CHANNEL, 255); // full on until NVS loaded
-    Serial.printf("[BL] LEDC attached: pin=%d ch=%d freq=%uHz res=%ubit duty=255\n",
-                  PIN_TFT_BL, BACKLIGHT_LEDC_CHANNEL,
-                  BACKLIGHT_LEDC_FREQ_HZ, BACKLIGHT_LEDC_RES_BITS);
-
-    // Load orientation + theme + brightness from NVS
+    // Einstellungen laden. Auf Boards ohne dauerhafte Ablage sind das die
+    // Voreinstellungen, bis der Host sein Geraeteprofil schickt.
     config_load(g_config);
     backlight_apply_percent(g_config.brightness_pct);
 
     // Apply persisted theme before creating UI
     ui_apply_theme(g_config.theme);
 
-    // Set initial rotation + SCREEN_WIDTH/HEIGHT for LVGL display-create below.
-    // We do it inline (apply_orientation expects an already-created LVGL display
-    // plus a dashboard screen — neither exists yet at this point in boot).
-    apply_rotation(g_config.orientation);
-    tft.fillScreen(TFT_BLACK);
-    Serial.printf("[TFT] Display initialized (%ux%u)\n", SCREEN_WIDTH, SCREEN_HEIGHT);
-
-    // --- Touch init ---
-    touch_input_begin();
+    // Drehung und SCREEN_WIDTH/HEIGHT setzen, bevor LVGL das Display anlegt.
+    board_set_rotation(g_config.orientation);
+    board_fill_black();
+    Serial.printf("[Display] %s initialisiert (%ux%u)\n",
+                  board_display_id(), SCREEN_WIDTH, SCREEN_HEIGHT);
 
     // --- LVGL init ---
     lv_init();
     lv_tick_set_cb([]() -> uint32_t { return (uint32_t)millis(); });
     Serial.println("[LVGL] Core initialized + tick callback registered");
 
+    void *lv_buf1 = nullptr, *lv_buf2 = nullptr;
+    uint32_t lv_buf_bytes = 0;
+    board_lvgl_buffers(&lv_buf1, &lv_buf2, &lv_buf_bytes);
+
     lv_disp = lv_display_create(SCREEN_WIDTH, SCREEN_HEIGHT);
     lv_display_set_flush_cb(lv_disp, disp_flush_cb);
     lv_display_set_buffers(lv_disp, lv_buf1, lv_buf2,
-                           sizeof(lv_buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
+                           lv_buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     Serial.printf("[LVGL] Display driver registered (%ux%u)\n", SCREEN_WIDTH, SCREEN_HEIGHT);
 
     lv_touch = lv_indev_create();

@@ -108,7 +108,8 @@ void ui_settings_create() {
     lv_obj_set_style_text_font(btn_back, &lv_font_montserrat_20, LV_PART_MAIN);
     lv_obj_set_pos(btn_back, 8, 6);
     lv_obj_add_flag(btn_back, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_ext_click_area(btn_back, 15);
+    // Auf dem grossen Panel ist der Pfeil sonst ein winziges Ziel.
+    lv_obj_set_ext_click_area(btn_back, SCREEN_WIDTH >= 480 ? 30 : 15);
     lv_obj_add_event_cb(btn_back, on_back_tap, LV_EVENT_CLICKED, scr);
     lv_obj_add_event_cb(btn_back, on_back_tap, LV_EVENT_LONG_PRESSED, nullptr);
 

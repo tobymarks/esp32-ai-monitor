@@ -16,7 +16,9 @@
 // die Board-Variante (ILI9341 vs. ST7789) pro Geraet persistieren und beim
 // naechsten Flash die richtige Firmware-Variante vorwaehlen kann.
 // Seit FW v2.10.1 / App v1.15.0.
-#if defined(ST7789_DRIVER)
+#if defined(BOARD_S3_4848)
+  #define DISPLAY_ID "st7701"
+#elif defined(ST7789_DRIVER)
   #define DISPLAY_ID "st7789"
 #elif defined(ILI9341_DRIVER)
   #define DISPLAY_ID "ili9341"
@@ -100,8 +102,14 @@
 // ============================================================
 // Display dimensions (physical panel)
 // ============================================================
-#define DISPLAY_SHORT_SIDE 240
-#define DISPLAY_LONG_SIDE  320
+#if defined(BOARD_S3_4848)
+  // Guition ESP32-S3-4848S040: quadratisch, keine kurze und lange Seite.
+  #define DISPLAY_SHORT_SIDE 480
+  #define DISPLAY_LONG_SIDE  480
+#else
+  #define DISPLAY_SHORT_SIDE 240
+  #define DISPLAY_LONG_SIDE  320
+#endif
 
 // Runtime screen dimensions (set in main.cpp based on orientation)
 extern uint16_t SCREEN_WIDTH;

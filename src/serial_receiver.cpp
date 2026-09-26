@@ -15,6 +15,7 @@
 
 #include "serial_receiver.h"
 #include "api_common.h"
+#include "board.h"
 #include "config.h"
 #include "providers.h"
 #include "config_store.h"
@@ -477,7 +478,8 @@ static void print_view_state() {
 
 static void persist_touch_view() {
     Preferences prefs;
-    if (prefs.begin(NVS_NAMESPACE, false)) {
+    // Kein Flash-Schreiben auf Boards ohne dauerhafte Ablage (RGB-Board, siehe board.h).
+    if (board_persists_config() && prefs.begin(NVS_NAMESPACE, false)) {
         prefs.putUChar("view_active", active_view);
         prefs.end();
     }
@@ -532,7 +534,7 @@ static void handle_set_views(JsonDocument &doc) {
             }
         }
     }
-    if (changed) {
+    if (changed && board_persists_config()) {
         Preferences prefs;
         prefs.begin(NVS_NAMESPACE, false);
         prefs.putUChar("view_count", view_count);
