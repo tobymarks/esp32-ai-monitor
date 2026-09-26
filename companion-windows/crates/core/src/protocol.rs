@@ -217,6 +217,7 @@ pub struct DeviceInfo {
     /// Kleingeschrieben und getrimmt, z. B. `aim1`.
     pub serial_transport: Option<String>,
     pub max_frame_bytes: Option<usize>,
+    pub scene_protocol: Option<u32>,
     pub wifi_configured: Option<bool>,
     pub wifi_connected: Option<bool>,
     pub time_synced: Option<bool>,
@@ -239,16 +240,35 @@ impl DeviceInfo {
         Some(Self {
             version,
             mac,
-            display: v.get("display").and_then(Value::as_str).and_then(DisplayVariant::parse),
-            orientation: v.get("orientation").and_then(Value::as_str).and_then(Orientation::parse),
-            theme: v.get("theme").and_then(Value::as_str).and_then(Theme::parse),
-            language: v.get("language").and_then(Value::as_str).and_then(Language::parse),
+            display: v
+                .get("display")
+                .and_then(Value::as_str)
+                .and_then(DisplayVariant::parse),
+            orientation: v
+                .get("orientation")
+                .and_then(Value::as_str)
+                .and_then(Orientation::parse),
+            theme: v
+                .get("theme")
+                .and_then(Value::as_str)
+                .and_then(Theme::parse),
+            language: v
+                .get("language")
+                .and_then(Value::as_str)
+                .and_then(Language::parse),
             brightness: v.get("brightness").and_then(Value::as_i64),
             serial_transport: v
                 .get("serialTransport")
                 .and_then(Value::as_str)
                 .map(|s| s.trim().to_ascii_lowercase()),
-            max_frame_bytes: v.get("maxFrameBytes").and_then(Value::as_u64).map(|n| n as usize),
+            max_frame_bytes: v
+                .get("maxFrameBytes")
+                .and_then(Value::as_u64)
+                .map(|n| n as usize),
+            scene_protocol: v
+                .get("sceneProtocol")
+                .and_then(Value::as_u64)
+                .map(|n| n as u32),
             wifi_configured: v.get("wifiConfigured").and_then(Value::as_bool),
             wifi_connected: v.get("wifiConnected").and_then(Value::as_bool),
             time_synced: v.get("timeSynced").and_then(Value::as_bool),
@@ -279,6 +299,10 @@ impl DeviceInfo {
     /// und `2.19.0` als fähig ("beta" < "dev" lexikalisch).
     pub fn supports_views(&self) -> bool {
         semver::at_least(&self.version, "2.19.0-0")
+    }
+
+    pub fn supports_plugin_scenes(&self) -> bool {
+        self.supports_views() && self.scene_protocol.unwrap_or(0) >= 1
     }
 
     pub fn max_frame_bytes(&self) -> usize {
@@ -333,17 +357,33 @@ impl DeviceMessage {
             "ack" => DeviceMessage::Ack {
                 frame_id: v.get("frameId").and_then(Value::as_i64).unwrap_or(-1),
                 schema_version: v.get("schemaVersion").and_then(Value::as_i64).unwrap_or(0),
-                message: v.get("message").and_then(Value::as_str).unwrap_or("").to_string(),
+                message: v
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 bytes: v.get("bytes").and_then(Value::as_i64).unwrap_or(0),
-                provider: v.get("provider").and_then(Value::as_str).unwrap_or("").to_string(),
+                provider: v
+                    .get("provider")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 rows: v.get("rows").and_then(Value::as_i64).unwrap_or(0),
             },
             "error" => DeviceMessage::Error {
                 frame_id: v.get("frameId").and_then(Value::as_i64),
-                message: v.get("message").and_then(Value::as_str).unwrap_or("").to_string(),
+                message: v
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             },
             "ok" => DeviceMessage::Ok {
-                cmd: v.get("cmd").and_then(Value::as_str).unwrap_or("").to_string(),
+                cmd: v
+                    .get("cmd")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 value: v.get("value").cloned().unwrap_or(Value::Null),
             },
             "wifi_status" => DeviceMessage::WifiStatus(v),
@@ -447,10 +487,18 @@ pub enum FrameError {
 
 /// Datenframe kodieren. Mit `framed` als `AIM1 <len> <id>\n<payload>\n`,
 /// sonst als eine Zeile. Kommandos gehen nie hier durch.
-pub fn encode_frame(payload: &str, frame_id: i64, framed: bool, max_bytes: usize) -> Result<Vec<u8>, FrameError> {
+pub fn encode_frame(
+    payload: &str,
+    frame_id: i64,
+    framed: bool,
+    max_bytes: usize,
+) -> Result<Vec<u8>, FrameError> {
     let bytes = payload.as_bytes();
     if framed && bytes.len() > max_bytes {
-        return Err(FrameError::TooLarge { size: bytes.len(), max: max_bytes });
+        return Err(FrameError::TooLarge {
+            size: bytes.len(),
+            max: max_bytes,
+        });
     }
     let mut out = Vec::with_capacity(bytes.len() + 32);
     if framed {
@@ -473,7 +521,11 @@ impl FrameIdCounter {
     }
 
     pub fn next(&mut self) -> i64 {
-        self.last = if self.last >= FRAME_ID_MAX { 1 } else { self.last + 1 };
+        self.last = if self.last >= FRAME_ID_MAX {
+            1
+        } else {
+            self.last + 1
+        };
         self.last
     }
 }
@@ -514,7 +566,9 @@ mod tests {
     #[test]
     fn parses_info_with_defaults() {
         let line = r#"{"type":"info","version":"2.17.0","mac":"A4:CF:12:34:56:78","display":"ili9341","orientation":"landscape_right","theme":"dark","language":"de","brightness":80,"serialTransport":"AIM1","maxFrameBytes":4095,"uptime":12,"heap":180000}"#;
-        let Some(DeviceMessage::Info(info)) = DeviceMessage::parse_line(line) else { panic!() };
+        let Some(DeviceMessage::Info(info)) = DeviceMessage::parse_line(line) else {
+            panic!()
+        };
         assert_eq!(info.mac, "a4:cf:12:34:56:78");
         assert_eq!(info.display, Some(DisplayVariant::Ili9341));
         assert_eq!(info.orientation, Some(Orientation::LandscapeRight));
@@ -528,7 +582,9 @@ mod tests {
     #[test]
     fn old_firmware_without_mac_is_legacy_and_line_mode() {
         let line = r#"{"type":"info","version":"2.9.0","display":"unknown"}"#;
-        let Some(DeviceMessage::Info(info)) = DeviceMessage::parse_line(line) else { panic!() };
+        let Some(DeviceMessage::Info(info)) = DeviceMessage::parse_line(line) else {
+            panic!()
+        };
         assert_eq!(info.mac, LEGACY_DEVICE_MAC);
         assert_eq!(info.display, None);
         assert!(!info.supports_framed());
@@ -538,14 +594,34 @@ mod tests {
 
     #[test]
     fn log_lines_are_ignored_and_messages_typed() {
-        assert_eq!(DeviceMessage::parse_line("[Serial] Command received: get_info"), None);
+        assert_eq!(
+            DeviceMessage::parse_line("[Serial] Command received: get_info"),
+            None
+        );
         assert_eq!(DeviceMessage::parse_line("====="), None);
         assert_eq!(DeviceMessage::parse_line(""), None);
         let ack = DeviceMessage::parse_line(r#"{"type":"ack","frameId":17,"schemaVersion":1,"message":"accepted","bytes":812,"provider":"CLAUDE","rows":3,"heap":176000}"#).unwrap();
-        assert!(matches!(ack, DeviceMessage::Ack { frame_id: 17, rows: 3, .. }));
-        let err = DeviceMessage::parse_line(r#"{"type":"error","message":"frame timeout"}"#).unwrap();
-        assert_eq!(err, DeviceMessage::Error { frame_id: None, message: "frame timeout".into() });
-        let ok = DeviceMessage::parse_line(r#"{"type":"ok","cmd":"set_brightness","value":80,"persist":true}"#).unwrap();
+        assert!(matches!(
+            ack,
+            DeviceMessage::Ack {
+                frame_id: 17,
+                rows: 3,
+                ..
+            }
+        ));
+        let err =
+            DeviceMessage::parse_line(r#"{"type":"error","message":"frame timeout"}"#).unwrap();
+        assert_eq!(
+            err,
+            DeviceMessage::Error {
+                frame_id: None,
+                message: "frame timeout".into()
+            }
+        );
+        let ok = DeviceMessage::parse_line(
+            r#"{"type":"ok","cmd":"set_brightness","value":80,"persist":true}"#,
+        )
+        .unwrap();
         assert!(matches!(ok, DeviceMessage::Ok { ref cmd, .. } if cmd == "set_brightness"));
     }
 
@@ -565,28 +641,51 @@ mod tests {
     #[test]
     fn parses_touch_view_state_and_rejects_incomplete_state() {
         let line = r#"{"type":"view_state","mode":"manual","interval":10,"active":1,"views":["codex","clock"]}"#;
-        let Some(DeviceMessage::ViewState(state)) = DeviceMessage::parse_line(line) else { panic!() };
+        let Some(DeviceMessage::ViewState(state)) = DeviceMessage::parse_line(line) else {
+            panic!()
+        };
         assert_eq!(state.active, 1);
         assert_eq!(state.views, ["codex", "clock"]);
-        assert_eq!(DeviceMessage::parse_line(line).unwrap().type_name(), "view_state");
-        assert!(matches!(DeviceMessage::parse_line(r#"{"type":"view_state","active":1}"#), Some(DeviceMessage::Other(_))));
+        assert_eq!(
+            DeviceMessage::parse_line(line).unwrap().type_name(),
+            "view_state"
+        );
+        assert!(matches!(
+            DeviceMessage::parse_line(r#"{"type":"view_state","active":1}"#),
+            Some(DeviceMessage::Other(_))
+        ));
     }
 
     #[test]
     fn commands_are_single_lines() {
         assert_eq!(Command::get_info(), "{\"cmd\":\"get_info\"}\n");
-        assert_eq!(Command::set_brightness(140, false), "{\"cmd\":\"set_brightness\",\"persist\":false,\"value\":100}\n");
-        assert_eq!(Command::set_orientation(Orientation::LandscapeLeft), "{\"cmd\":\"set_orientation\",\"value\":\"landscape_left\"}\n");
+        assert_eq!(
+            Command::set_brightness(140, false),
+            "{\"cmd\":\"set_brightness\",\"persist\":false,\"value\":100}\n"
+        );
+        assert_eq!(
+            Command::set_orientation(Orientation::LandscapeLeft),
+            "{\"cmd\":\"set_orientation\",\"value\":\"landscape_left\"}\n"
+        );
     }
 
     #[test]
     fn framing_matches_spec_example() {
         let payload = r#"{"schemaVersion":1,"frameId":17,"data":[{"x":1}]}"#;
         let out = encode_frame(payload, 17, true, 4095).unwrap();
-        assert_eq!(String::from_utf8(out).unwrap(), format!("AIM1 {} 17\n{payload}\n", payload.len()));
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            format!("AIM1 {} 17\n{payload}\n", payload.len())
+        );
         let legacy = encode_frame(payload, 17, false, 4095).unwrap();
         assert_eq!(String::from_utf8(legacy).unwrap(), format!("{payload}\n"));
-        assert_eq!(encode_frame(&"x".repeat(5000), 1, true, 4095).unwrap_err(), FrameError::TooLarge { size: 5000, max: 4095 });
+        assert_eq!(
+            encode_frame(&"x".repeat(5000), 1, true, 4095).unwrap_err(),
+            FrameError::TooLarge {
+                size: 5000,
+                max: 4095
+            }
+        );
     }
 
     #[test]
@@ -599,7 +698,10 @@ mod tests {
 
     #[test]
     fn safe_text_transliterates() {
-        assert_eq!(display_safe_text("Größe … → Übersicht „x“"), "Groesse ... -> Uebersicht \"x\"");
+        assert_eq!(
+            display_safe_text("Größe … → Übersicht „x“"),
+            "Groesse ... -> Uebersicht \"x\""
+        );
         assert_eq!(display_safe_text("Lade Provider …"), "Lade Provider ...");
         assert_eq!(display_safe_text("日本"), "");
     }

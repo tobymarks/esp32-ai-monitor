@@ -18,6 +18,7 @@
 #include "board.h"
 #include "config.h"
 #include "providers.h"
+#include "plugin_scene.h"
 #include "config_store.h"
 #include "localization.h"
 #include "ui_common.h"
@@ -45,9 +46,8 @@ static const int WEEKLY_WINDOW_MINUTES = 10080;
 // C1: Wird ein framed-Payload nach dem Header nicht innerhalb dieser Zeit
 // vollstaendig empfangen, gilt der Frame als abgebrochen und wird verworfen.
 static const unsigned long SERIAL_FRAME_TIMEOUT_MS = 2000;
-// C2: Hoechste schemaVersion, die diese Firmware versteht. Die Companion-App
-// sendet aktuell 1. Frames mit groesserer Version werden definiert abgelehnt.
-static const int SUPPORTED_SCHEMA_VERSION = 1;
+// Schema 2 adds bounded plugin scene frames; schema 1 usage frames stay valid.
+static const int SUPPORTED_SCHEMA_VERSION = 2;
 
 // ============================================================
 // State
@@ -66,8 +66,10 @@ static MonitorState state;
 static const uint8_t VIEW_MAX = 8;
 // Außerhalb der Provider-IDs, damit ein neuer Provider nicht mit der Uhr kollidiert.
 static const uint8_t VIEW_CLOCK = 0xFF;
+static const uint8_t VIEW_PLUGIN = 0xFE;
 static MonitorState view_states[VIEW_MAX];
 static uint8_t view_types[VIEW_MAX] = {PROVIDER_CLAUDE};
+static char view_keys[VIEW_MAX][PLUGIN_VIEW_KEY_BYTES] = {};
 static uint8_t view_count = 1;
 static uint8_t active_view = 0;
 static bool views_automatic = false;
@@ -96,6 +98,8 @@ static void persist_touch_view();
 
 uint8_t serial_view_count() { return view_count; }
 bool serial_is_clock_view() { return view_types[active_view] == VIEW_CLOCK; }
+bool serial_is_plugin_view() { return view_types[active_view] == VIEW_PLUGIN; }
+uint8_t serial_active_view() { return active_view; }
 
 void serial_select_view(uint8_t index) {
     if (index >= view_count) return;
@@ -104,7 +108,8 @@ void serial_select_view(uint8_t index) {
     last_view_change = millis();
     new_data_flag = true;
     Serial.printf("[Views] Active %u/%u (%s)\n", (unsigned)(index + 1),
-                  (unsigned)view_count, serial_is_clock_view() ? "clock" : state.provider_label);
+                  (unsigned)view_count, serial_is_clock_view() ? "clock" :
+                  serial_is_plugin_view() ? view_keys[index] : state.provider_label);
 }
 
 void serial_next_view() {
@@ -427,7 +432,7 @@ static void handle_get_info() {
                   "\"display\":\"%s\","
                   "\"orientation\":\"%s\","
                   "\"theme\":\"%s\",\"language\":\"%s\",\"brightness\":%u,"
-                  "\"serialTransport\":\"%s\",\"maxFrameBytes\":%u,"
+                  "\"serialTransport\":\"%s\",\"maxFrameBytes\":%u,\"sceneProtocol\":1,"
                   "\"wifiConfigured\":%s,\"wifiConnected\":%s,\"timeSynced\":%s,"
                   "\"uptime\":%lu,\"heap\":%u}\n",
                   APP_VERSION, mac_str, DISPLAY_ID, orient, theme, lang,
@@ -448,20 +453,38 @@ static void handle_reboot() {
     ESP.restart();
 }
 
-// Provider-Namen kommen aus der zentralen PROVIDERS[]-Tabelle, inklusive
-// Fallback auf Claude wie bei den bisherigen Frames.
+static bool valid_plugin_key(const char *name) {
+    if (!name || strncmp(name, "plugin:", 7) != 0) return false;
+    size_t length = strlen(name + 7);
+    if (length == 0 || length > 40) return false;
+    for (const char *p = name + 7; *p; ++p) {
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9')
+              || *p == '.' || *p == '-' || *p == '_')) return false;
+    }
+    return true;
+}
+
+// Unlike provider_from_string(), a window key must not silently fall back to
+// Claude when a plugin is missing or its ID is malformed.
 static int view_type_from_name(const char *name) {
     if (!name) return -1;
     if (strcasecmp(name, "clock") == 0) return VIEW_CLOCK;
-    return provider_from_string(name);
+    if (valid_plugin_key(name)) return VIEW_PLUGIN;
+    for (uint8_t p = PROVIDER_CLAUDE; p <= PROVIDER_CURSOR; ++p) {
+        if (strcasecmp(name, provider_info_for_id(p)->wire_keys[0]) == 0) return p;
+    }
+    return -1;
 }
 
 static bool view_type_valid(uint8_t type) {
-    return type == VIEW_CLOCK || provider_info_for_id(type)->id == type;
+    return type == VIEW_CLOCK || type == VIEW_PLUGIN || provider_info_for_id(type)->id == type;
 }
 
-static const char *view_name_from_type(uint8_t type) {
-    return type == VIEW_CLOCK ? "clock" : provider_info_for_id(type)->wire_keys[0];
+static const char *view_name(uint8_t index) {
+    uint8_t type = view_types[index];
+    if (type == VIEW_CLOCK) return "clock";
+    if (type == VIEW_PLUGIN) return view_keys[index];
+    return provider_info_for_id(type)->wire_keys[0];
 }
 
 static void print_view_state() {
@@ -471,7 +494,7 @@ static void print_view_state() {
     response["interval"] = view_interval_seconds;
     response["active"] = active_view;
     JsonArray views = response["views"].to<JsonArray>();
-    for (uint8_t i = 0; i < view_count; ++i) views.add(view_name_from_type(view_types[i]));
+    for (uint8_t i = 0; i < view_count; ++i) views.add(view_name(i));
     serializeJson(response, Serial);
     Serial.println();
 }
@@ -493,13 +516,16 @@ static void handle_set_views(JsonDocument &doc) {
         return;
     }
     uint8_t types[VIEW_MAX] = {};
+    char keys[VIEW_MAX][PLUGIN_VIEW_KEY_BYTES] = {};
     for (size_t i = 0; i < views.size(); ++i) {
-        int type = view_type_from_name(views[i].as<const char*>());
+        const char *name = views[i].as<const char*>();
+        int type = view_type_from_name(name);
         if (type < 0) {
             Serial.println("{\"type\":\"error\",\"message\":\"set_views: invalid content\"}");
             return;
         }
         types[i] = (uint8_t)type;
+        if (type == VIEW_PLUGIN) strlcpy(keys[i], name, sizeof(keys[i]));
     }
     const char *mode = doc["mode"] | "manual";
     if (strcmp(mode, "manual") != 0 && strcmp(mode, "automatic") != 0) {
@@ -513,21 +539,25 @@ static void handle_set_views(JsonDocument &doc) {
         return;
     }
     bool layout_changed = view_count != views.size();
-    for (size_t i = 0; i < views.size(); ++i) layout_changed |= view_types[i] != types[i];
+    for (size_t i = 0; i < views.size(); ++i) {
+        layout_changed |= view_types[i] != types[i] || strcmp(view_keys[i], keys[i]) != 0;
+    }
     bool changed = layout_changed || views_automatic != (strcmp(mode, "automatic") == 0)
                    || view_interval_seconds != interval || active_view != active;
     view_count = (uint8_t)views.size();
     memcpy(view_types, types, view_count);
+    memcpy(view_keys, keys, sizeof(view_keys));
     views_automatic = strcmp(mode, "automatic") == 0;
     view_interval_seconds = (uint16_t)interval;
     if (layout_changed) {
+        plugin_scene_clear_all();
         memset(view_states, 0, sizeof(view_states));
         for (uint8_t i = 0; i < view_count; ++i) {
-            view_states[i].provider = view_types[i] == VIEW_CLOCK ? PROVIDER_CLAUDE : view_types[i];
+            view_states[i].provider = view_types[i] >= VIEW_PLUGIN ? PROVIDER_CLAUDE : view_types[i];
             strlcpy(view_states[i].provider_label,
-                    view_types[i] == VIEW_CLOCK ? "CLOCK" : provider_label_from_id(view_types[i]),
+                    view_types[i] == VIEW_CLOCK ? "CLOCK" : view_types[i] == VIEW_PLUGIN ? "PLUGIN" : provider_label_from_id(view_types[i]),
                     sizeof(view_states[i].provider_label));
-            if (view_types[i] != VIEW_CLOCK) {
+            if (view_types[i] != VIEW_CLOCK && view_types[i] != VIEW_PLUGIN) {
                 view_states[i].usage.notice_only = true;
                 strlcpy(view_states[i].usage.error, g_language == LANG_DE ? "Lade Provider ..." : "Loading provider ...",
                         sizeof(view_states[i].usage.error));
@@ -539,6 +569,7 @@ static void handle_set_views(JsonDocument &doc) {
         prefs.begin(NVS_NAMESPACE, false);
         prefs.putUChar("view_count", view_count);
         prefs.putBytes("view_types", view_types, view_count);
+        prefs.putBytes("view_keys", view_keys, sizeof(view_keys));
         prefs.putBool("view_auto", views_automatic);
         prefs.putUShort("view_secs", view_interval_seconds);
         prefs.putUChar("view_active", (uint8_t)active);
@@ -832,6 +863,43 @@ static void parse_json(const char *json_str) {
         return;
     }
 
+    // Plugin scenes have their own schema and never enter the AI usage parser.
+    // Validate the target and the whole scene before changing the cached view.
+    if (!data0["pluginId"].isNull()) {
+        const char *plugin_id = data0["pluginId"];
+        char key[PLUGIN_VIEW_KEY_BYTES];
+        if (schema_version != 2 || !plugin_id
+            || snprintf(key, sizeof(key), "plugin:%s", plugin_id) >= (int)sizeof(key)
+            || !valid_plugin_key(key)) {
+            print_frame_error(frame_id, schema_version, "invalid plugin ID");
+            return;
+        }
+        int index = data0["viewIndex"] | -1;
+        if (index < 0 || index >= view_count || view_types[index] != VIEW_PLUGIN
+            || strcmp(view_keys[index], key) != 0) {
+            print_frame_error(frame_id, schema_version, "plugin view mismatch");
+            return;
+        }
+        const char *scene_error = nullptr;
+        if (!plugin_scene_store((uint8_t)index, data0["scene"].as<JsonObject>(), &scene_error)) {
+            print_frame_error(frame_id, schema_version, scene_error ? scene_error : "invalid scene");
+            return;
+        }
+        Serial.printf("{\"type\":\"ack\",\"frameId\":%d,\"schemaVersion\":2,"
+                      "\"message\":\"accepted\",\"bytes\":%u,\"provider\":\"PLUGIN\","
+                      "\"rows\":0,\"heap\":%u}\n",
+                      frame_id, (unsigned)frame_bytes, (unsigned)ESP.getFreeHeap());
+        last_host_frame_ms = millis();
+        host_frame_seen = true;
+        if (index == active_view) new_data_flag = true;
+        return;
+    }
+
+    if (schema_version == 2) {
+        print_frame_error(frame_id, schema_version, "missing plugin ID");
+        return;
+    }
+
     // Jeder Frame aktualisiert genau einen Cache-Eintrag. Die sichtbare
     // Anzeige bleibt bei Daten für andere Fenster unverändert.
     const char *frame_provider = data0["provider"] | "claude";
@@ -974,12 +1042,22 @@ void serial_receiver_init() {
     if (stored_count >= 1 && stored_count <= VIEW_MAX &&
         prefs.getBytesLength("view_types") == stored_count) {
         uint8_t stored_types[VIEW_MAX] = {};
+        char stored_keys[VIEW_MAX][PLUGIN_VIEW_KEY_BYTES] = {};
         prefs.getBytes("view_types", stored_types, stored_count);
+        if (prefs.getBytesLength("view_keys") == sizeof(stored_keys))
+            prefs.getBytes("view_keys", stored_keys, sizeof(stored_keys));
         bool valid = true;
-        for (uint8_t i = 0; i < stored_count; ++i) valid &= view_type_valid(stored_types[i]);
+        for (uint8_t i = 0; i < stored_count; ++i) {
+            valid &= view_type_valid(stored_types[i]);
+            if (stored_types[i] == VIEW_PLUGIN) {
+                stored_keys[i][PLUGIN_VIEW_KEY_BYTES - 1] = '\0';
+                valid &= valid_plugin_key(stored_keys[i]);
+            }
+        }
         if (valid) {
             view_count = stored_count;
             memcpy(view_types, stored_types, stored_count);
+            memcpy(view_keys, stored_keys, sizeof(view_keys));
         }
     }
     views_automatic = prefs.getBool("view_auto", false);
@@ -988,11 +1066,11 @@ void serial_receiver_init() {
     uint8_t stored_active = prefs.getUChar("view_active", 0);
     prefs.end();
     for (uint8_t i = 0; i < view_count; ++i) {
-        view_states[i].provider = view_types[i] == VIEW_CLOCK ? PROVIDER_CLAUDE : view_types[i];
+        view_states[i].provider = view_types[i] >= VIEW_PLUGIN ? PROVIDER_CLAUDE : view_types[i];
         strlcpy(view_states[i].provider_label,
-                view_types[i] == VIEW_CLOCK ? "CLOCK" : provider_label_from_id(view_types[i]),
+                view_types[i] == VIEW_CLOCK ? "CLOCK" : view_types[i] == VIEW_PLUGIN ? "PLUGIN" : provider_label_from_id(view_types[i]),
                 sizeof(view_states[i].provider_label));
-        if (i > 0 && view_types[i] != VIEW_CLOCK) {
+        if (i > 0 && view_types[i] != VIEW_CLOCK && view_types[i] != VIEW_PLUGIN) {
             view_states[i].usage.notice_only = true;
             strlcpy(view_states[i].usage.error, g_language == LANG_DE ? "Lade Provider ..." : "Loading provider ...",
                     sizeof(view_states[i].usage.error));

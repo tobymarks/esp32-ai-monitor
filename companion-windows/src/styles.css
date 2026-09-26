@@ -196,6 +196,11 @@ p { margin: 0 0 12px; }
 .card { margin-top: 14px; padding: 16px 18px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
 .card h3 { font-size: var(--fs-md); font-weight: 600; margin: 0 0 4px; }
 .card h4 { font-size: var(--fs-sm); font-weight: 600; margin: 16px 0 6px; }
+.plugin-source { flex: 1; min-width: 240px; }
+.plugin-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.plugin-card-head p { margin: 5px 0 0; }
+.plugin-preview { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 4px; }
+.plugin-settings { display: grid; gap: 4px; margin-top: 14px; }
 .preflight { margin: 0; padding-left: 18px; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); line-height: 1.7; }
 .preflight-warn { color: var(--warn); }
 .radio-group { display: flex; flex-direction: column; gap: 6px; }

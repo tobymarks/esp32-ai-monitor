@@ -1,19 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getConnection,
   getSettings,
   getSnapshot,
   listProviders,
+  listPlugins,
   onConnection,
   onSnapshot,
   onSettingsChanged,
+  onPlugins,
   refresh,
   setProvider,
   setSettings,
   type ConnectionSnapshot,
   type ProviderInfo,
   type ProviderKey,
+  type PluginInfo,
   type Settings,
   type Snapshot,
 } from "./api";
@@ -23,13 +26,15 @@ import Connection from "./pages/Connection";
 import Display from "./pages/Display";
 import Diagnostics from "./pages/Diagnostics";
 import Updates from "./pages/Updates";
+import Plugins from "./pages/Plugins";
 
-type Page = "overview" | "connection" | "display" | "updates" | "diagnostics";
+type Page = "overview" | "connection" | "display" | "plugins" | "updates" | "diagnostics";
 
 const NAV: { id: Page; key: string }[] = [
   { id: "overview", key: "nav.overview" },
   { id: "connection", key: "nav.connection" },
   { id: "display", key: "nav.display" },
+  { id: "plugins", key: "nav.plugins" },
   { id: "updates", key: "nav.updates" },
   { id: "diagnostics", key: "nav.diagnostics" },
 ];
@@ -45,7 +50,14 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [connection, setConnection] = useState<ConnectionSnapshot | null>(null);
   const [settings, setSettingsState] = useState<Settings | null>(null);
+  const settingsRef = useRef<Settings | null>(null);
+  const settingsWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  const setLocalSettings = useCallback((value: Settings) => {
+    settingsRef.current = value;
+    setSettingsState(value);
+  }, []);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [now, setNow] = useState(() => Date.now());
 
   // Initialzustand laden und Live-Updates abonnieren.
@@ -53,25 +65,31 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     let unlistenConn: (() => void) | undefined;
     let unlistenSettings: (() => void) | undefined;
+    let unlistenPlugins: (() => void) | undefined;
     let cancelled = false;
     (async () => {
       unlisten = await onSnapshot((snap) => setSnapshot(snap));
       unlistenConn = await onConnection((conn) => setConnection(conn));
-      unlistenSettings = await onSettingsChanged((cfg) => setSettingsState(cfg));
-      const [snap, cfg, list, conn] = await Promise.all([getSnapshot(), getSettings(), listProviders(), getConnection()]);
+      unlistenSettings = await onSettingsChanged(setLocalSettings);
+      unlistenPlugins = await onPlugins((list) => setPlugins(list));
+      const [snap, cfg, list, conn, installed] = await Promise.all([
+        getSnapshot(), getSettings(), listProviders(), getConnection(), listPlugins(),
+      ]);
       if (cancelled) return;
       setSnapshot(snap);
-      setSettingsState(cfg);
+      setLocalSettings(cfg);
       setProviders(list);
       setConnection(conn);
+      setPlugins(installed);
     })().catch((e) => console.error("init", e));
     return () => {
       cancelled = true;
       unlisten?.();
       unlistenConn?.();
       unlistenSettings?.();
+      unlistenPlugins?.();
     };
-  }, []);
+  }, [setLocalSettings]);
 
   // Sekundenzeiger für Countdown und "aktualisiert vor".
   useEffect(() => {
@@ -87,32 +105,43 @@ export default function App() {
 
   const updateSettings = useCallback(
     async (patch: Partial<Settings>) => {
-      if (!settings) return;
-      const next = { ...settings, ...patch };
-      setSettingsState(next);
-      try {
-        const saved = await setSettings(next);
-        setSettingsState(saved);
-      } catch (e) {
-        // Backend meldet z. B. einen Autostart-Fehler und liefert den alten Wert zurück.
-        console.error("set_settings", e);
-        setSettingsState(await getSettings());
-      }
+      const current = settingsRef.current;
+      if (!current) return;
+      const next = { ...current, ...patch };
+      setLocalSettings(next);
+      // Jede Änderung enthält den aktuellen Gesamtstand. Serielles Speichern
+      // verhindert, dass eine ältere Antwort die nächste Fensterwahl zurücksetzt.
+      settingsWriteQueue.current = settingsWriteQueue.current.then(async () => {
+        try {
+          const saved = await setSettings(next);
+          if (settingsRef.current === next) setLocalSettings(saved);
+        } catch (e) {
+          // Backend meldet z. B. einen Autostart-Fehler und liefert den alten Wert zurück.
+          console.error("set_settings", e);
+          try {
+            const saved = await getSettings();
+            if (settingsRef.current === next) setLocalSettings(saved);
+          } catch (readError) {
+            console.error("get_settings", readError);
+          }
+        }
+      });
+      await settingsWriteQueue.current;
     },
-    [settings],
+    [setLocalSettings],
   );
 
   // Nach Änderungen, die das Backend selbst speichert (Zeitzone, Port).
   const reloadSettings = useCallback(() => {
-    getSettings().then(setSettingsState).catch((e) => console.error("get_settings", e));
-  }, []);
+    getSettings().then(setLocalSettings).catch((e) => console.error("get_settings", e));
+  }, [setLocalSettings]);
 
   const chooseProvider = useCallback(
     async (key: ProviderKey) => {
-      if (settings) setSettingsState({ ...settings, provider: key });
+      if (settings) setLocalSettings({ ...settings, provider: key });
       await setProvider(key);
     },
-    [settings],
+    [settings, setLocalSettings],
   );
 
   return (
@@ -144,13 +173,15 @@ export default function App() {
             snapshot={snapshot}
             settings={settings}
             providers={providers}
+            plugins={plugins}
             onProvider={chooseProvider}
             onRefresh={() => refresh()}
             onSettings={updateSettings}
           />
         )}
         {page === "connection" && <Connection t={t} now={now} connection={connection} />}
-        {page === "display" && <Display t={t} connection={connection} settings={settings} providers={providers} onSettings={updateSettings} onSettingsChanged={reloadSettings} />}
+        {page === "display" && <Display t={t} connection={connection} settings={settings} providers={providers} plugins={plugins} onSettings={updateSettings} onSettingsChanged={reloadSettings} />}
+        {page === "plugins" && <Plugins t={t} plugins={plugins} onRefresh={() => listPlugins().then(setPlugins).catch(console.error)} />}
         {page === "updates" && <Updates t={t} connection={connection} settings={settings} onSettings={updateSettings} />}
         {page === "diagnostics" && <Diagnostics t={t} snapshot={snapshot} />}
       </main>

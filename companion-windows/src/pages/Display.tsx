@@ -9,6 +9,7 @@ import {
   type DisplayLanguage,
   type Orientation,
   type ProviderInfo,
+  type PluginInfo,
   type Settings,
   type ThemeSetting,
   type TimeZoneOption,
@@ -21,6 +22,7 @@ interface Props {
   connection: ConnectionSnapshot | null;
   settings: Settings | null;
   providers: ProviderInfo[];
+  plugins: PluginInfo[];
   onSettings: (patch: Partial<Settings>) => void;
   onSettingsChanged: () => void;
 }
@@ -32,7 +34,7 @@ const ORIENTATIONS: Orientation[] = ["portrait", "landscape_left", "landscape_ri
 const THEMES: ThemeSetting[] = ["system", "dark", "light"];
 const LANGUAGES: DisplayLanguage[] = ["de", "en"];
 
-export default function Display({ t, connection, settings, providers, onSettings, onSettingsChanged }: Props) {
+export default function Display({ t, connection, settings, providers, plugins, onSettings, onSettingsChanged }: Props) {
   const profile = connection?.profile ?? null;
   const connected = connection?.state === "connected";
   const [name, setName] = useState(profile?.friendlyName ?? "");
@@ -151,7 +153,7 @@ export default function Display({ t, connection, settings, providers, onSettings
         </p>
       )}
 
-      {settings && <ViewManager t={t} settings={settings} providers={providers} onSettings={onSettings} />}
+      {settings && <ViewManager t={t} settings={settings} providers={providers} plugins={plugins} connection={connection} onSettings={onSettings} />}
 
       <h2>{t("disp.step.look")}</h2>
       <div className="field-row">

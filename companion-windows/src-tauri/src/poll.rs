@@ -2,11 +2,13 @@
 //! Der CLI-Aufruf läuft in `spawn_blocking`, die Sperren werden davor und
 //! danach jeweils nur kurz gehalten.
 
+use crate::plugins;
 use crate::serial_service;
 use crate::settings::ViewContent;
 use crate::state::{current_snapshot, AppState};
 use crate::tray;
-use aimonitor_core::{source, POLL_INTERVAL, Provider, Source};
+use aimonitor_core::{source, Provider, Source, POLL_INTERVAL};
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -37,7 +39,8 @@ pub fn start_fetch(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let outcome =
-            tauri::async_runtime::spawn_blocking(move || source::fetch(cli.as_deref(), provider)).await;
+            tauri::async_runtime::spawn_blocking(move || source::fetch(cli.as_deref(), provider))
+                .await;
         let Ok(outcome) = outcome else {
             eprintln!("[aimonitor] Abruf-Thread abgebrochen");
             return;
@@ -70,9 +73,57 @@ pub fn start_timer(app: AppHandle) {
         .spawn(move || loop {
             start_fetch(&app);
             refresh_views(&app);
+            refresh_plugins(&app);
             std::thread::sleep(POLL_INTERVAL);
         })
         .expect("Poll-Thread");
+}
+
+/// Fetch only installed plugin views that are assigned to a display window.
+/// Network requests happen outside every AppState lock.
+pub fn refresh_plugins(app: &AppHandle) {
+    let assigned: HashSet<String> = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .views
+        .iter()
+        .filter_map(|view| match view {
+            ViewContent::Plugin(id) => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    if assigned.is_empty() {
+        return;
+    }
+    let due = app
+        .state::<AppState>()
+        .plugins
+        .lock()
+        .unwrap()
+        .due_fetches(&assigned);
+    if due.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        for (id, sha256, manifest, settings) in due {
+            let fetched_settings = settings.clone();
+            let result =
+                tauri::async_runtime::spawn_blocking(move || plugins::fetch(&manifest, &settings))
+                    .await;
+            let result = result.unwrap_or_else(|_| Err("fetch worker failed".into()));
+            let state = app.state::<AppState>();
+            let list = {
+                let mut store = state.plugins.lock().unwrap();
+                store.apply_fetch(&id, &sha256, &fetched_settings, result);
+                store.list()
+            };
+            let _ = app.emit(plugins::PLUGINS_EVENT, list);
+            serial_service::request_resend(&app);
+        }
+    });
 }
 
 /// Zusätzliche Fenster unabhängig von der in der Übersicht gewählten Quelle
@@ -94,13 +145,20 @@ pub fn refresh_views(app: &AppHandle) {
         let mut providers: Vec<Provider> = Vec::new();
         for view in views {
             if let ViewContent::Provider(p) = view {
-                if p != selected && !providers.contains(&p) { providers.push(p); }
+                if p != selected && !providers.contains(&p) {
+                    providers.push(p);
+                }
             }
         }
         let mut updated = false;
         for provider in providers {
             // Source wiederverwenden: Source::new sucht die CLI und startet `--version`.
-            let kept = app.state::<AppState>().view_clients.lock().unwrap().remove(&provider);
+            let kept = app
+                .state::<AppState>()
+                .view_clients
+                .lock()
+                .unwrap()
+                .remove(&provider);
             let result = tauri::async_runtime::spawn_blocking(move || {
                 let mut src = kept.unwrap_or_else(|| Source::new(provider));
                 src.begin_fetch();
@@ -108,11 +166,16 @@ pub fn refresh_views(app: &AppHandle) {
                 src.apply(outcome);
                 let snapshot = src.snapshot(mode);
                 (src, snapshot)
-            }).await;
+            })
+            .await;
             if let Ok((src, snapshot)) = result {
                 let state = app.state::<AppState>();
                 state.view_clients.lock().unwrap().insert(provider, src);
-                state.view_sources.lock().unwrap().insert(provider, snapshot);
+                state
+                    .view_sources
+                    .lock()
+                    .unwrap()
+                    .insert(provider, snapshot);
                 updated = true;
             }
         }

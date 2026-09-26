@@ -2,11 +2,12 @@
 //! den blockierenden CLI-Aufruf oder einen seriellen Zugriff hinweg (siehe
 //! `poll` und `serial_service`).
 
+use crate::plugins::PluginStore;
 use crate::serial_service::{ConnectionSnapshot, Job};
 use crate::settings::Settings;
 use crate::updates::ReleaseCache;
-use aimonitor_core::{DeviceRegistry, Snapshot, Source};
 use aimonitor_core::Provider;
+use aimonitor_core::{DeviceRegistry, Snapshot, Source};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
@@ -23,6 +24,7 @@ pub struct AppState {
     pub settings: Mutex<Settings>,
     pub tray: Mutex<Option<TrayIcon>>,
     pub registry: Mutex<DeviceRegistry>,
+    pub plugins: Mutex<PluginStore>,
     /// Zuletzt veröffentlichter Verbindungszustand, geschrieben vom Serial-Thread.
     pub connection: Mutex<ConnectionSnapshot>,
     /// Aufträge an den Serial-Thread.
@@ -39,7 +41,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(source: Source, settings: Settings, registry: DeviceRegistry, serial: Sender<Job>) -> Self {
+    pub fn new(
+        source: Source,
+        settings: Settings,
+        registry: DeviceRegistry,
+        plugins: PluginStore,
+        serial: Sender<Job>,
+    ) -> Self {
         Self {
             source: Mutex::new(source),
             view_sources: Mutex::new(HashMap::new()),
@@ -49,6 +57,7 @@ impl AppState {
             settings: Mutex::new(settings),
             tray: Mutex::new(None),
             registry: Mutex::new(registry),
+            plugins: Mutex::new(plugins),
             connection: Mutex::new(ConnectionSnapshot::default()),
             serial,
             releases: Mutex::new(ReleaseCache::default()),

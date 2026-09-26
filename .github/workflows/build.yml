@@ -62,11 +62,17 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio esptool
 
+      - name: Setup Rust for plugin scene contract
+        uses: dtolnay/rust-toolchain@stable
+
       # Build + merge_bin (beide Panel-Varianten) + OTA-Copy + Manifest-Version:
       # gesamte Logik liegt in scripts/build_firmware.sh, damit lokaler Build und
       # CI nicht auseinanderlaufen (single source of truth).
       - name: Build & package firmware
         run: bash scripts/build_firmware.sh
+
+      - name: Test display-plugin fixture scenes against firmware parser
+        run: bash scripts/test_display_plugin_scene_contract.sh
 
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/main'

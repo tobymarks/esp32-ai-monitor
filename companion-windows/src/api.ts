@@ -8,7 +8,8 @@ export type ProviderKey = "claude" | "codex" | "antigravity" | "gemini" | "copil
 export type PercentMode = "used" | "remaining";
 export type Language = "system" | "de" | "en";
 export type UpdateChannel = "stable" | "beta";
-export type ViewContent = { kind: "clock" } | { kind: "provider"; provider: ProviderKey };
+export type ViewContent = { kind: "clock" } | { kind: "provider"; provider: ProviderKey }
+  | { kind: "plugin"; provider: string };
 export type ViewMode = "manual" | "automatic";
 
 export type Status =
@@ -79,6 +80,46 @@ export interface ProviderInfo {
   loginLabel: string;
 }
 
+export interface PluginSettingSpec {
+  key: string;
+  label: string;
+  kind: "number" | "text";
+  default: string | number;
+  min: number | null;
+  max: number | null;
+}
+
+export interface PluginPreview {
+  id: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  attribution: string | null;
+  sourceOrigin: string;
+  sha256: string;
+  signed: boolean;
+  settingsSpec: PluginSettingSpec[];
+}
+
+export interface PluginInfo extends PluginPreview {
+  viewLabel: string;
+  settings: Record<string, string | number>;
+  fetchedAt: string | null;
+  lastError: string | null;
+}
+
+export const listPlugins = () => invoke<PluginInfo[]>("list_plugins");
+export const inspectPlugin = (source: string) => invoke<PluginPreview>("inspect_plugin", { source });
+export const installPlugin = (source: string, expectedSha256: string) =>
+  invoke<PluginInfo>("install_plugin", { source, expectedSha256 });
+export const configurePlugin = (id: string, settings: Record<string, string | number>) =>
+  invoke<PluginInfo>("configure_plugin", { id, settings });
+export const removePlugin = (id: string) => invoke<void>("remove_plugin", { id });
+export function onPlugins(handler: (plugins: PluginInfo[]) => void): Promise<UnlistenFn> {
+  return listen<PluginInfo[]>("plugins-changed", (event) => handler(event.payload));
+}
+
 export const getSnapshot = () => invoke<Snapshot>("get_snapshot");
 export const setProvider = (provider: ProviderKey) => invoke<void>("set_provider", { provider });
 export const refresh = () => invoke<void>("refresh");
@@ -116,6 +157,7 @@ export interface DeviceInfo {
   brightness: number | null;
   serialTransport: string | null;
   maxFrameBytes: number | null;
+  sceneProtocol: number | null;
   wifiConfigured: boolean | null;
   wifiConnected: boolean | null;
   timeSynced: boolean | null;

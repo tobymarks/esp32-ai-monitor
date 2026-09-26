@@ -4,6 +4,7 @@
 *.swp
 *.swo
 *~
+__pycache__/
 
 # Installer binary (built locally or by CI)
 installer/bin/*.bin

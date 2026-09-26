@@ -1,0 +1,13 @@
+[package]
+name = "aimonitor-plugin-host"
+description = "Shared display-plugin validator and renderer for the native macOS companion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aimonitor-core = { path = "../core" }
+serde_json.workspace = true
+ureq.workspace = true
+url = "2"

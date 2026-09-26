@@ -9,7 +9,7 @@ APP="$BUILD_DIR/AI Monitor.app"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_VERSION="1.30.0-beta.2"
+APP_VERSION="1.30.0-beta.3"
 
 # Developer ID Signing (ab v1.13.0) — optional. Wenn die Identity nicht im
 # Keychain ist (z.B. CI-Runner ohne Cert-Import), fallen wir auf Ad-hoc-Sign
@@ -59,6 +59,8 @@ SWIFT_SOURCES=(
   Sources/SettingsWindow+Connection.swift
   Sources/SettingsWindow+Updates.swift
   Sources/SettingsWindow+Diagnostics.swift
+  Sources/DisplayPlugins.swift
+  Sources/SettingsWindow+Plugins.swift
 )
 
 SLICES=()
@@ -77,6 +79,19 @@ done
 
 lipo -create -output "$APP/Contents/MacOS/AIMonitor" "${SLICES[@]}"
 rm -f "${SLICES[@]}"
+
+# The native companion uses the same validated plugin format and scene builder
+# as the Windows app through a small bundled Rust helper.
+command -v cargo >/dev/null || { echo "ERROR: Rust/Cargo fehlt für Display-Plugins"; exit 1; }
+command -v rustup >/dev/null || { echo "ERROR: rustup fehlt für den Universal-Build des Plugin-Helfers"; exit 1; }
+rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
+PLUGIN_MANIFEST="$SCRIPT_DIR/../companion-windows/Cargo.toml"
+for ARCH in aarch64-apple-darwin x86_64-apple-darwin; do
+  cargo build --manifest-path "$PLUGIN_MANIFEST" -p aimonitor-plugin-host --release --target "$ARCH" --locked
+done
+lipo -create -output "$APP/Contents/MacOS/aimonitor-plugin-host" \
+  "$SCRIPT_DIR/../companion-windows/target/aarch64-apple-darwin/release/aimonitor-plugin-host" \
+  "$SCRIPT_DIR/../companion-windows/target/x86_64-apple-darwin/release/aimonitor-plugin-host"
 
 # Gegenprobe: beide Slices muessen drin sein, sonst waere der Universal-Build
 # still zu einem Single-Arch-Build degradiert.
@@ -232,6 +247,8 @@ if [ "$HAS_DEVELOPER_ID" = "1" ]; then
   # Ohne Entitlements — werden nicht gebraucht: USB-Serial laeuft via open()
   # auf /dev/cu.*, CodexBar wird aus der User Library gelesen, und esptool
   # laeuft als separater Python-Prozess mit eigener Signatur.
+  codesign --force --timestamp --options runtime \
+    --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/aimonitor-plugin-host"
   codesign --force --timestamp --options runtime \
     --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/AIMonitor"
   codesign --force --timestamp --options runtime \

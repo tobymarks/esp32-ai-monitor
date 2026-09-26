@@ -1,0 +1,18 @@
+[package]
+name = "aimonitor-plugin-store"
+description = "Validated display-plugin installation, persistence, and HTTPS data access"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aimonitor-core = { path = "../core" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+url = "2"
+
+[dev-dependencies]
+zip = { version = "2.4", default-features = false, features = ["deflate"] }

@@ -3,6 +3,7 @@
 
 mod commands;
 mod flash;
+mod plugins;
 mod poll;
 mod registry;
 mod serial_service;
@@ -33,22 +34,38 @@ fn dev_action(app: tauri::AppHandle, action: String) {
             match action.as_str() {
                 "check" => {
                     let status = updates::check(&app, true);
-                    println!("[dev] check_updates: {}", serde_json::to_string_pretty(&status).unwrap_or_default());
+                    println!(
+                        "[dev] check_updates: {}",
+                        serde_json::to_string_pretty(&status).unwrap_or_default()
+                    );
                 }
                 "download" => match updates::download_firmware(&app, variant) {
-                    Ok(f) => println!("[dev] download_firmware: {}", serde_json::to_string_pretty(&f).unwrap_or_default()),
+                    Ok(f) => println!(
+                        "[dev] download_firmware: {}",
+                        serde_json::to_string_pretty(&f).unwrap_or_default()
+                    ),
                     Err(e) => eprintln!("[dev] download_firmware fehlgeschlagen: {e}"),
                 },
                 "flash" => {
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
                     while std::time::Instant::now() < deadline {
-                        if app.state::<AppState>().connection.lock().unwrap().port.is_some() {
+                        if app
+                            .state::<AppState>()
+                            .connection
+                            .lock()
+                            .unwrap()
+                            .port
+                            .is_some()
+                        {
                             break;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(500));
                     }
                     match flash::run(&app, variant) {
-                        Ok(o) => println!("[dev] flash_firmware: {}", serde_json::to_string_pretty(&o).unwrap_or_default()),
+                        Ok(o) => println!(
+                            "[dev] flash_firmware: {}",
+                            serde_json::to_string_pretty(&o).unwrap_or_default()
+                        ),
                         Err(e) => eprintln!("[dev] flash_firmware fehlgeschlagen: {e}"),
                     }
                 }
@@ -79,19 +96,25 @@ pub fn run() {
             let devices = registry::load(&handle);
             let manual_port = settings.manual_port.clone();
             let (serial_tx, serial_rx) = std::sync::mpsc::channel();
-            app.manage(AppState::new(source, settings, devices, serial_tx));
+            let plugins = plugins::app_store(&handle)?;
+            app.manage(AppState::new(source, settings, devices, plugins, serial_tx));
 
             tray::build(&handle)?;
             serial_service::start(handle.clone(), serial_rx, manual_port);
             // Strg+C oder SIGTERM (z. B. aus `cargo tauri dev`) beenden wie
             // „Beenden" im Tray: standby ans Gerät, Port schließen, dann Exit.
             let signal_handle = handle.clone();
-            if let Err(e) = ctrlc::set_handler(move || serial_service::shutdown_and_exit(&signal_handle)) {
+            if let Err(e) =
+                ctrlc::set_handler(move || serial_service::shutdown_and_exit(&signal_handle))
+            {
                 eprintln!("[aimonitor] Signal-Handler nicht gesetzt: {e}");
             }
             // Entwicklung: AIMONITOR_OPEN_SETTINGS=1 öffnet das Fenster sofort,
             // ohne den Umweg über das Tray-Menü.
-            if std::env::var("AIMONITOR_OPEN_SETTINGS").map(|v| v == "1").unwrap_or(false) {
+            if std::env::var("AIMONITOR_OPEN_SETTINGS")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
                 window::open_settings(&handle);
             }
             updates::start_timer(handle.clone());
@@ -112,6 +135,11 @@ pub fn run() {
             commands::set_settings,
             commands::list_providers,
             commands::rescan_cli,
+            commands::list_plugins,
+            commands::inspect_plugin,
+            commands::install_plugin,
+            commands::configure_plugin,
+            commands::remove_plugin,
             commands::open_settings,
             commands::get_initial_page,
             commands::get_connection,
@@ -136,7 +164,10 @@ pub fn run() {
         .expect("Tauri-App konnte nicht gebaut werden")
         .run(|_app, event| {
             // Ohne Fenster weiterlaufen; nur "Beenden" (Exit-Code gesetzt) beendet.
-            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
+            if let tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
                 api.prevent_exit();
             }
         });

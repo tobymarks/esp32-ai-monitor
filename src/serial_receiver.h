@@ -27,6 +27,8 @@ void serial_next_view();
 void serial_previous_view();
 bool serial_is_clock_view();
 uint8_t serial_view_count();
+bool serial_is_plugin_view();
+uint8_t serial_active_view();
 
 // Returns current display time string ("HH:MM" or "--:--")
 const char* serial_get_display_time();

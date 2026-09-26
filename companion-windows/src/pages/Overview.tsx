@@ -1,4 +1,4 @@
-import type { Language, PercentMode, ProviderInfo, ProviderKey, Settings, Snapshot, Status, ViewContent } from "../api";
+import type { Language, PercentMode, PluginInfo, ProviderInfo, ProviderKey, Settings, Snapshot, Status, ViewContent } from "../api";
 import { formatAgo, formatCountdown } from "../format";
 import type { Translate } from "../i18n";
 
@@ -8,6 +8,7 @@ interface Props {
   snapshot: Snapshot | null;
   settings: Settings | null;
   providers: ProviderInfo[];
+  plugins: PluginInfo[];
   onProvider: (key: ProviderKey) => void;
   onRefresh: () => void;
   onSettings: (patch: Partial<Settings>) => void;
@@ -26,17 +27,21 @@ function statusText(t: Translate, status: Status): { label: string; message: str
   }
 }
 
-export default function Overview({ t, now, snapshot, settings, providers, onProvider, onRefresh, onSettings }: Props) {
+export default function Overview({ t, now, snapshot, settings, providers, plugins, onProvider, onRefresh, onSettings }: Props) {
   const status = snapshot ? statusText(t, snapshot.status) : null;
   const fetching = snapshot?.fetching ?? false;
   const activeProvider = settings?.provider ?? snapshot?.provider;
   const manualViews = settings?.viewMode === "manual";
   const clockActive = manualViews && settings.views[settings.activeView]?.kind === "clock";
+  const activeView = manualViews ? settings.views[settings.activeView] : null;
+  const pluginActive = activeView?.kind === "plugin";
   // Mit nur einem Fenster bleibt die Quellenwahl; sie belegt dieses Fenster.
   const windowSelector = manualViews && settings.views.length > 1;
   const viewLabel = (view: ViewContent) => view.kind === "clock"
     ? t("views.clock")
-    : providers.find((provider) => provider.key === view.provider)?.label ?? view.provider;
+    : view.kind === "plugin"
+      ? plugins.find((plugin) => plugin.id === view.provider)?.viewLabel ?? view.provider
+      : providers.find((provider) => provider.key === view.provider)?.label ?? view.provider;
 
   return (
     <section className="page">
@@ -82,8 +87,9 @@ export default function Overview({ t, now, snapshot, settings, providers, onProv
       </div>}
 
       {clockActive && <p className="notice">{t("views.clock.active")}</p>}
+      {pluginActive && activeView && <p className="notice">{t("plugins.active", { name: viewLabel(activeView) })}</p>}
 
-      {!clockActive && snapshot && status && (
+      {!clockActive && !pluginActive && snapshot && status && (
         <>
           <div className="status-line">
             <span className={`pill pill-${snapshot.status.kind}`}>{status.label}</span>
