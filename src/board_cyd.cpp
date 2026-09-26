@@ -68,6 +68,11 @@ void board_set_rotation(uint8_t orientation)
     touch_orientation = orientation;
 }
 
+lv_display_rotation_t board_lvgl_rotation()
+{
+    return LV_DISPLAY_ROTATION_0;   // TFT_eSPI dreht im Panel
+}
+
 void board_fill_black()
 {
     tft.fillScreen(TFT_BLACK);

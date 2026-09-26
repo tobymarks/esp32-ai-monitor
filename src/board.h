@@ -27,6 +27,10 @@ const char* board_display_id();
 // Drehung setzen; aktualisiert SCREEN_WIDTH und SCREEN_HEIGHT (config.h).
 void board_set_rotation(uint8_t orientation);
 
+// Drehung, die LVGL in Software uebernehmen muss. Die CYDs drehen im Panel
+// selbst (immer 0), das RGB-Panel des S3 kann das nicht.
+lv_display_rotation_t board_lvgl_rotation();
+
 // Ganzen Bildschirm schwarz fuellen (Boot, Orientierungswechsel).
 void board_fill_black();
 

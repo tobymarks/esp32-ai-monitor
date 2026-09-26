@@ -178,16 +178,29 @@ const char* board_display_id()
     return DISPLAY_ID;
 }
 
+// Das Panel sitzt ungedreht richtig herum, wenn USB rechts liegt
+// (Markierung oben links, im Hardware-Test geprueft). Die Apps beschreiben die
+// Ausrichtung ueber die Lage des USB-Anschlusses; daraus folgt die Drehung,
+// die LVGL in Software macht (das RGB-Panel kann nicht selbst drehen):
+//   USB rechts -> 0 Grad, USB unten (Hochformat) -> 90 Grad, USB links -> 180 Grad.
+static lv_display_rotation_t sw_rotation = LV_DISPLAY_ROTATION_90;
+
 void board_set_rotation(uint8_t orientation)
 {
-    // Das Panel ist quadratisch und sitzt in der Einbaulage richtig herum
-    // (Markierung oben links bei USB rechts, im Hardware-Test geprueft).
-    // Eine Drehung muesste LVGL in Software machen; das kommt mit dem
-    // quadratischen Layout in Schritt 3, zusammen mit der Umstellung der
-    // Auswahl in den Apps von Hoch-/Querformat auf 0/90/180/270 Grad.
-    (void)orientation;
+    switch (orientation) {
+        case ORIENTATION_LANDSCAPE_RIGHT: sw_rotation = LV_DISPLAY_ROTATION_0;   break;
+        case ORIENTATION_LANDSCAPE_LEFT:  sw_rotation = LV_DISPLAY_ROTATION_180; break;
+        case ORIENTATION_PORTRAIT:
+        default:                          sw_rotation = LV_DISPLAY_ROTATION_90;  break;
+    }
+    // Quadratisch: die Masse bleiben bei jeder Drehung gleich.
     SCREEN_WIDTH  = DISPLAY_SHORT_SIDE;
     SCREEN_HEIGHT = DISPLAY_LONG_SIDE;
+}
+
+lv_display_rotation_t board_lvgl_rotation()
+{
+    return sw_rotation;
 }
 
 void board_fill_black()
@@ -204,11 +217,34 @@ void board_fill_black()
     }
 }
 
+// Zielpuffer fuer gedrehte Ausschnitte, so gross wie ein LVGL-Zeichenpuffer.
+static uint8_t *rotate_buf = nullptr;
+static uint32_t rotate_buf_bytes = 0;
+
 void board_flush(const lv_area_t *area, uint8_t *px_map)
 {
     if (panel == nullptr) return;
-    esp_lcd_panel_draw_bitmap(panel, area->x1, area->y1,
-                              area->x2 + 1, area->y2 + 1, px_map);
+    lv_display_t *disp = lv_display_get_default();
+    const lv_display_rotation_t rotation = disp ? lv_display_get_rotation(disp) : LV_DISPLAY_ROTATION_0;
+    if (rotation == LV_DISPLAY_ROTATION_0 || rotate_buf == nullptr) {
+        esp_lcd_panel_draw_bitmap(panel, area->x1, area->y1,
+                                  area->x2 + 1, area->y2 + 1, px_map);
+        return;
+    }
+
+    // LVGL zeichnet in logischen Koordinaten; Ausschnitt und Pixel hier auf
+    // die Lage des Panels drehen (siehe LVGL-Doku zu lv_display_set_rotation).
+    lv_area_t rotated = *area;
+    lv_display_rotate_area(disp, &rotated);
+    const int32_t src_w = lv_area_get_width(area);
+    const int32_t src_h = lv_area_get_height(area);
+    const uint32_t src_stride  = lv_draw_buf_width_to_stride(src_w, LV_COLOR_FORMAT_RGB565);
+    const uint32_t dest_stride = lv_draw_buf_width_to_stride(lv_area_get_width(&rotated), LV_COLOR_FORMAT_RGB565);
+    if ((uint32_t)src_w * src_h * 2 > rotate_buf_bytes) return;
+    lv_draw_sw_rotate(px_map, rotate_buf, src_w, src_h, src_stride, dest_stride,
+                      rotation, LV_COLOR_FORMAT_RGB565);
+    esp_lcd_panel_draw_bitmap(panel, rotated.x1, rotated.y1,
+                              rotated.x2 + 1, rotated.y2 + 1, rotate_buf);
 }
 
 // Der GT911 meldet nur, wenn sich etwas geaendert hat. LVGL fragt dagegen in
@@ -253,6 +289,9 @@ void board_lvgl_buffers(void **buf1, void **buf2, uint32_t *size_bytes)
     *buf1 = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
     *buf2 = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
     *size_bytes = bytes;
+    // Fuer die Software-Drehung ein dritter Puffer gleicher Groesse.
+    rotate_buf = (uint8_t *)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    rotate_buf_bytes = rotate_buf ? bytes : 0;
     Serial.printf("[LVGL] Zeichenpuffer 2 x %u KB im PSRAM\n", (unsigned)(bytes / 1024));
 }
 

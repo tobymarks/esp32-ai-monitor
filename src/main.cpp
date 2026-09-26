@@ -90,6 +90,9 @@ void apply_orientation(uint8_t orientation)
     // clips subsequent draws to the new extent.
     if (lv_disp) {
         lv_display_set_resolution(lv_disp, SCREEN_WIDTH, SCREEN_HEIGHT);
+        // Boards ohne Hardware-Drehung (S3) drehen ueber LVGL; die Touch-
+        // Koordinaten dreht LVGL dabei selbst mit.
+        lv_display_set_rotation(lv_disp, board_lvgl_rotation());
     }
 
     // C4: The dashboard recreate is deferred to loop() (see serial_receiver).
@@ -241,6 +244,7 @@ void setup()
     board_lvgl_buffers(&lv_buf1, &lv_buf2, &lv_buf_bytes);
 
     lv_disp = lv_display_create(SCREEN_WIDTH, SCREEN_HEIGHT);
+    lv_display_set_rotation(lv_disp, board_lvgl_rotation());
     lv_display_set_flush_cb(lv_disp, disp_flush_cb);
     lv_display_set_buffers(lv_disp, lv_buf1, lv_buf2,
                            lv_buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);

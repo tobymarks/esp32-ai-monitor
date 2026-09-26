@@ -8,6 +8,9 @@
 # Installer binary (built locally or by CI)
 installer/bin/*.bin
 
+# Sicherungskopie, die die S3-Plattform (pioarduino) bei jedem Build anlegt
+src/idf_component.yml.orig
+
 # Mac companion app build output
 companion/build/
 
