@@ -29,7 +29,7 @@ extension SettingsWindowController {
         viewsAddButton.bezelStyle = .rounded
 
         viewsModePopup = NSPopUpButton()
-        viewsModePopup.addItems(withTitles: [L("views.manual"), L("views.automatic")])
+        viewsModePopup.addItems(withTitles: [L("views.manual"), L("views.automatic"), L("views.intelligent")])
         viewsModePopup.target = self
         viewsModePopup.action = #selector(displayViewModeChosen)
         let modeRow = twoColumnRow(L("views.switch"), viewsModePopup)
@@ -52,12 +52,16 @@ extension SettingsWindowController {
         intervalControls.spacing = 6
         viewsIntervalRow = twoColumnRow(L("views.interval"), intervalControls)
 
+        viewsIntelligentHint = NSTextField(wrappingLabelWithString: L("views.intelligent.hint"))
+        viewsIntelligentHint.font = NSFont.appFont(.subheadline)
+        viewsIntelligentHint.textColor = .secondaryLabelColor
+
         viewsFirmwareHint = NSTextField(wrappingLabelWithString: L("views.firmware"))
         viewsFirmwareHint.font = NSFont.appFont(.subheadline)
         viewsFirmwareHint.textColor = .systemOrange
 
         updateViewsSection(force: true)
-        return [viewsListStack, viewsAddButton, modeRow, viewsIntervalRow, viewsFirmwareHint]
+        return [viewsListStack, viewsAddButton, modeRow, viewsIntervalRow, viewsIntelligentHint, viewsFirmwareHint]
     }
 
     /// Baut die Fensterzeilen nur neu, wenn sich Liste, Auswahl oder Modus
@@ -65,8 +69,9 @@ extension SettingsWindowController {
     func updateViewsSection(force: Bool = false) {
         guard viewsListStack != nil else { return }
         let settings = Settings.shared
-        viewsModePopup.selectItem(at: settings.displayViewsAutomatic ? 1 : 0)
-        viewsIntervalRow.isHidden = !settings.displayViewsAutomatic
+        viewsModePopup.selectItem(at: ["manual", "automatic", "intelligent"].firstIndex(of: settings.displayViewMode) ?? 0)
+        viewsIntervalRow.isHidden = settings.displayViewMode != "automatic"
+        viewsIntelligentHint.isHidden = settings.displayViewMode != "intelligent"
         if viewsIntervalField.currentEditor() == nil {
             viewsIntervalField.integerValue = settings.displayViewInterval
         }
@@ -77,12 +82,12 @@ extension SettingsWindowController {
         viewsFirmwareHint.stringValue = lacksScenes ? L("plugins.firmware") : L("views.firmware")
         viewsFirmwareHint.isHidden = !lacksWindows && !lacksScenes
 
-        let signature = "\(settings.displayViews)|\(settings.activeDisplayView)|\(settings.displayViewsAutomatic)|\(DisplayPlugins.shared.records.keys.sorted())"
+        let signature = "\(settings.displayViews)|\(settings.activeDisplayView)|\(settings.displayViewMode)|\(DisplayPlugins.shared.records.keys.sorted())"
         guard force || signature != viewsSignature else { return }
         viewsSignature = signature
         viewsListStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (index, content) in settings.displayViews.enumerated() {
-            let shown = !settings.displayViewsAutomatic && index == settings.activeDisplayView
+            let shown = settings.displayViewMode != "automatic" && index == settings.activeDisplayView
             viewsListStack.addArrangedSubview(buildDisplayViewRow(index: index, content: content, shown: shown))
         }
     }
@@ -115,7 +120,7 @@ extension SettingsWindowController {
 
         var views: [NSView] = [label, popup]
         // Im manuellen Modus wählt „Anzeigen" das Fenster auf dem Display.
-        if !Settings.shared.displayViewsAutomatic {
+        if Settings.shared.displayViewMode != "automatic" {
             if shown {
                 let current = NSTextField(labelWithString: L("views.active"))
                 current.font = NSFont.appFont(.subheadline)
@@ -185,11 +190,11 @@ extension SettingsWindowController {
     }
 
     @objc private func displayViewModeChosen() {
-        let automatic = viewsModePopup.indexOfSelectedItem == 1
+        let mode = ["manual", "automatic", "intelligent"][max(0, viewsModePopup.indexOfSelectedItem)]
         let entered = viewsIntervalField.integerValue
         let interval = entered > 0 ? entered : Settings.shared.displayViewInterval
         DispatchQueue.main.async { [weak self] in
-            self?.monitor?.setDisplayViewMode(automatic: automatic, interval: interval)
+            self?.monitor?.setDisplayViewMode(mode, interval: interval)
         }
     }
 }

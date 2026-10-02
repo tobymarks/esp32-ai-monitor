@@ -9,6 +9,7 @@ mod poll;
 mod registry;
 mod serial_service;
 mod settings;
+mod smart_switch;
 mod state;
 mod timezone;
 mod tray;

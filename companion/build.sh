@@ -60,6 +60,7 @@ SWIFT_SOURCES=(
   Sources/SettingsWindow+Updates.swift
   Sources/SettingsWindow+Diagnostics.swift
   Sources/DisplayPlugins.swift
+  Sources/IntelligentViews.swift
   Sources/SettingsWindow+Plugins.swift
   Sources/ClaudeCodeWindow.swift
 )

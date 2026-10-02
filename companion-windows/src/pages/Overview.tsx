@@ -32,7 +32,7 @@ export default function Overview({ t, locale, now, snapshot, settings, providers
   const status = snapshot ? statusText(t, snapshot.status) : null;
   const fetching = snapshot?.fetching ?? false;
   const activeProvider = settings?.provider ?? snapshot?.provider;
-  const manualViews = settings?.viewMode === "manual";
+  const manualViews = settings != null && settings.viewMode !== "automatic";
   const clockActive = manualViews && settings.views[settings.activeView]?.kind === "clock";
   const activeView = manualViews ? settings.views[settings.activeView] : null;
   const pluginActive = activeView?.kind === "plugin";

@@ -10,7 +10,7 @@ export type Language = "system" | "de" | "en";
 export type UpdateChannel = "stable" | "beta";
 export type ViewContent = { kind: "clock" } | { kind: "provider"; provider: ProviderKey }
   | { kind: "plugin"; provider: string };
-export type ViewMode = "manual" | "automatic";
+export type ViewMode = "manual" | "automatic" | "intelligent";
 
 export type Status =
   | { kind: "ok" }

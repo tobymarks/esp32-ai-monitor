@@ -156,3 +156,13 @@ companion-windows/
 Einstellungen und Geräteprofile liegen unter macOS in
 `~/Library/Application Support/de.aimonitor.companion/` (`settings.json`,
 `devices.json`), unter Windows in `%APPDATA%\de.aimonitor.companion\`.
+
+
+### Plugin data fixtures
+
+For a deterministic local hardware test, set
+`AIMONITOR_PLUGIN_FIXTURE_DIR` to a directory containing
+`<plugin-id>.json`, such as `org.aimonitor.weather.json`. The companion
+reads that file in place of the plugin's HTTPS response when the file exists;
+other plugins keep using their normal URLs. The same 64 KiB JSON limit applies.
+This setting is for development runs and does not alter installed packages.

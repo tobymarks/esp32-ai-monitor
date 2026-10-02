@@ -12,6 +12,8 @@
   "views.drop.hint": "Drag content here or onto a window. Click a block to assign it to the selected window.",
   "views.preview.source": "Data source",
   "views.switch": "Switch between windows",
+  "views.intelligent": "Switch intelligently",
+  "views.intelligent.hint": "Switch on important changes. A window stays visible for at least 2 minutes; touch keeps your choice for 10 minutes.",
   "views.automatic": "Switch automatically",
   "views.manual": "Switch manually",
   "views.manual.hint": "Choose a window in Overview. On the display, tap left for previous or right for next.",

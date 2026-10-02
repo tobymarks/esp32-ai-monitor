@@ -11,6 +11,7 @@ use crate::flash;
 use crate::poll;
 use crate::registry;
 use crate::settings::{ViewContent, ViewMode};
+use crate::smart_switch::{usage_signals, SmartSwitch, UsageSignal};
 use crate::state::{current_snapshot, AppState};
 use crate::timezone;
 use crate::tray;
@@ -26,12 +27,12 @@ use aimonitor_core::protocol::{
     REPAIR_THRESHOLD, SCAN_INTERVAL, SEND_DEBOUNCE,
 };
 use aimonitor_core::protocol::{DeviceMessage, ViewState};
-use aimonitor_core::{DeviceInfo, DeviceProfile, Snapshot};
+use aimonitor_core::{DeviceInfo, DeviceProfile, Snapshot, POLL_INTERVAL};
 use aimonitor_serial::{list_ports, ports::choose_port, FrameReceipt, Link, LinkError};
 use chrono::{DateTime, Local, Utc};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -42,6 +43,13 @@ pub const SETTINGS_EVENT: &str = "settings-changed";
 const LOG_LINES: usize = 50;
 /// Wie lange der Thread höchstens blockiert, bevor er wieder Aufträge liest.
 const IDLE_SLICE: Duration = Duration::from_millis(250);
+
+fn recent_sample(fetched_at: Option<&DateTime<Utc>>, max_age: Duration) -> bool {
+    fetched_at.is_some_and(|fetched| {
+        let age = Utc::now().signed_duration_since(fetched.to_owned()).num_seconds();
+        age >= 0 && age <= max_age.as_secs() as i64
+    })
+}
 /// Kurze Lesescheibe für die späte `info` nach `foreignFirmware`.
 const LATE_INFO_SLICE: Duration = Duration::from_millis(200);
 
@@ -56,6 +64,12 @@ pub enum Job {
     /// Datenframe über den Debounce anfordern (neue Daten, Provider, Einstellungen).
     Resend,
     ConfigureViews,
+    SmartTouch,
+    ResetSmart,
+    ResetSmartPlugin(String),
+    SmartUsage(aimonitor_core::Provider, Vec<UsageSignal>),
+    SmartPlugin(String, BTreeMap<String, bool>),
+    SmartClaudeCode(Vec<(String, aimonitor_core::claude_code::Waiting, i64)>),
     SendDiagnostic,
     Wifi { action: WifiAction, reply: Sender<Result<Value, String>> },
     /// Nur die geänderten Werte sind `Some`; das Profil selbst liegt in der Registry.
@@ -235,6 +249,7 @@ struct Service {
     frames_sent: u64,
     frames_acked: u64,
     log: VecDeque<String>,
+    smart: SmartSwitch,
 }
 
 impl Service {
@@ -263,6 +278,11 @@ impl Service {
             frames_sent: 0,
             frames_acked: 0,
             log: VecDeque::new(),
+            smart: {
+                let mut smart = SmartSwitch::default();
+                smart.reset(Instant::now());
+                smart
+            },
         }
     }
 
@@ -408,6 +428,7 @@ impl Service {
             return;
         }
         self.poll_view_events();
+        self.apply_smart_switch();
         let now = Instant::now();
         if let Some(due) = self.diagnostic_due {
             if now >= due {
@@ -440,6 +461,44 @@ impl Service {
                 }
             }
         }
+    }
+
+    fn apply_smart_switch(&mut self) {
+        let state = self.app.state::<AppState>();
+        let (mode, active) = {
+            let settings = state.settings.lock().unwrap();
+            (settings.view_mode, settings.active_view)
+        };
+        if mode != ViewMode::Intelligent
+            || !matches!(&self.state, LinkState::Connected(info) if info.supports_views()) { return; }
+        let lacks_plugin_scenes = matches!(&self.state, LinkState::Connected(info) if !info.supports_plugin_scenes());
+        if lacks_plugin_scenes && state.settings.lock().unwrap().views.iter()
+            .any(|view| matches!(view, ViewContent::Plugin(_))) { return; }
+        let Some(next) = self.smart.choose(active, Instant::now()) else { return };
+        let (updated, provider) = {
+            let mut settings = state.settings.lock().unwrap();
+            if settings.view_mode != ViewMode::Intelligent || next >= settings.views.len() { return; }
+            settings.active_view = next;
+            let provider = match &settings.views[next] {
+                ViewContent::Provider(provider) => Some(*provider),
+                _ => None,
+            };
+            if let Some(provider) = provider {
+                settings.provider = provider;
+            }
+            // Persist the automatic selection so reconnecting cannot mistake it for a touch.
+            settings.save(&self.app);
+            (settings.clone(), provider)
+        };
+        let _ = self.app.emit(SETTINGS_EVENT, updated);
+        if let Some(provider) = provider {
+            state.source.lock().unwrap().set_provider(provider, Utc::now());
+            poll::start_fetch(&self.app);
+            poll::refresh_views(&self.app);
+        }
+        self.log_event(format!("Intelligenter Wechsel: Fenster {}", next + 1));
+        self.configure_views();
+        self.publish();
     }
 
     /// Datenframe über den Debounce anfordern; mehrere Auslöser ergeben einen Frame.
@@ -735,7 +794,7 @@ impl Service {
             .collect();
         let line = json!({
             "cmd": "set_views", "views": contents,
-            "mode": match settings.view_mode { ViewMode::Manual => "manual", ViewMode::Automatic => "automatic" },
+            "mode": match settings.view_mode { ViewMode::Manual => "manual", ViewMode::Automatic => "automatic", ViewMode::Intelligent => "manual" },
             "interval": settings.view_interval_seconds,
             "active": settings.active_view,
         }).to_string() + "\n";
@@ -794,7 +853,7 @@ impl Service {
                 .collect();
             let mode = match settings.view_mode {
                 ViewMode::Manual => "manual",
-                ViewMode::Automatic => "automatic",
+                ViewMode::Automatic => "automatic", ViewMode::Intelligent => "manual",
             };
             if view.views != expected
                 || view.mode != mode
@@ -817,6 +876,9 @@ impl Service {
             (true, provider)
         };
         if changed {
+            if self.app.state::<AppState>().settings.lock().unwrap().view_mode == ViewMode::Intelligent {
+                self.smart.touch(Instant::now());
+            }
             if let Some(provider) = provider {
                 app_state
                     .source
@@ -1085,6 +1147,111 @@ impl Service {
                 self.configure_views();
                 self.schedule_send();
             }
+            Job::SmartTouch => self.smart.touch(Instant::now()),
+            Job::ResetSmart => {
+                let now = Instant::now();
+                self.smart.reset(now);
+                let state = self.app.state::<AppState>();
+                let settings = state.settings.lock().unwrap().clone();
+                let providers: Vec<_> = settings.views.iter().map(|view| match view {
+                    ViewContent::Provider(p) => Some(*p), _ => None,
+                }).collect();
+                let recent_usage = |snapshot: &Snapshot| {
+                    !snapshot.fetching && recent_sample(snapshot.fetched_at.as_ref(), POLL_INTERVAL * 2)
+                };
+                let selected = current_snapshot(&self.app);
+                if providers.contains(&Some(selected.provider))
+                    && selected.status.is_ok() && recent_usage(&selected) {
+                    if let Some(entry) = &selected.entry {
+                        self.smart.observe_usage(selected.provider, usage_signals(entry), &providers, now);
+                    }
+                }
+                for (provider, snap) in state.view_sources.lock().unwrap().iter() {
+                    if *provider == selected.provider || !providers.contains(&Some(*provider)) {
+                        continue;
+                    }
+                    if snap.status.is_ok() && recent_usage(snap) {
+                        if let Some(entry) = &snap.entry {
+                            self.smart.observe_usage(*provider, usage_signals(entry), &providers, now);
+                        }
+                    }
+                }
+                let plugin_views: Vec<_> = settings.views.iter().map(|view| match view {
+                    ViewContent::Plugin(id) => Some(id.as_str()), _ => None,
+                }).collect();
+                for (id, record) in state.plugins.lock().unwrap().records.iter() {
+                    let fresh = recent_sample(
+                        record.fetched_at.as_ref(),
+                        Duration::from_secs(3 * record.manifest.source.interval_seconds as u64),
+                    );
+                    if plugin_views.contains(&Some(id.as_str())) && record.last_error.is_none() && fresh {
+                        if let Some(data) = &record.data {
+                            let max_age = Duration::from_secs(3 * record.manifest.source.interval_seconds as u64);
+                            let age = record.fetched_at.as_ref().and_then(|fetched| {
+                                Utc::now().signed_duration_since(fetched.to_owned()).to_std().ok()
+                            }).unwrap_or_default();
+                            let sampled_at = now.checked_sub(age).unwrap_or(now);
+                            self.smart.observe_plugin(id, record.manifest.attention_states(data), &plugin_views, sampled_at, max_age);
+                        }
+                    }
+                }
+                let waiting = state.claude_code.lock().unwrap().sessions
+                    .waiting(Utc::now().timestamp()).iter()
+                    .filter_map(|s| s.waiting.map(|kind| (s.id.clone(), kind, s.since))).collect();
+                self.smart.observe_claude_code(waiting, &plugin_views, now);
+            },
+            Job::ResetSmartPlugin(id) => {
+                let settings = self.app.state::<AppState>().settings.lock().unwrap().clone();
+                let views: Vec<_> = settings.views.iter().map(|view| match view {
+                    ViewContent::Plugin(name) => Some(name.as_str()), _ => None,
+                }).collect();
+                self.smart.reset_plugin(&id, &views);
+            }
+            Job::SmartUsage(provider, sample) => {
+                let settings = self.app.state::<AppState>().settings.lock().unwrap().clone();
+                if settings.view_mode == ViewMode::Intelligent {
+                    let views: Vec<_> = settings.views.iter().map(|view| match view {
+                        ViewContent::Provider(p) => Some(*p), _ => None,
+                    }).collect();
+                    self.smart.observe_usage(provider, sample, &views, Instant::now());
+                }
+            }
+            Job::SmartPlugin(id, states) => {
+                let settings = self.app.state::<AppState>().settings.lock().unwrap().clone();
+                if settings.view_mode == ViewMode::Intelligent {
+                    let language = self.profile.as_ref()
+                        .map(|profile| profile.language).unwrap_or_default();
+                    let theme = self.profile.as_ref()
+                        .map(|profile| profile.theme).unwrap_or_default()
+                        .resolve(system_is_dark());
+                    let max_age = self.app.state::<AppState>().plugins.lock().unwrap()
+                        .records.get(&id).and_then(|record| {
+                            let renderable = record.last_error.is_none() && record.data.as_ref().is_some_and(|data| {
+                                [SceneLayout::Portrait, SceneLayout::Landscape, SceneLayout::Square]
+                                    .into_iter().all(|layout| record.manifest
+                                        .scene_with_theme_and_locale(
+                                            layout, data, &record.settings, theme, language.wire()
+                                        ).is_ok())
+                            });
+                            renderable.then(|| Duration::from_secs(3 * record.manifest.source.interval_seconds as u64))
+                        });
+                    if let Some(max_age) = max_age {
+                        let views: Vec<_> = settings.views.iter().map(|view| match view {
+                            ViewContent::Plugin(name) => Some(name.as_str()), _ => None,
+                        }).collect();
+                        self.smart.observe_plugin(&id, states, &views, Instant::now(), max_age);
+                    }
+                }
+            }
+            Job::SmartClaudeCode(waiting) => {
+                let settings = self.app.state::<AppState>().settings.lock().unwrap().clone();
+                if settings.view_mode == ViewMode::Intelligent {
+                    let views: Vec<_> = settings.views.iter().map(|view| match view {
+                        ViewContent::Plugin(id) => Some(id.as_str()), _ => None,
+                    }).collect();
+                    self.smart.observe_claude_code(waiting, &views, Instant::now());
+                }
+            }
             Job::SendDiagnostic => self.send_diagnostic_frame(),
             Job::ApplyProfile {
                 theme,
@@ -1209,6 +1376,21 @@ impl Service {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_baselines_ignore_missing_or_old_samples() {
+        let now = Utc::now();
+        assert!(!recent_sample(None, POLL_INTERVAL * 2));
+        assert!(recent_sample(
+            Some(&(now - chrono::Duration::seconds(30))), POLL_INTERVAL * 2,
+        ));
+        assert!(!recent_sample(
+            Some(&(now - chrono::Duration::hours(2))), POLL_INTERVAL * 2,
+        ));
+        assert!(!recent_sample(
+            Some(&(now + chrono::Duration::hours(2))), POLL_INTERVAL * 2,
+        ));
+    }
 
     #[test]
     fn notice_texts_exist_in_both_languages() {

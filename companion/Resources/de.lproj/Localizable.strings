@@ -223,6 +223,8 @@
 "update.skip" = "Version überspringen";
 "views.active" = "wird angezeigt";
 "views.add" = "Fenster hinzufügen";
+"views.intelligent" = "Intelligent";
+"views.intelligent.hint" = "Wechselt bei wichtigen Änderungen. Mindestens 2 Minuten pro Fenster; nach Touch bleibt die Auswahl 10 Minuten stehen.";
 "views.automatic" = "Automatisch";
 "views.clock" = "Uhr";
 "views.firmware" = "Das verbundene Display zeigt nur ein Fenster. Mehrere Fenster brauchen Firmware ab 2.19.0.";

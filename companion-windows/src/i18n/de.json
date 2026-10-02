@@ -12,6 +12,8 @@
   "views.drop.hint": "Inhalt hierher oder auf ein Fenster ziehen. Ein Klick auf einen Baustein ordnet ihn dem gewählten Fenster zu.",
   "views.preview.source": "Datenquelle",
   "views.switch": "Wechsel zwischen Fenstern",
+  "views.intelligent": "Intelligent wechseln",
+  "views.intelligent.hint": "Bei wichtigen Änderungen wechseln. Ein Fenster bleibt mindestens 2 Minuten sichtbar; nach einem Touch bleibt die Auswahl 10 Minuten stehen.",
   "views.automatic": "Automatisch wechseln",
   "views.manual": "Manuell wechseln",
   "views.manual.hint": "Fenster in der Übersicht wählen. Auf dem Display: links zurück, rechts weiter tippen.",

@@ -212,9 +212,10 @@ fn run() -> Result<Value, String> {
                 let square = package.manifest.scene_with_theme_and_locale(
                     SceneLayout::Square, &data, &settings, theme, &locale,
                 )?;
-                Ok(
-                    json!({"scenes": {"portrait": portrait, "landscape": landscape, "square": square}}),
-                )
+                Ok(json!({
+                    "scenes": {"portrait": portrait, "landscape": landscape, "square": square},
+                    "attention": package.manifest.attention_states(&data),
+                }))
             } else {
                 let layout = match orientation {
                     "landscape" => SceneLayout::Landscape,

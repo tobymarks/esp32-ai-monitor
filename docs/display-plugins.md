@@ -7,7 +7,7 @@ provider. The companion ships without a third-party display plugin.
 ## Ownership and lifecycle
 
 - The desktop companion owns plugin installation, configuration, network access,
-  data refresh, and validation. The ESP32 receives render data over the existing
+  data refresh, validation, and optional intelligent-switch trigger evaluation. The ESP32 receives render data over the existing
   USB connection. It never receives API credentials.
 - Installed plugin views appear alongside the clock and built-in providers in
   the window manager. A view can occupy any of the eight slots, including more

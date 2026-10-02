@@ -223,6 +223,8 @@
 "update.skip" = "Skip version";
 "views.active" = "on display";
 "views.add" = "Add window";
+"views.intelligent" = "Intelligent";
+"views.intelligent.hint" = "Switches on important changes. At least 2 minutes per window; touch keeps your choice for 10 minutes.";
 "views.automatic" = "Automatic";
 "views.clock" = "Clock";
 "views.firmware" = "The connected display shows a single window. Multiple windows need firmware 2.19.0 or later.";

@@ -71,6 +71,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var viewsModePopup: NSPopUpButton!
     var viewsIntervalField: NSTextField!
     var viewsIntervalRow: NSView!
+    var viewsIntelligentHint: NSTextField!
     var viewsFirmwareHint: NSTextField!
     var viewsSignature = ""
     var pluginSourceField: NSTextField!

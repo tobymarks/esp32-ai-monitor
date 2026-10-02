@@ -2,12 +2,12 @@
 //! and its tests. Plugins produce bounded firmware scenes, not ESP32 binaries.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Map, Number, Value};
 use crate::protocol::Theme;
 use std::collections::{BTreeMap, HashSet};
 use url::Url;
 
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 pub const SCENE_PROTOCOL: u32 = 1;
 pub const MAX_SCENE_NODES: usize = 24;
 pub const MAX_SCENE_BYTES: usize = 1536;
@@ -109,6 +109,8 @@ pub struct Manifest {
     pub source: HttpSource,
     pub settings: Vec<Setting>,
     pub bindings: Vec<Binding>,
+    #[serde(default)]
+    pub attention_rules: Vec<AttentionRule>,
     pub scenes: SceneVariants,
     /// Optional exact-text translations of author-supplied display strings.
     /// Missing locales and entries use the manifest's original text.
@@ -157,6 +159,23 @@ pub struct Binding {
     pub fallback: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttentionRule {
+    pub id: String,
+    pub path: String,
+    pub operator: AttentionOperator,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AttentionOperator {
+    Equals,
+    AtLeast,
+    AtMost,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BindingFormat {
@@ -186,6 +205,21 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     if bytes.len() > MAX_PACKAGE_MANIFEST_BYTES {
         return Err("manifest too large".into());
     }
+    // Read the version before strict field validation. Otherwise a future
+    // field masks the actionable compatibility error as "unknown field".
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Header {
+        format_version: u64,
+    }
+    let header: Header =
+        serde_json::from_slice(bytes).map_err(|e| format!("invalid manifest: {e}"))?;
+    if header.format_version > u64::from(FORMAT_VERSION) {
+        return Err(format!(
+            "This plugin requires a newer version of AI Monitor (formatVersion {})",
+            header.format_version
+        ));
+    }
     let manifest: Manifest =
         serde_json::from_slice(bytes).map_err(|e| format!("invalid manifest: {e}"))?;
     manifest.validate()?;
@@ -204,9 +238,28 @@ fn printable(s: &str, max: usize) -> bool {
     s.len() <= max && s.bytes().all(|c| (0x20..=0x7e).contains(&c))
 }
 
+fn valid_dotted_path(path: &str) -> bool {
+    !path.is_empty() && path.len() <= 100 && path.split('.').all(|part| !part.is_empty())
+}
+
+fn equal_value(actual: Option<&Value>, expected: &Value) -> bool {
+    let Some(actual) = actual else { return false };
+    match (actual, expected) {
+        (Value::Number(a), Value::Number(b)) if a.is_f64() || b.is_f64() => {
+            // An integer larger than 2^53 can round to a different value as f64.
+            let exactly_representable = |number: &Number| {
+                number.is_f64() || number.as_f64().is_some_and(|n| n.abs() <= 9_007_199_254_740_992.0)
+            };
+            exactly_representable(a) && exactly_representable(b) && a.as_f64() == b.as_f64()
+        }
+        _ => actual == expected,
+    }
+}
+
 impl Manifest {
     pub fn validate(&self) -> Result<(), String> {
-        if self.format_version != FORMAT_VERSION {
+        if !(1..=FORMAT_VERSION).contains(&self.format_version)
+            || (self.format_version == 1 && !self.attention_rules.is_empty()) {
             return Err("unsupported plugin format".into());
         }
         if self.min_scene_protocol == 0 || self.min_scene_protocol > SCENE_PROTOCOL {
@@ -275,13 +328,25 @@ impl Manifest {
         {
             return Err("source must be an HTTPS URL without credentials".into());
         }
+        if self.attention_rules.len() > 16 {
+            return Err("too many attention rules".into());
+        }
+        let mut rule_ids = HashSet::new();
+        for rule in &self.attention_rules {
+            if !valid_key(&rule.id, 30) || !rule_ids.insert(rule.id.as_str())
+                || !valid_dotted_path(&rule.path)
+                || !(rule.value.is_boolean() || rule.value.is_string() || rule.value.is_number())
+                || matches!(rule.operator, AttentionOperator::AtLeast | AttentionOperator::AtMost)
+                    && rule.value.as_f64().is_none()
+            {
+                return Err("invalid attention rule".into());
+            }
+        }
         let mut names = HashSet::new();
         for binding in &self.bindings {
             if !valid_key(&binding.name, 30)
                 || !names.insert(binding.name.as_str())
-                || binding.path.len() > 100
-                || binding.path.is_empty()
-                || binding.path.split('.').any(|part| part.is_empty())
+                || !valid_dotted_path(&binding.path)
                 || !printable(&binding.suffix, 20)
                 || !printable(&binding.fallback, 64)
                 || binding.map.len() > 100
@@ -418,6 +483,22 @@ impl Manifest {
             return Err("source origin changed".into());
         }
         Ok(url)
+    }
+
+    /// Declarative conditions evaluated against the source JSON, never the rendered scene.
+    /// The host triggers only on false-to-true transitions after a baseline fetch.
+    pub fn attention_states(&self, data: &Value) -> BTreeMap<String, bool> {
+        self.attention_rules.iter().map(|rule| {
+            let actual = lookup(data, &rule.path);
+            let active = match rule.operator {
+                AttentionOperator::Equals => equal_value(actual, &rule.value),
+                AttentionOperator::AtLeast => actual.and_then(Value::as_f64)
+                    .zip(rule.value.as_f64()).is_some_and(|(a, b)| a >= b),
+                AttentionOperator::AtMost => actual.and_then(Value::as_f64)
+                    .zip(rule.value.as_f64()).is_some_and(|(a, b)| a <= b),
+            };
+            (rule.id.clone(), active)
+        }).collect()
     }
 
     pub fn scene(
@@ -1043,6 +1124,64 @@ mod tests {
         let light = status_scene_with_theme("Plugin", "Loading", Theme::Light);
         assert_ne!(dark["background"], light["background"]);
         assert_ne!(dark["nodes"][0]["color"], light["nodes"][0]["color"]);
+    }
+
+    #[test]
+    fn future_format_reports_upgrade_before_unknown_fields() {
+        let mut package: Value = serde_json::from_slice(include_bytes!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        )).unwrap();
+        package["formatVersion"] = json!(3);
+        package["futureFeature"] = json!({"enabled": true});
+        let err = parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err();
+        assert!(err.contains("newer version of AI Monitor"), "{err}");
+        package["formatVersion"] = json!(2);
+        let err = parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err();
+        assert!(err.contains("unknown field"), "{err}");
+    }
+
+    #[test]
+    fn attention_rules_parse_only_in_v2() {
+        let mut package: Value = serde_json::from_slice(include_bytes!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        )).unwrap();
+        package["attentionRules"] = json!([{
+            "id": "rain", "path": "forecast.rain", "operator": "equals", "value": true
+        }]);
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).is_err());
+        package["formatVersion"] = json!(2);
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn attention_rules_use_source_values() {
+        let mut plugin = fixture();
+        plugin.format_version = 2;
+        plugin.attention_rules = vec![
+            AttentionRule { id: "rain".into(), path: "weather.condition".into(),
+                operator: AttentionOperator::Equals, value: json!("rain") },
+            AttentionRule { id: "warning".into(), path: "weather.severity".into(),
+                operator: AttentionOperator::AtLeast, value: json!(2) },
+        ];
+        plugin.validate().unwrap();
+        let clear = json!({"weather": {"condition": "clear", "severity": 0}});
+        let storm = json!({"weather": {"condition": "rain", "severity": 3}});
+        assert!(!plugin.attention_states(&clear)["rain"]);
+        assert!(!plugin.attention_states(&clear)["warning"]);
+        assert!(plugin.attention_states(&storm)["rain"]);
+        assert!(plugin.attention_states(&storm)["warning"]);
+    }
+
+    #[test]
+    fn attention_equals_accepts_decimal_values_and_binding_paths() {
+        let mut plugin = fixture();
+        plugin.format_version = 2;
+        plugin.attention_rules = vec![AttentionRule {
+            id: "dry".into(), path: "weather.rain-rate".into(),
+            operator: AttentionOperator::Equals, value: json!(0),
+        }];
+        plugin.validate().unwrap();
+        assert!(plugin.attention_states(&json!({"weather": {"rain-rate": 0.0}}))["dry"]);
     }
 
     #[test]

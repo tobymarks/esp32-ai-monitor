@@ -13,8 +13,14 @@ the archive root. The uncompressed UTF-8 manifest may be at most 64 KiB; the
 whole ZIP may be at most 256 KiB. The test fixture demonstrates the format
 without shipping a plugin with the companion.
 
-Set `formatVersion` to `1`, `minSceneProtocol` to `1`, and `version` to three
-numeric components such as `1.0.0`. The `id` is stable across updates, starts
+Set `formatVersion` to `1` for plugins without intelligent-switch rules or `2`
+when using `attentionRules`. Each new manifest field after format 2 requires a
+new format version. The existing `localizations` and `lightScenes` fields remain
+valid in version 1 for compatibility with packages already published. New
+companions check `formatVersion` before strict field validation, so a package
+with a future version reports that it needs a newer AI Monitor app. Older
+companions may still report an unknown field. Set `minSceneProtocol` to `1`
+and `version` to three numeric components such as `1.0.0`. The `id` is stable across updates, starts
 with a lowercase letter, and contains at most 40 lowercase ASCII letters,
 digits, dots, hyphens, or underscores. A changed ID creates a different plugin.
 IDs starting with `builtin.` are reserved for built-in windows such as the
@@ -82,6 +88,32 @@ Declare `bindings` as an array. A binding reads a dotted JSON path such as
 `text`, `integer`, `decimal1`, or `map`; `suffix`, `map`, and `fallback` control
 the displayed result. A missing field uses the fallback. Formatted results
 must fit 64 printable ASCII characters.
+
+## Optional intelligent-switch triggers
+
+A format version 2 plugin may declare up to 16 `attentionRules` in `plugin.json`. Each rule
+reads a scalar value from the fetched source JSON. Its `id` is stable across
+plugin updates; `path` uses the same dotted JSON path syntax as bindings.
+Supported `operator` values are `equals`, `atLeast`, and `atMost`.
+`value` is a string, number, or boolean for `equals`; the other operators
+require a number. Example:
+
+```json
+"attentionRules": [
+  {"id": "rain-soon", "path": "forecast.rainNext30Minutes",
+   "operator": "equals", "value": true},
+  {"id": "severe-warning", "path": "alerts.severity",
+   "operator": "atLeast", "value": 2}
+]
+```
+
+The desktop companion observes the first successful fetch as a baseline. It
+requests a window switch only when a rule changes from false to true on a later
+successful fetch. Repeated true values, failed fetches, missing fields, and
+scene redraws do not trigger a switch. The global intelligent-switch policy
+applies its minimum dwell, per-window cooldown, and touch hold. Plugins without
+`attentionRules` remain fully compatible and do not request switches. The
+firmware and scene protocol are unchanged.
 
 ## Layouts
 

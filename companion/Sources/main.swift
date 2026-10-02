@@ -648,10 +648,21 @@ class Settings {
         }
     }
 
-    /// `true` = das Display wechselt selbst nach `displayViewInterval` Sekunden.
-    var displayViewsAutomatic: Bool {
-        get { defaults.bool(forKey: "displayViewsAutomatic") }
-        set { defaults.set(newValue, forKey: "displayViewsAutomatic") }
+    /// Migrates the former two-state setting without changing saved installations.
+    var displayViewMode: String {
+        get {
+            let saved = defaults.string(forKey: "displayViewMode")
+            // Older apps only update this Boolean. Honor detectable changes
+            // made during a downgrade before using the newer three-state key.
+            if defaults.bool(forKey: "displayViewsAutomatic") { return "automatic" }
+            if saved == "intelligent" { return "intelligent" }
+            return "manual"
+        }
+        set {
+            guard ["manual", "automatic", "intelligent"].contains(newValue) else { return }
+            defaults.set(newValue, forKey: "displayViewMode")
+            defaults.set(newValue == "automatic", forKey: "displayViewsAutomatic")
+        }
     }
 
     var displayViewInterval: Int {
@@ -1921,6 +1932,7 @@ class SerialPortManager {
     /// Ab v1.14.2: Lebenszyklus-Status der aktuellen Verbindung. Die UI (und
     /// alle `set_*`-Sends) muessen hier draufhoeren, nicht nur auf `isConnected`.
     private(set) var state: DeviceConnectionState = .disconnected
+    private(set) var connectionGeneration = 0
     /// Ab v1.28.4: Lesefehler auf dem offenen Port (Geraet hat sich kurz
     /// abgemeldet, z. B. Spannungseinbruch beim ersten Start nach einem
     /// Flash). Taucht der Port unter demselben Namen wieder auf, sieht
@@ -2283,6 +2295,7 @@ class SerialPortManager {
         deviceSceneProtocol = nil
         devicePanel = nil
         lastDisconnectAt = Date()
+        connectionGeneration &+= 1
         state = .disconnected
     }
 
@@ -2623,7 +2636,9 @@ class UsageMonitor {
     /// Erst nach `set_views` in dieser Verbindung gehen Frames mit `viewIndex`
     /// raus — sonst verwirft das Geraet sie als unbekanntes Fenster.
     private var viewsConfigured = false
+    private var configuredConnectionGeneration = -1
     private var viewEventTimer: Timer?
+    private let intelligentViews = IntelligentViews()
 
     init() {
         self.serialPort = SerialPortManager()
@@ -2640,7 +2655,7 @@ class UsageMonitor {
         // belegt das aktive neu — sonst bliebe das Display beim alten Provider.
         let settings = Settings.shared
         var viewsChanged = false
-        if !settings.displayViewsAutomatic {
+        if settings.displayViewMode != "automatic" {
             var views = settings.displayViews
             let active = settings.activeDisplayView
             if views[active] != norm {
@@ -2653,6 +2668,7 @@ class UsageMonitor {
                 viewsChanged = true
             }
         }
+        if viewsChanged && settings.displayViewMode == "intelligent" { intelligentViews.touch() }
         switchMainProvider(to: norm)
         if viewsChanged { displayViewsChanged() }
         // Wenn die CodexBar-Source bereits einen OK-Entry für den neuen Provider
@@ -2680,20 +2696,49 @@ class UsageMonitor {
     /// folgt der gewaehlte Provider dem aktiven Fenster.
     func updateDisplayViews(_ views: [String], active: Int? = nil) {
         let settings = Settings.shared
+        let previousViews = settings.displayViews
         settings.displayViews = views
-        if let active { settings.activeDisplayView = active }
+        if settings.displayViewMode == "intelligent" && previousViews != settings.displayViews {
+            intelligentViews.reset()
+            let currentViews = settings.displayViews
+            let previousPlugins = Set(previousViews.compactMap(DisplayPlugins.id(from:)))
+            let currentPlugins = Set(currentViews.compactMap(DisplayPlugins.id(from:)))
+            DisplayPlugins.shared.resetAttentionBaseline(for: currentPlugins.subtracting(previousPlugins))
+            observeIntelligentSources(views: currentViews)
+            _ = DisplayPlugins.shared.takeAttentionEvents()
+        }
+        if let active {
+            let previousActive = settings.activeDisplayView
+            settings.activeDisplayView = active
+            if settings.displayViewMode == "intelligent"
+                && settings.activeDisplayView != previousActive {
+                intelligentViews.touch()
+            }
+        }
         let current = settings.displayViews[settings.activeDisplayView]
-        if !settings.displayViewsAutomatic, current != Settings.clockView,
+        if settings.displayViewMode != "automatic", current != Settings.clockView,
            DisplayPlugins.id(from: current) == nil, current != codexBar.provider {
             switchMainProvider(to: current)
         }
         displayViewsChanged()
     }
 
-    func setDisplayViewMode(automatic: Bool, interval: Int) {
-        Settings.shared.displayViewsAutomatic = automatic
+    func setDisplayViewMode(_ mode: String, interval: Int) {
+        let previousMode = Settings.shared.displayViewMode
+        let previousInterval = Settings.shared.displayViewInterval
+        guard mode != previousMode || interval != previousInterval else { return }
+        Settings.shared.displayViewMode = mode
         Settings.shared.displayViewInterval = interval
-        // Zurueck auf manuell: der Provider folgt wieder dem aktiven Fenster.
+        intelligentViews.reset()
+        if mode == "intelligent" {
+            let views = Settings.shared.displayViews
+            if previousMode != "intelligent" {
+                DisplayPlugins.shared.resetAttentionBaseline(
+                    for: Set(views.compactMap(DisplayPlugins.id(from:))))
+            }
+            observeIntelligentSources(views: views)
+        }
+        _ = DisplayPlugins.shared.takeAttentionEvents()
         updateDisplayViews(Settings.shared.displayViews)
     }
 
@@ -2747,13 +2792,14 @@ class UsageMonitor {
         let payload: [String: Any] = [
             "cmd": "set_views",
             "views": settings.displayViews,
-            "mode": settings.displayViewsAutomatic ? "automatic" : "manual",
+            "mode": settings.displayViewMode == "automatic" ? "automatic" : "manual",
             "interval": settings.displayViewInterval,
             "active": settings.activeDisplayView,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
         if serialPort.sendJSON(json) {
+            configuredConnectionGeneration = serialPort.connectionGeneration
             viewsConfigured = true
             NSLog("[Serial] Sent set_views: %@", json)
         }
@@ -2763,6 +2809,7 @@ class UsageMonitor {
     /// Touch ein anderes Fenster gewaehlt worden sein), dann konfigurieren.
     private func configureViewsAfterConnect() {
         viewsConfigured = false
+        configuredConnectionGeneration = -1
         guard firmwareSupportsViews() else { return }
         serialPort.performJSONCommand(["cmd": "get_views"], acceptedTypes: ["view_state"], timeout: 1.0) { [weak self] response in
             guard let self = self else { return }
@@ -2777,11 +2824,12 @@ class UsageMonitor {
     private func applyDeviceViewState(_ json: [String: Any]) {
         let settings = Settings.shared
         guard let views = json["views"] as? [String], views == settings.displayViews,
-              json["mode"] as? String == (settings.displayViewsAutomatic ? "automatic" : "manual"),
+              json["mode"] as? String == (settings.displayViewMode == "automatic" ? "automatic" : "manual"),
               json["interval"] as? Int == settings.displayViewInterval,
               let active = json["active"] as? Int, active >= 0, active < views.count,
               active != settings.activeDisplayView else { return }
         settings.activeDisplayView = active
+        if settings.displayViewMode == "intelligent" { intelligentViews.touch() }
         if views[active] != Settings.clockView,
            DisplayPlugins.id(from: views[active]) == nil {
             switchMainProvider(to: views[active])
@@ -2804,7 +2852,8 @@ class UsageMonitor {
     /// Ein Frame je Provider-Fenster, jeweils mit `viewIndex`. Uhr-Fenster
     /// brauchen keine Daten.
     private func sendViewFramesToESP32() {
-        guard viewsConfigured else { return }
+        guard viewsConfigured,
+              configuredConnectionGeneration == serialPort.connectionGeneration else { return }
         for (index, view) in Settings.shared.displayViews.enumerated() where view != Settings.clockView {
             if let pluginID = DisplayPlugins.id(from: view) {
                 sendPluginSceneToESP32(id: pluginID, viewIndex: index)
@@ -2867,13 +2916,32 @@ class UsageMonitor {
 
     func start() {
         DisplayPlugins.shared.onChange = { [weak self] in
-            self?.onUpdate?()
-            self?.scheduleUsageSend()
+            guard let self = self else { return }
+            let attentionResets = DisplayPlugins.shared.takeAttentionResets()
+            let attentionEvents = DisplayPlugins.shared.takeAttentionEvents()
+            if Settings.shared.displayViewMode == "intelligent" {
+                for id in attentionResets {
+                    self.intelligentViews.resetPlugin(id, views: Settings.shared.displayViews)
+                }
+                for id in attentionEvents {
+                    self.intelligentViews.pluginEvent(id, views: Settings.shared.displayViews)
+                }
+                self.applyIntelligentView()
+            }
+            self.onUpdate?()
+            self.scheduleUsageSend()
         }
         ClaudeCodeWindow.shared.onChange = { [weak self] in
-            self?.onUpdate?()
+            guard let self = self else { return }
+            if Settings.shared.displayViewMode == "intelligent" {
+                self.intelligentViews.observeClaudeCode(
+                    waiting: ClaudeCodeWindow.shared.waiting(now: Date()),
+                    views: Settings.shared.displayViews)
+                self.applyIntelligentView()
+            }
+            self.onUpdate?()
             if Settings.shared.displayViews.contains(ClaudeCodeWindow.view) {
-                self?.scheduleUsageSend()
+                self.scheduleUsageSend()
             }
         }
         ClaudeCodeWindow.shared.start()
@@ -3334,7 +3402,40 @@ class UsageMonitor {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: item)
     }
 
+    private func observeIntelligentSources(views: [String]) {
+        intelligentViews.observe(codexBar, views: views)
+        for provider in pollingViewProviders where provider != codexBar.provider && views.contains(provider) {
+            if let source = viewSources[provider] {
+                intelligentViews.observe(source, views: views)
+            }
+        }
+        intelligentViews.observeClaudeCode(
+            waiting: ClaudeCodeWindow.shared.waiting(now: Date()), views: views)
+    }
+
+    private func applyIntelligentView() {
+        guard Settings.shared.displayViewMode == "intelligent",
+              serialPort.isReadyForCommands, firmwareSupportsViews(), viewsConfigured,
+              configuredConnectionGeneration == serialPort.connectionGeneration,
+              !(Settings.shared.displayViews.contains { DisplayPlugins.id(from: $0) != nil }
+                && connectedFirmwareLacksPluginScenes),
+              let next = intelligentViews.choose(active: Settings.shared.activeDisplayView) else { return }
+        Settings.shared.activeDisplayView = next
+        let current = Settings.shared.displayViews[next]
+        if current != Settings.clockView, DisplayPlugins.id(from: current) == nil,
+           current != codexBar.provider {
+            switchMainProvider(to: current)
+        }
+        sendViewsToESP32()
+        onUpdate?()
+    }
+
     fileprivate func sendUsageToESP32() {
+        if Settings.shared.displayViewMode == "intelligent" {
+            let views = Settings.shared.displayViews
+            observeIntelligentSources(views: views)
+            applyIntelligentView()
+        }
         // Keep assigned plugin data ready even while USB is disconnected.
         // onChange schedules a fresh frame when a fetch completes.
         DisplayPlugins.shared.refresh(views: Settings.shared.displayViews)

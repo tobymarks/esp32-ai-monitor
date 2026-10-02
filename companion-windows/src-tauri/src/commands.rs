@@ -48,7 +48,7 @@ pub fn apply_provider(app: &AppHandle, provider: Provider) {
         // Im manuellen Modus zeigt das Display das aktive Fenster. Die Wahl
         // springt auf ein Fenster mit dieser Quelle oder belegt das aktive neu.
         let content = ViewContent::Provider(provider);
-        let views_changed = settings.view_mode == ViewMode::Manual
+        let views_changed = settings.view_mode != ViewMode::Automatic
             && settings.views[settings.active_view] != content;
         if views_changed {
             match settings.views.iter().position(|v| *v == content) {
@@ -66,6 +66,9 @@ pub fn apply_provider(app: &AppHandle, provider: Provider) {
         views_changed
     };
     if views_changed {
+        if state.settings.lock().unwrap().view_mode == ViewMode::Intelligent {
+            serial_service::send(app, Job::SmartTouch);
+        }
         serial_service::send(app, Job::ConfigureViews);
         let settings = state.settings.lock().unwrap().clone();
         let _ = app.emit(serial_service::SETTINGS_EVENT, settings);
@@ -133,6 +136,9 @@ pub fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, Stri
         // Prozentmodus oder Sprache: Snapshot und Tray neu aufbauen.
         poll::emit_snapshot(&app);
     }
+    // apply_provider may have selected or reassigned a view. Use the resulting
+    // settings for view events and the command response.
+    let next = state.settings.lock().unwrap().clone();
     if next.percent_mode != previous.percent_mode {
         serial_service::request_resend(&app);
         poll::refresh_views(&app);
@@ -148,6 +154,16 @@ pub fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, Stri
         || next.view_interval_seconds != previous.view_interval_seconds
         || next.active_view != previous.active_view
     {
+        if next.views != previous.views || next.view_mode != previous.view_mode {
+            serial_service::send(&app, Job::ResetSmart);
+        }
+        if next.view_mode == ViewMode::Intelligent
+            && (next.active_view != previous.active_view
+                || next.views.get(next.active_view) != previous.views.get(previous.active_view))
+        {
+            // ResetSmart may have cleared a manual hold sent by apply_provider.
+            serial_service::send(&app, Job::SmartTouch);
+        }
         serial_service::send(&app, Job::ConfigureViews);
         poll::refresh_views(&app);
         poll::refresh_plugins(&app);
@@ -217,6 +233,7 @@ pub async fn install_plugin(
         (info, list)
     };
     let _ = app.emit(plugins::PLUGINS_EVENT, list);
+    serial_service::send(&app, Job::ResetSmartPlugin(info.id.clone()));
     poll::refresh_plugins(&app);
     serial_service::request_resend(&app);
     Ok(info)
@@ -236,6 +253,7 @@ pub fn configure_plugin(
         (info, list)
     };
     let _ = app.emit(plugins::PLUGINS_EVENT, list);
+    serial_service::send(&app, Job::ResetSmartPlugin(info.id.clone()));
     poll::refresh_plugins(&app);
     serial_service::request_resend(&app);
     Ok(info)
@@ -267,8 +285,11 @@ pub fn remove_plugin(app: AppHandle, id: String) -> Result<(), String> {
         }
     };
     if let Some(settings) = updated_settings {
+        serial_service::send(&app, Job::ResetSmart);
         serial_service::send(&app, Job::ConfigureViews);
         let _ = app.emit(serial_service::SETTINGS_EVENT, settings);
+    } else {
+        serial_service::send(&app, Job::ResetSmartPlugin(id));
     }
     let _ = app.emit(plugins::PLUGINS_EVENT, list);
     serial_service::request_resend(&app);

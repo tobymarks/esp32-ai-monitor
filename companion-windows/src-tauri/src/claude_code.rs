@@ -96,6 +96,15 @@ fn resend_if_assigned(app: &AppHandle) {
         let _ = app.state::<AppState>().serial.send(Job::Resend);
     }
 }
+fn report_waiting(app: &AppHandle) {
+    // Send while holding the sessions lock, so the timer cannot overtake a
+    // newer listener observation after reading an older waiting state.
+    let state = app.state::<AppState>();
+    let cc = state.claude_code.lock().unwrap();
+    let waiting = cc.sessions.waiting(now()).iter()
+        .filter_map(|s| s.waiting.map(|kind| (s.id.clone(), kind, s.since))).collect();
+    let _ = state.serial.send(Job::SmartClaudeCode(waiting));
+}
 
 fn refresh_hook_status(app: &AppHandle) -> Option<HookStatus> {
     let token = app.state::<AppState>().claude_code.lock().unwrap().token.clone();
@@ -124,6 +133,9 @@ pub fn start(app: AppHandle) {
     {
         eprintln!("[claude-code] Empfang nicht gestartet: {e}");
     }
+    // Auch wenn Intelligent bereits beim Start gespeichert war, braucht der
+    // erste Hook später eine Ausgangsbasis für die steigende Flanke.
+    report_waiting(&app);
     // Einmal pro Minute: Wartezeiten auf dem Display weiterzählen, verlassene
     // Sessions aufräumen und eine von Hand geänderte settings.json bemerken.
     let _ = std::thread::Builder::new()
@@ -135,6 +147,7 @@ pub fn start(app: AppHandle) {
             if resend {
                 resend_if_assigned(&app);
             }
+            report_waiting(&app);
         });
 }
 
@@ -186,6 +199,7 @@ fn handle(app: &AppHandle, mut stream: TcpStream) {
                     .sessions
                     .apply(&event, now());
                 if changed {
+                    report_waiting(app);
                     resend_if_assigned(app);
                 }
                 break 200;

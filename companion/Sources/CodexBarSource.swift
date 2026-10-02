@@ -350,6 +350,7 @@ final class CodexBarSource {
     private(set) var status: CodexBarStatus = .notYet
     private(set) var lastEntry: CodexBarEntry?
     private(set) var lastLoadedAt: Date?
+    private(set) var lastSuccessfulAt: Date?
     private(set) var lastSnapshotGeneratedAt: Date?
     /// Quelle, die das CLI benutzt hat („web", „oauth", „app", …) — nur Anzeige.
     private(set) var lastSource: String?
@@ -640,7 +641,9 @@ final class CodexBarSource {
                        source: String?) {
         status = newStatus
         if let entry, newStatus.isOK {
-            cachedEntries[provider] = (entry: entry, fetchedAt: Date())
+            let fetchedAt = Date()
+            cachedEntries[provider] = (entry: entry, fetchedAt: fetchedAt)
+            lastSuccessfulAt = fetchedAt
         }
         // Bei einem Fehler den Zwischenspeicher dieses Providers verwerfen —
         // sonst wuerde ein spaeterer Wechsel wieder veraltete Werte zeigen,

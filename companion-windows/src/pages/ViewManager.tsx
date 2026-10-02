@@ -50,7 +50,7 @@ export default function ViewManager({ t, locale, settings, providers, plugins, c
   const assign = (index: number, content: ViewContent) => {
     onSettings({
       views: views.map((view, i) => i === index ? content : view),
-      ...(settings.viewMode === "manual" && settings.activeView === index && content.kind === "provider"
+      ...(settings.viewMode !== "automatic" && settings.activeView === index && content.kind === "provider"
         ? { provider: content.provider } : {}),
     });
     setSelected(index);
@@ -100,7 +100,7 @@ export default function ViewManager({ t, locale, settings, providers, plugins, c
       : settings.activeView > index ? settings.activeView - 1 : settings.activeView;
     const activeContent = next[activeView];
     onSettings({ views: next, activeView,
-      ...(settings.viewMode === "manual" && activeContent.kind === "provider"
+      ...(settings.viewMode !== "automatic" && activeContent.kind === "provider"
         ? { provider: activeContent.provider } : {}) });
     setSelected(Math.min(index - 1, next.length - 1));
   };
@@ -157,6 +157,9 @@ export default function ViewManager({ t, locale, settings, providers, plugins, c
               <input className="input" type="number" min={2} max={3600} value={draftInterval}
                 onChange={(e) => setDraftInterval(e.target.value)} onBlur={commitInterval}
                 onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />{t("views.seconds")}</label>}
+            <label className="radio-row"><input type="radio" name="view-mode" checked={settings.viewMode === "intelligent"}
+              onChange={() => { const activeContent = views[settings.activeView]; onSettings({ viewMode: "intelligent", ...(activeContent.kind === "provider" ? { provider: activeContent.provider } : {}) }); }} />{t("views.intelligent")}</label>
+            {settings.viewMode === "intelligent" && <p className="muted small">{t("views.intelligent.hint")}</p>}
             <label className="radio-row"><input type="radio" name="view-mode" checked={settings.viewMode === "manual"}
               onChange={chooseManual} />{t("views.manual")}</label>
             <p className="muted small">{t("views.manual.hint")}</p>

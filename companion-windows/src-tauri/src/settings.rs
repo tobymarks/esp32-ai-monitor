@@ -4,6 +4,7 @@ use aimonitor_core::release::UpdateChannel;
 use aimonitor_core::{PercentMode, Provider};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -32,6 +33,7 @@ pub enum ViewMode {
     #[default]
     Manual,
     Automatic,
+    Intelligent,
 }
 
 pub const MAX_VIEWS: usize = 8;
@@ -140,23 +142,37 @@ impl Settings {
             return Settings::default();
         };
         match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
-                .map(|mut s| {
-                    // Vor der Fensterverwaltung war `provider` die einzige Anzeige.
-                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                        if v.get("views").is_none() {
-                            s.views = vec![ViewContent::Provider(s.provider)];
-                        }
-                    }
-                    s.normalize_views();
-                    s
-                })
-                .unwrap_or_else(|e| {
-                    eprintln!("[aimonitor] settings.json unlesbar ({e}), Defaults");
-                    Settings::default()
-                }),
+            Ok(bytes) => Self::from_disk(&bytes).unwrap_or_else(|e| {
+                eprintln!("[aimonitor] settings.json unlesbar ({e}), Defaults");
+                Settings::default()
+            }),
             Err(_) => Settings::default(),
         }
+    }
+
+    fn from_disk(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        let mut value: Value = serde_json::from_slice(bytes)?;
+        let had_views = value.get("views").is_some();
+        // Older companions can read the stored manual mode and ignore this
+        // extra field. The current app restores the intelligent mode.
+        if value.get("intelligentViews").and_then(Value::as_bool) == Some(true) {
+            value["viewMode"] = json!("intelligent");
+        }
+        let mut settings: Settings = serde_json::from_value(value)?;
+        if !had_views {
+            settings.views = vec![ViewContent::Provider(settings.provider)];
+        }
+        settings.normalize_views();
+        Ok(settings)
+    }
+
+    fn to_disk_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        let mut value = serde_json::to_value(self)?;
+        if self.view_mode == ViewMode::Intelligent {
+            value["viewMode"] = json!("manual");
+            value["intelligentViews"] = json!(true);
+        }
+        serde_json::to_vec_pretty(&value)
     }
 
     pub fn normalize_views(&mut self) {
@@ -187,7 +203,7 @@ impl Settings {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        match serde_json::to_vec_pretty(self) {
+        match self.to_disk_bytes() {
             Ok(bytes) => {
                 if let Err(e) = std::fs::write(&path, bytes) {
                     eprintln!("[aimonitor] Einstellungen nicht gespeichert: {e}");
@@ -201,6 +217,33 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intelligent_mode_on_disk_is_readable_by_older_companions() {
+        let mut settings = Settings::default();
+        settings.provider = Provider::Codex;
+        settings.views = vec![ViewContent::Provider(Provider::Codex), ViewContent::Clock];
+        settings.view_mode = ViewMode::Intelligent;
+        let bytes = settings.to_disk_bytes().unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["viewMode"], "manual");
+        assert_eq!(value["intelligentViews"], true);
+        assert_eq!(Settings::from_disk(&bytes).unwrap().view_mode, ViewMode::Intelligent);
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct OldSettings {
+            provider: Provider,
+            views: Vec<ViewContent>,
+            view_mode: OldViewMode,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "lowercase")]
+        enum OldViewMode { Manual, Automatic }
+        let old: OldSettings = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(old.provider, Provider::Codex);
+        assert_eq!(old.views.len(), 2);
+        assert!(matches!(old.view_mode, OldViewMode::Manual));
+    }
 
     #[test]
     fn view_settings_keep_one_window_and_clamp_limits() {
