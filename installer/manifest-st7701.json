@@ -1,6 +1,6 @@
 {
   "name": "AI Monitor (Guition ESP32-S3-4848S040)",
-  "version": "2.22.0",
+  "version": "2.23.0",
   "home_assistant_domain": "",
   "builds": [
     {

@@ -33,6 +33,17 @@ CHECK=0
 
 is_stable() { [[ "$1" != *-* ]]; }
 
+# Windows-Betas tragen keinen Suffix (Tag win-beta-v1.4.1, Version 1.4.1).
+# Released ist eine Windows-Version erst mit ihrem Tag win-v<Version>. Ohne
+# dieses Tag (oder in einem CI-Checkout ohne Tags) bleibt der Windows-Teil
+# der Seite unveraendert. Fuer den Release-Commit selbst, vor dem Tag:
+#   WIN_RELEASE=1 scripts/sync_site_versions.sh
+win_released() {
+  [ "${WIN_RELEASE:-}" = "1" ] ||
+    [ "${GITHUB_REF:-}" = "refs/tags/win-v$1" ] ||
+    git rev-parse -q --verify "refs/tags/win-v$1" >/dev/null 2>&1
+}
+
 SED_ARGS=()
 if is_stable "$FW"; then
   SED_ARGS+=(
@@ -48,7 +59,7 @@ if is_stable "$APP"; then
     -e "s|(releases/tag/app-)v[0-9]+\.[0-9]+\.[0-9]+|\1v${APP}|g"
   )
 fi
-if is_stable "$WIN"; then
+if is_stable "$WIN" && win_released "$WIN"; then
   SED_ARGS+=(
     -e "s|(data-v=\"win\">)v[0-9]+\.[0-9]+\.[0-9]+|\1v${WIN}|g"
     -e "s|(releases/download/win-(beta-)?v)[0-9]+\.[0-9]+\.[0-9]+|\1${WIN}|g"
@@ -57,6 +68,7 @@ if is_stable "$WIN"; then
 fi
 # Stand, den die Seite zeigen soll; Vorabversionen sind markiert.
 label() { is_stable "$1" && echo "v$1" || echo "v$1 (Vorabversion, Seite unverändert)"; }
+win_label() { is_stable "$1" && win_released "$1" && echo "v$1" || echo "v$1 (noch nicht als win-v$1 veröffentlicht, Seite unverändert)"; }
 
 tmp=$(mktemp)
 if [ ${#SED_ARGS[@]} -gt 0 ]; then
@@ -72,7 +84,7 @@ if [ "$CHECK" = "1" ]; then
   # Zeilenenden ignorieren: auf Windows-Runnern liegt die Seite mit CRLF vor,
   # die sed-Ausgabe hat LF; ohne Normalisierung meldet diff jede Zeile.
   if ! diff -q <(tr -d "\r" < "$PAGE") <(tr -d "\r" < "$tmp") >/dev/null; then
-    echo "Versionen auf der Seite weichen ab (erwartet: FW $(label "$FW"), App $(label "$APP"), Windows $(label "$WIN")):"
+    echo "Versionen auf der Seite weichen ab (erwartet: FW $(label "$FW"), App $(label "$APP"), Windows $(win_label "$WIN")):"
     diff <(tr -d "\r" < "$PAGE") <(tr -d "\r" < "$tmp") | head -20 || true
     echo
     echo "Fix: scripts/sync_site_versions.sh"
@@ -80,7 +92,7 @@ if [ "$CHECK" = "1" ]; then
     exit 1
   fi
   rm -f "$tmp"
-  echo "Seite ist aktuell: FW $(label "$FW"), App $(label "$APP"), Windows $(label "$WIN")"
+  echo "Seite ist aktuell: FW $(label "$FW"), App $(label "$APP"), Windows $(win_label "$WIN")"
   exit 0
 fi
 
@@ -93,4 +105,4 @@ if is_stable "$FW"; then
   done
 fi
 
-echo "Seite und Manifeste aktualisiert: FW $(label "$FW"), App $(label "$APP"), Windows $(label "$WIN")"
+echo "Seite und Manifeste aktualisiert: FW $(label "$FW"), App $(label "$APP"), Windows $(win_label "$WIN")"
