@@ -96,7 +96,10 @@ merken, `Job::Pause` an den Serial-Thread (trennen, Scan stoppen, Port
 schließen, Bestätigung), 500 ms warten, `flash_image` mit 460800 Baud in
 `spawn_blocking`, dann `Job::Resume { diagnostic_after_connect }`. Nach dem
 nächsten Connect geht 1 s später der Diagnose-Frame raus, nach 20 s wieder
-der echte Snapshot. Bei Erfolg landen Variante im Geräteprofil und
+die aktuelle Fensterkonfiguration und der echte Snapshot. Der Diagnose-Frame
+aktiviert auf der Firmware vorübergehend eine einzelne Provider-Anzeige;
+vor den echten Daten wird deshalb `set_views` erneut gesendet, auch für Uhr-
+und Plugin-Fenster. Bei Erfolg landen Variante im Geräteprofil und
 `installedFirmwareVersion` in den Einstellungen. Fehler kommen als Event mit
 `phase:"failed"` und den Schlüsseln `flash.err.*`. Gemessen an der CYD:
 1,34 MB in 31 s inklusive Bootloader-Connect.

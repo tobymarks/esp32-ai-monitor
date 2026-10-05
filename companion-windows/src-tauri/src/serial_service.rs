@@ -442,6 +442,10 @@ impl Service {
                 self.diagnostic_until = None;
                 self.log_event("Diagnose beendet, echter Snapshot folgt");
                 self.send_due = None;
+                // The unindexed diagnostic frame activates the firmware legacy
+                // single-provider view. Restore current views (including clock
+                // and plugins) before sending their real data.
+                self.configure_views();
                 self.send_data_frame("Rueckkehr zum Snapshot");
             }
         }
