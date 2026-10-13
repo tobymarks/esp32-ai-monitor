@@ -95,7 +95,9 @@ extension SettingsWindowController {
                 let value = record.settings[key]
                 let field = NSTextField(string: value.map { "\($0)" } ?? "")
                 field.translatesAutoresizingMaskIntoConstraints = false
-                field.widthAnchor.constraint(equalToConstant: 220).isActive = true
+                let isURL = spec["kind"] as? String == "url"
+                field.widthAnchor.constraint(equalToConstant: isURL ? 420 : 220).isActive = true
+                if isURL { field.placeholderString = "https://" }
                 rows.append(twoColumnRow(label, field))
                 fields[key] = field
             }

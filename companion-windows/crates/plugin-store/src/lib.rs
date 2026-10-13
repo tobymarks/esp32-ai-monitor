@@ -350,6 +350,7 @@ impl PluginStore {
         values: Map<String, Value>,
     ) -> Result<PluginInfo, String> {
         let record = self.records.get(id).ok_or("plugin not installed")?;
+        record.manifest.source_url(&values)?;
         let merged = merge_valid_settings(&record.manifest, &values);
         if merged.len() != values.len() || merged.iter().any(|(k, v)| values.get(k) != Some(v)) {
             return Err("invalid plugin settings".into());
@@ -695,6 +696,8 @@ pub fn fetch(
     }
     let url = manifest.request_url(settings, location)?;
     let config = ureq::Agent::config_builder()
+        .tls_config(ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
         .timeout_global(Some(Duration::from_secs(12)))
         .max_redirects(0)
         .user_agent("AI-Monitor-Plugin/1")
@@ -827,6 +830,46 @@ mod tests {
             "aimonitor-plugin-test-{}-{nonce}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn configured_endpoint_survives_restart_update_and_rejects_old_fetches() {
+        let mut manifest: Value = serde_json::from_slice(include_bytes!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        )).unwrap();
+        manifest["formatVersion"] = json!(4);
+        let template = manifest["source"].as_object_mut().unwrap().remove("url").unwrap();
+        manifest["source"]["urlSetting"] = json!("endpoint");
+        manifest["settings"].as_array_mut().unwrap().push(json!({
+            "key":"endpoint", "label":"Data URL", "kind":"url", "default":template
+        }));
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer.start_file("plugin.json", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let package = writer.finish().unwrap().into_inner();
+        let root = test_root();
+        let id = "org.aimonitor.fixture";
+        let mut store = PluginStore::load(root.clone());
+        store.install(&package).unwrap();
+        let assigned = HashSet::from([id.to_owned()]);
+        let old = store.due_fetches(&assigned).remove(0);
+        let mut settings = store.records[id].settings.clone();
+        settings.insert("endpoint".into(), json!("https://new.example:8443/metrics?scale={scale}"));
+        assert_eq!(store.configure(id, settings.clone()).unwrap().source_origin, "https://new.example:8443");
+        assert!(!store.apply_fetch(&old, Ok(json!({}))));
+        assert!(store.records[id].data.is_none());
+        let mut invalid = settings.clone();
+        invalid.insert("endpoint".into(), json!("http://new.example/"));
+        assert!(store.configure(id, invalid).is_err());
+        assert_eq!(store.records[id].settings, settings);
+        let due = store.due_fetches(&assigned).remove(0);
+        assert_eq!(due.manifest.source_url(&due.settings).unwrap(), "https://new.example:8443/metrics?scale=1");
+        let mut restored = PluginStore::load(root.clone());
+        assert_eq!(restored.records[id].settings, settings);
+        restored.install(&package).unwrap();
+        assert_eq!(restored.records[id].settings, settings);
+        assert_eq!(restored.records[id].info().source_origin, "https://new.example:8443");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::protocol::Theme;
 use std::collections::{BTreeMap, HashSet};
 use url::Url;
 
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 /// 2 adds the German umlauts and the degree sign to scene text. Firmware
 /// reporting 1 gets the same scenes transliterated, see [`scene_for_protocol`].
 pub const SCENE_PROTOCOL: u32 = 2;
@@ -141,7 +141,10 @@ pub struct Manifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HttpSource {
-    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_setting: Option<String>,
     pub interval_seconds: u32,
 }
 
@@ -231,6 +234,7 @@ const LOCATION_TOKENS: [&str; 2] = ["{location.latitude}", "{location.longitude}
 pub enum SettingKind {
     Number,
     Text,
+    Url,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -330,6 +334,11 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     // Companions before format 3 accept only ASCII text in a manifest.
     if header.format_version < 3 && !bytes.is_ascii() {
         return Err("umlauts need formatVersion 3".into());
+    }
+    if header.format_version < 4 && header.fields.get("source")
+        .and_then(Value::as_object).is_some_and(|source| source.contains_key("urlSetting"))
+    {
+        return Err("source.urlSetting requires formatVersion 4".into());
     }
     let manifest: Manifest =
         serde_json::from_slice(bytes).map_err(|e| format!("invalid manifest: {e}"))?;
@@ -503,9 +512,6 @@ impl Manifest {
                 }
             }
         }
-        // URL templates may contain only numeric settings. Replace them with
-        // zero here, then parse the URL before a network request is possible.
-        let mut sample_url = self.source.url.clone();
         let mut setting_names = HashSet::new();
         if self.settings.len() > 16 || self.bindings.len() > 32 {
             return Err("too many settings or bindings".into());
@@ -518,32 +524,17 @@ impl Manifest {
             {
                 return Err("invalid setting".into());
             }
-            validate_setting(setting, &setting.default)?;
-            let token = format!("{{{}}}", setting.key);
-            if sample_url.contains(&token) {
-                if !matches!(setting.kind, SettingKind::Number) {
-                    return Err("URL placeholders must be numeric".into());
+            if matches!(setting.kind, SettingKind::Url) {
+                if self.format_version < 4 {
+                    return Err("URL settings require formatVersion 4".into());
                 }
-                sample_url = sample_url.replace(&token, "0");
+                if self.source.url_setting.as_deref() != Some(&setting.key) {
+                    return Err("URL setting must be the data source".into());
+                }
             }
+            validate_setting(setting, &setting.default)?;
         }
-        if self.requires_location() {
-            for token in LOCATION_TOKENS {
-                sample_url = sample_url.replace(token, "0");
-            }
-        }
-        if sample_url.contains('{') || sample_url.contains('}') {
-            return Err("unknown URL placeholder".into());
-        }
-        let url = Url::parse(&sample_url).map_err(|_| "invalid source URL")?;
-        if url.scheme() != "https"
-            || url.host_str().is_none()
-            || url.username() != ""
-            || url.password().is_some()
-            || url.fragment().is_some()
-        {
-            return Err("source must be an HTTPS URL without credentials".into());
-        }
+        self.source_url(&self.default_settings())?;
         if self.attention_rules.len() > 16 {
             return Err("too many attention rules".into());
         }
@@ -580,6 +571,9 @@ impl Manifest {
                 return Err("invalid binding".into());
             }
             if let Some(key) = binding.path.strip_prefix("settings.") {
+                if self.settings.iter().any(|s| s.key == key && matches!(s.kind, SettingKind::Url)) {
+                    return Err("URL settings cannot be display bindings".into());
+                }
                 if !setting_names.contains(key) {
                     return Err("binding references unknown setting".into());
                 }
@@ -789,37 +783,54 @@ impl Manifest {
         settings: &Map<String, Value>,
         place: Option<(f64, f64)>,
     ) -> Result<String, String> {
-        let mut url = self.source.url.clone();
+        for setting in &self.settings {
+            validate_setting(setting, settings.get(&setting.key).unwrap_or(&setting.default))?;
+        }
+        let template = match (&self.source.url, &self.source.url_setting) {
+            (Some(url), None) => url.as_str(),
+            (None, Some(key)) => {
+                if self.format_version < 4 {
+                    return Err("source.urlSetting requires formatVersion 4".into());
+                }
+                let spec = self.settings.iter().find(|s| s.key == *key)
+                    .ok_or("unknown source URL setting")?;
+                if !matches!(spec.kind, SettingKind::Url) {
+                    return Err("source.urlSetting must reference a URL setting".into());
+                }
+                settings.get(key).unwrap_or(&spec.default).as_str()
+                    .ok_or("setting must be a URL")?
+            }
+            _ => return Err("source requires exactly one of url or urlSetting".into()),
+        };
+        let mut url = template.to_owned();
+        let mut baseline = template.to_owned();
         if self.requires_location() {
             let (latitude, longitude) = place.ok_or("location required")?;
             url = url
                 .replace(LOCATION_TOKENS[0], &format!("{latitude:.3}"))
                 .replace(LOCATION_TOKENS[1], &format!("{longitude:.3}"));
-        }
-        for setting in &self.settings {
-            let value = settings.get(&setting.key).unwrap_or(&setting.default);
-            validate_setting(setting, value)?;
-            let token = format!("{{{}}}", setting.key);
-            if url.contains(&token) {
-                url = url.replace(&token, &value.to_string());
-            }
-        }
-        if url.contains('{') || url.contains('}') {
-            return Err("unresolved URL placeholder".into());
-        }
-        // The resulting URL must retain the validated origin.
-        let parsed = Url::parse(&url).map_err(|_| "invalid source URL")?;
-        let template = self.source.url.clone();
-        let mut baseline = template;
-        for s in &self.settings {
-            baseline = baseline.replace(&format!("{{{}}}", s.key), "0");
-        }
-        if self.requires_location() {
             for token in LOCATION_TOKENS {
                 baseline = baseline.replace(token, "0");
             }
         }
-        let base = Url::parse(&baseline).map_err(|_| "invalid source URL")?;
+        for setting in &self.settings {
+            let token = format!("{{{}}}", setting.key);
+            if url.contains(&token) {
+                if !matches!(setting.kind, SettingKind::Number) {
+                    return Err("URL placeholders must be numeric".into());
+                }
+                let value = settings.get(&setting.key).unwrap_or(&setting.default);
+                url = url.replace(&token, &value.to_string());
+                baseline = baseline.replace(&token, "0");
+            }
+        }
+        if url.contains('{') || url.contains('}') {
+            return Err("unknown URL placeholder".into());
+        }
+        let parsed = validate_source_url(&url)?;
+        let base = validate_source_url(&baseline)?;
+        // Numeric placeholders cannot change the origin. A different origin is
+        // permitted only through an explicitly configured format-4 URL setting.
         if parsed.origin() != base.origin() {
             return Err("source origin changed".into());
         }
@@ -1030,6 +1041,24 @@ fn semver_parts(value: &str) -> Option<[u32; 3]> {
     ])
 }
 
+/// Validate both templates and resolved requests. Template placeholders are
+/// checked separately against numeric settings before a request is sent.
+fn validate_source_url(text: &str) -> Result<Url, String> {
+    if text.is_empty() || text.len() > 2048 || !text.bytes().all(|c| (0x21..=0x7e).contains(&c))
+        || text.contains('\\')
+    {
+        return Err("source URL must be printable ASCII without whitespace (max 2048 bytes)".into());
+    }
+    let url = Url::parse(text).map_err(|_| "invalid source URL")?;
+    if url.scheme() != "https" || url.host_str().is_none()
+        || !url.username().is_empty() || url.password().is_some() || url.fragment().is_some()
+        || url.host_str().is_some_and(|host| host.contains('{') || host.contains('}'))
+    {
+        return Err("source must be an HTTPS URL without credentials or fragment".into());
+    }
+    Ok(url)
+}
+
 fn validate_setting(spec: &Setting, value: &Value) -> Result<(), String> {
     match spec.kind {
         SettingKind::Number => {
@@ -1041,6 +1070,13 @@ fn validate_setting(spec: &Setting, value: &Value) -> Result<(), String> {
             {
                 return Err("setting out of range".into());
             }
+        }
+        SettingKind::Url => {
+            if spec.min.is_some() || spec.max.is_some() {
+                return Err("URL settings cannot have numeric bounds".into());
+            }
+            let text = value.as_str().ok_or("setting must be a URL")?;
+            validate_source_url(text)?;
         }
         SettingKind::Text => {
             let text = value.as_str().ok_or("setting must be text")?;
@@ -1513,6 +1549,108 @@ mod tests {
         assert_ne!(dark["nodes"][0]["color"], light["nodes"][0]["color"]);
     }
 
+    fn url_fixture() -> Manifest {
+        let mut plugin = fixture();
+        plugin.format_version = 4;
+        let template = plugin.source.url.take().unwrap();
+        plugin.source.url_setting = Some("endpoint".into());
+        plugin.settings.push(Setting {
+            key: "endpoint".into(), label: "Data URL".into(), kind: SettingKind::Url,
+            default: json!(template), min: None, max: None,
+        });
+        plugin
+    }
+
+    #[test]
+    fn configured_url_changes_origin_and_keeps_numeric_settings() {
+        let plugin = url_fixture();
+        plugin.validate().unwrap();
+        let mut settings = plugin.default_settings();
+        settings.insert("endpoint".into(), json!("https://other.example:8443/metrics?scale={scale}"));
+        settings.insert("scale".into(), json!(2));
+        assert_eq!(plugin.source_url(&settings).unwrap(), "https://other.example:8443/metrics?scale=2");
+        let response = json!({});
+        assert!(plugin.scene(SceneLayout::Portrait, &response, &settings).is_ok());
+    }
+
+    #[test]
+    fn configured_url_retains_location_requirements_and_format_three_features() {
+        let mut plugin = url_fixture();
+        plugin.requires = vec![Requirement::Location];
+        plugin.source.interval_seconds = 20;
+        let mut settings = plugin.default_settings();
+        settings.insert("endpoint".into(), json!("https://local.example/data?lat={location.latitude}&lon={location.longitude}&n={scale}"));
+        assert!(plugin.request_url(&settings, None).unwrap_err().contains("location required"));
+        let location = Location { name: "Köln".into(), latitude: 50.93751, longitude: 6.96028 };
+        assert_eq!(plugin.request_url(&settings, Some(&location)).unwrap(),
+            "https://local.example/data?lat=50.938&lon=6.960&n=1");
+        assert_eq!(plugin.source_url(&settings).unwrap(), "https://local.example/data?lat=0.000&lon=0.000&n=1");
+        plugin.requires.clear();
+        assert!(plugin.source_url(&settings).is_err());
+        // Explicitly verify a format-3 manifest still parses in the new host.
+        let manifest = location_fixture();
+        assert!(parse_manifest(&serde_json::to_vec(&manifest).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn configured_url_rejects_invalid_input_before_fetch() {
+        let plugin = url_fixture();
+        let mut settings = plugin.default_settings();
+        for url in ["", "http://example.org/", "https://user:pass@example.org/",
+            "https://example.org/#fragment", "https://example.org/ space",
+            "https://example.org/\\evil", "https://example.org/?x={unknown}",
+            "https://example.org/?x={label}", "https://{scale}.example.org/",
+            "https://example.org/?x={endpoint}"] {
+            settings.insert("endpoint".into(), json!(url));
+            assert!(plugin.source_url(&settings).is_err(), "accepted {url}");
+        }
+        settings.insert("endpoint".into(), json!(format!("https://example.org/{}", "x".repeat(2048))));
+        assert!(plugin.source_url(&settings).is_err());
+        settings.insert("endpoint".into(), json!(42));
+        assert!(plugin.source_url(&settings).is_err());
+    }
+
+    #[test]
+    fn url_sources_require_format_four_and_exclusive_source() {
+        let mut plugin = url_fixture();
+        for version in [1, 2] {
+            plugin.format_version = version;
+            assert!(plugin.validate().unwrap_err().contains("formatVersion 4"));
+        }
+        plugin.format_version = 4;
+        plugin.source.url = Some("https://example.org/".into());
+        assert!(plugin.validate().is_err());
+        plugin.source.url = None;
+        plugin.source.url_setting = Some("missing".into());
+        assert!(plugin.validate().is_err());
+        plugin.source.url_setting = Some("label".into());
+        assert!(plugin.validate().is_err());
+        plugin.source.url_setting = Some("endpoint".into());
+        plugin.settings.last_mut().unwrap().min = Some(1.0);
+        assert!(plugin.validate().is_err());
+    }
+
+    #[test]
+    fn url_settings_are_not_display_bindings() {
+        let mut plugin = url_fixture();
+        plugin.bindings[0].path = "settings.endpoint".into();
+        assert!(plugin.validate().unwrap_err().contains("display bindings"));
+    }
+
+    #[test]
+    fn serialized_url_packages_obey_version_gates() {
+        let mut package = serde_json::to_value(url_fixture()).unwrap();
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).is_ok());
+        package.as_object_mut().unwrap().remove("requires");
+        package.as_object_mut().unwrap().remove("lists");
+        package["formatVersion"] = json!(2);
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err().contains("formatVersion 4"));
+        package["source"]["urlSetting"] = Value::Null;
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err().contains("formatVersion 4"));
+        package["formatVersion"] = json!(3);
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err().contains("formatVersion 4"));
+    }
+
     #[test]
     fn future_format_reports_upgrade_before_unknown_fields() {
         let mut package: Value = serde_json::from_slice(include_bytes!(
@@ -1932,7 +2070,7 @@ mod tests {
     #[test]
     fn malformed_origin_and_scene_are_rejected() {
         let mut plugin = fixture();
-        plugin.source.url = "http://localhost/metric".into();
+        plugin.source.url = Some("http://localhost/metric".into());
         assert!(plugin.validate().is_err());
         let mut plugin = fixture();
         plugin.min_scene_protocol = 0;

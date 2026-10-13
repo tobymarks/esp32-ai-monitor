@@ -87,8 +87,8 @@ the longest interval that serves the view and respect the provider's limits. It 
 have a 12 second timeout and do not follow redirects. Authentication headers,
 multiple sources, and executable transforms are outside format version 1.
 
-Declare `settings` as an array, even when empty. Each setting has `key`,
-`label`, `kind` (`number` or `text`), `default`, and optional `min` and `max`.
+For formats 1 and 2, declare `settings` as an array, even when empty. Each setting has `key`,
+`label`, `kind` (`number` or `text`; format 4 also supports `url`), `default`, and optional `min` and `max`.
 The settings UI is generated from this list. Only numeric settings may appear
 as `{key}` placeholders in the source URL; the URL's HTTPS origin must remain
 fixed. Text settings can still supply labels in the scene. Keep secrets out of
@@ -204,6 +204,57 @@ remain eligible until their original five-minute expiry. Candidates are ordered 
 highest priority, oldest event, then lowest window index. Plugins without
 `attentionRules` remain fully compatible and do not request switches. The
 firmware and scene protocol are unchanged.
+
+## Configurable data URLs (format 4)
+
+Format 4 adds a `url` setting type. Choose **exactly one** source field:
+`url` for a fixed URL, or `urlSetting` referencing the key of a URL setting.
+The latter lets the user choose the HTTPS endpoint in the companion settings:
+
+```json
+"formatVersion": 4,
+"source": { "urlSetting": "endpoint", "intervalSeconds": 300 },
+"settings": [
+  {
+    "key": "endpoint", "label": "Data URL", "kind": "url",
+    "default": "https://status.claude.com/api/v2/status.json"
+  }
+]
+```
+
+A URL setting may contain numeric `{key}` placeholders from the same settings
+list, for example `https://api.example.org/weather?lat={latitude}`. Text and
+URL settings cannot be placeholders. Numeric replacements cannot change the
+origin. A user-selected URL may change the origin; the installed plugin's
+source-origin label updates after saving and after restart. The endpoint must
+return the JSON structure expected by the plugin's existing bindings.
+
+URLs are limited to 2048 printable ASCII bytes without whitespace or
+backslashes. Only HTTPS is accepted, without embedded credentials or a
+fragment. Unknown placeholders, non-URL source settings, multiple sources,
+and numeric bounds on URL settings are rejected. URL settings cannot be used
+as display bindings. Settings are validated before saving and before each
+request. Configuring a new URL clears cached data and attention baselines;
+responses started with earlier settings are discarded.
+
+All data-source requests use the operating system's certificate trust store.
+A private HTTPS endpoint can use a local CA trusted by that operating system;
+an untrusted self-signed certificate is rejected. Certificate verification is
+always enabled. Redirects, custom authentication headers, secret storage,
+multiple requests, and executable plugin code remain unsupported. The minimum
+refresh interval is 20 seconds in formats 3 and 4, and 60 in formats 1 and 2.
+
+Formats 1, 2, and 3 continue to load with their existing contracts. Older apps
+reject format 4 with an upgrade message. This change builds on upstream
+#23/#24/#25 and retains location requirements, lists, conversions, and umlauts.
+A format-4 URL template may use `{location.latitude}` and
+`{location.longitude}` only when the plugin declares `requires: ["location"]`.
+No firmware update is required for configurable URLs: scenes still work with
+protocol 1 through the inherited text adaptation, and with protocol 2.
+
+Separate format-4 test packages are Weather 1.5.0 (`weather-url.aimplugin`)
+and Claude Status 1.2.0 (`status-claude-url.aimplugin`). Existing format-1/2
+archives remain available for older apps.
 
 ## Layouts
 

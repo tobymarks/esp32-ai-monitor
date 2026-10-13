@@ -63,6 +63,8 @@ fn fetch(
 ) -> Result<Value, String> {
     let url = manifest.request_url(settings, location)?;
     let config = ureq::Agent::config_builder()
+        .tls_config(ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
         .timeout_global(Some(Duration::from_secs(12)))
         .max_redirects(0)
         .http_status_as_error(true)
@@ -233,7 +235,9 @@ fn run() -> Result<Value, String> {
             {
                 return Err("settings do not match manifest".into());
             }
-            Ok(json!({"valid": true}))
+            let url = package.manifest.source_url(&settings)?;
+            let origin = Url::parse(&url).map_err(|_| "invalid source URL")?.origin().ascii_serialization();
+            Ok(json!({"valid": true, "sourceOrigin": origin}))
         }
         "render" if args.len() == 5 || args.len() == 6 => {
             let settings = if args[3] == "-" {

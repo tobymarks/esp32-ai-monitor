@@ -166,7 +166,7 @@ final class DisplayPlugins {
         let files = (try? FileManager.default.contentsOfDirectory(at: root,
                           includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "aimplugin" {
-            guard let info = try? Self.helper(["inspect", file.path]),
+            guard var info = try? Self.helper(["inspect", file.path]),
                   let id = info["id"] as? String,
                   file.deletingPathExtension().lastPathComponent == id else { continue }
             let defaults = info["settings"] as? [String: Any] ?? [:]
@@ -178,7 +178,9 @@ final class DisplayPlugins {
             let check = root.appendingPathComponent(".settings-check-\(UUID().uuidString)")
             if let bytes = try? JSONSerialization.data(withJSONObject: settings) {
                 try? bytes.write(to: check)
-                if (try? Self.helper(["validate-settings", file.path, check.path])) == nil {
+                if let validation = try? Self.helper(["validate-settings", file.path, check.path]) {
+                    info["sourceOrigin"] = validation["sourceOrigin"]
+                } else {
                     settings = defaults
                 }
             }
@@ -227,7 +229,7 @@ final class DisplayPlugins {
                 } else {
                     try FileManager.default.copyItem(at: URL(fileURLWithPath: source), to: staged)
                 }
-                let info = try Self.helper(["inspect", staged.path])
+                var info = try Self.helper(["inspect", staged.path])
                 guard let hash = info["sha256"] as? String, hash == expectedSHA256,
                       let id = info["id"] as? String, Self.id(from: Self.prefix + id) != nil else {
                     throw Self.failure("Plugin changed since inspection")
@@ -249,7 +251,8 @@ final class DisplayPlugins {
                 defer { try? FileManager.default.removeItem(at: check) }
                 try serialized.write(to: check)
                 do {
-                    _ = try Self.helper(["validate-settings", staged.path, check.path])
+                    let validation = try Self.helper(["validate-settings", staged.path, check.path])
+                    info["sourceOrigin"] = validation["sourceOrigin"]
                 } catch {
                     settings = defaults
                 }
@@ -289,9 +292,10 @@ final class DisplayPlugins {
         defer { try? FileManager.default.removeItem(at: staged) }
         let bytes = try JSONSerialization.data(withJSONObject: values)
         try bytes.write(to: staged)
-        _ = try Self.helper(["validate-settings", record.packageURL.path, staged.path])
+        let validation = try Self.helper(["validate-settings", record.packageURL.path, staged.path])
         try bytes.write(to: target, options: .atomic)
         record.settings = values
+        record.info["sourceOrigin"] = validation["sourceOrigin"]
         record.generation = UUID()
         record.scenes.removeAll()
         record.attention.removeAll()

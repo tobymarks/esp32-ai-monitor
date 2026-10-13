@@ -52,3 +52,22 @@ placing plugin windows.
 
 Compiler passes, scene ACKs, and native rendering do not prove physical panel
 output, touch behavior, or USB timing. Record those results before release.
+
+## Configurable URL acceptance (format 4)
+
+The additional [URL fixture](../tests/fixtures/display-plugin-url/plugin.json)
+uses `source.urlSetting`. Package it with `scripts/package_display_plugin.py`
+and inspect/render it through the plugin host with its `response.json`.
+
+For Weather 1.5.0 and Claude Status 1.2.0 preview packages, verify importing
+over the installed format-2 variant preserves settings and window placement.
+Save a valid alternate HTTPS data URL, verify the source-origin label changes,
+and restart the app. Invalid HTTP, credentials, fragments, unknown placeholders,
+and non-numeric placeholders must be rejected before saving. A failed fetch
+must show an error scene; restoring the source must recover. The weather
+latitude/longitude settings must still update URL placeholders.
+
+A temporary private CA test should reject the endpoint before trust is added
+and succeed with platform trust. Do this in an isolated test environment.
+Do not disable certificate verification. Record the connected ESP's scene
+protocol and ACKs separately from physical readability and touch observations.
