@@ -954,6 +954,7 @@ impl Service {
                     .map(|profile| profile.theme)
                     .unwrap_or_default()
                     .resolve(system_is_dark());
+                let scene_protocol = info.scene_protocol.unwrap_or(1);
                 let layout = if info.display == Some(DisplayVariant::St7701) {
                     SceneLayout::Square
                 } else if matches!(
@@ -972,7 +973,7 @@ impl Service {
                     store
                         .records
                         .get(id)
-                        .map(|record| record.scene(layout, language, theme, store.location()))
+                        .map(|record| record.scene(layout, language, theme, store.location(), scene_protocol))
                         .unwrap_or_else(|| {
                             status_scene_with_theme(
                                 status_text("missing", language),

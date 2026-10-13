@@ -9,7 +9,9 @@ use std::collections::{BTreeMap, HashSet};
 use url::Url;
 
 pub const FORMAT_VERSION: u32 = 3;
-pub const SCENE_PROTOCOL: u32 = 1;
+/// 2 adds the German umlauts and the degree sign to scene text. Firmware
+/// reporting 1 gets the same scenes transliterated, see [`scene_for_protocol`].
+pub const SCENE_PROTOCOL: u32 = 2;
 pub const MAX_SCENE_NODES: usize = 24;
 pub const MAX_SCENE_BYTES: usize = 1536;
 pub const MAX_PACKAGE_MANIFEST_BYTES: usize = 64 * 1024;
@@ -325,6 +327,10 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     if header.format_version < 3 && header.fields.contains_key("lists") {
         return Err("lists need formatVersion 3".into());
     }
+    // Companions before format 3 accept only ASCII text in a manifest.
+    if header.format_version < 3 && !bytes.is_ascii() {
+        return Err("umlauts need formatVersion 3".into());
+    }
     let manifest: Manifest =
         serde_json::from_slice(bytes).map_err(|e| format!("invalid manifest: {e}"))?;
     manifest.validate()?;
@@ -339,8 +345,60 @@ fn valid_key(s: &str, max: usize) -> bool {
         })
 }
 
+/// Characters the device fonts carry beyond printable ASCII.
+const DISPLAY_EXTRA: [char; 8] = ['°', 'Ä', 'Ö', 'Ü', 'ß', 'ä', 'ö', 'ü'];
+
+/// Text the display can show. `max` counts UTF-8 bytes like the firmware
+/// does, so an umlaut uses two.
 fn printable(s: &str, max: usize) -> bool {
-    s.len() <= max && s.bytes().all(|c| (0x20..=0x7e).contains(&c))
+    s.len() <= max && s.chars().all(|c| (' '..='~').contains(&c) || DISPLAY_EXTRA.contains(&c))
+}
+
+/// ASCII spelling for firmware with scene protocol 1. Never longer in bytes
+/// than the UTF-8 original, so validated scenes stay within their limits.
+pub fn ascii_text(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let upper = |c: Option<&char>| c.is_some_and(|c| c.is_uppercase());
+    let lower = |c: Option<&char>| c.is_some_and(|c| c.is_lowercase());
+    let mut out = String::with_capacity(text.len());
+    for (i, &c) in chars.iter().enumerate() {
+        // In capitals the second letter is a capital too: `FLÜGE` becomes
+        // `FLUEGE`, while `Über` becomes `Ueber`.
+        let previous = i.checked_sub(1).and_then(|p| chars.get(p));
+        let next = chars.get(i + 1);
+        let capitals = upper(next) || (upper(previous) && !lower(next));
+        match c {
+            'Ä' => out.push_str(if capitals { "AE" } else { "Ae" }),
+            'Ö' => out.push_str(if capitals { "OE" } else { "Oe" }),
+            'Ü' => out.push_str(if capitals { "UE" } else { "Ue" }),
+            'ä' => out.push_str("ae"),
+            'ö' => out.push_str("oe"),
+            'ü' => out.push_str("ue"),
+            'ß' => out.push_str(if capitals { "SS" } else { "ss" }),
+            '°' => {}
+            c if (' '..='~').contains(&c) => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Adapt a finished scene to the connected firmware: scene protocol 2 shows
+/// umlauts, older firmware accepts only ASCII text.
+pub fn scene_for_protocol(mut scene: Value, scene_protocol: u32) -> Value {
+    if scene_protocol >= 2 {
+        return scene;
+    }
+    if let Some(nodes) = scene.get_mut("nodes").and_then(Value::as_array_mut) {
+        for node in nodes {
+            if let Some(text) = node.get_mut("text") {
+                if let Some(ascii) = text.as_str().filter(|t| !t.is_ascii()).map(ascii_text) {
+                    *text = Value::String(ascii);
+                }
+            }
+        }
+    }
+    scene
 }
 
 fn valid_dotted_path(path: &str) -> bool {
@@ -1509,7 +1567,7 @@ mod tests {
                 .unwrap()["nodes"][0]["text"]
                 .clone()
         };
-        assert_eq!(text(Some(&place)), "Koeln");
+        assert_eq!(text(Some(&place)), "Köln");
         assert_eq!(text(None), "Here");
         let unnamed = Location { name: String::new(), ..place };
         assert_eq!(text(Some(&unnamed)), "Here");
@@ -1674,6 +1732,54 @@ mod tests {
             rejected(&|m| m["scenes"]["portrait"]["nodes"][2]["visibleWhen"] =
                 json!({"binding": "state", "equals": "a", "notEquals": "b"})),
             "invalid condition"
+        );
+    }
+
+    #[test]
+    fn umlauts_reach_new_firmware_and_are_transliterated_for_old() {
+        let mut manifest = location_fixture();
+        manifest["viewLabel"] = json!("Flüge");
+        manifest["scenes"]["portrait"]["nodes"][6]["text"] = json!("Höhe {{level}} m, 12 °C, groß");
+        manifest["localizations"] = json!({"de": {"Flüge": "Flüge"}});
+        let parsed = parse_manifest(manifest.to_string().as_bytes()).unwrap();
+        let place = Location { name: "Zürich".into(), latitude: 47.37, longitude: 8.54 };
+        let scene = parsed
+            .scene_at(SceneLayout::Portrait, &json!({}), &parsed.default_settings(),
+                      Theme::Dark, "de", Some(&place))
+            .unwrap();
+        assert_eq!(texts(&scene)[0], "Zürich");
+        assert!(texts(&scene).contains(&"Höhe 0 m, 12 °C, groß".to_string()));
+        let old = scene_for_protocol(scene.clone(), 1);
+        assert_eq!(texts(&old)[0], "Zuerich");
+        assert!(texts(&old).contains(&"Hoehe 0 m, 12 C, gross".to_string()));
+        validate_scene_for_tests(&old).unwrap();
+        assert_eq!(scene_for_protocol(scene.clone(), 2), scene);
+        // Die Umschrift ist in Bytes nie länger als das Original.
+        assert_eq!(ascii_text("FLÜGE Über STRAßE Öl Ä"), "FLUEGE Ueber STRASSE Oel Ae");
+        for text in ["ÄÖÜäöüß°", "Größe", "Fuß"] {
+            assert!(ascii_text(text).len() <= text.len());
+            assert!(ascii_text(text).is_ascii());
+        }
+
+        // 64 zählt Bytes wie in der Firmware: 32 Umlaute passen, 33 nicht.
+        let mut long = location_fixture();
+        long["scenes"]["portrait"]["nodes"][6]["text"] = json!("ü".repeat(32));
+        assert!(parse_manifest(long.to_string().as_bytes()).is_ok());
+        long["scenes"]["portrait"]["nodes"][6]["text"] = json!("ü".repeat(33));
+        assert!(parse_manifest(long.to_string().as_bytes()).is_err());
+
+        // Andere Zeichen kennt die Schrift nicht, und ältere Formate bleiben ASCII.
+        let mut accent = location_fixture();
+        accent["viewLabel"] = json!("Café");
+        assert!(parse_manifest(accent.to_string().as_bytes()).is_err());
+        let mut old_format: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        ))
+        .unwrap();
+        old_format["viewLabel"] = json!("Flüge");
+        assert_eq!(
+            parse_manifest(serde_json::to_string(&old_format).unwrap().as_bytes()).unwrap_err(),
+            "umlauts need formatVersion 3"
         );
     }
 

@@ -354,7 +354,10 @@ final class DisplayPlugins {
             let package = record.packageURL.path
             let settings = settingsPath(id).path
             let generation = record.generation
-            var arguments = ["render", package, settings, "all", "--theme=\(theme)", "--locale=\(locale)"]
+            // Szenen mit Umlauten vorhalten; für ältere Firmware schreibt
+            // `sceneForDevice` beim Senden um.
+            var arguments = ["render", package, settings, "all", "--theme=\(theme)", "--locale=\(locale)",
+                             "--scene-protocol=2"]
             if record.requiresLocation, let location = location {
                 arguments.append("--location=\(location.argument)")
             }
@@ -454,6 +457,39 @@ final class DisplayPlugins {
             return Self.statusScene(title, text("stale"), theme: theme)
         }
         return scene
+    }
+
+    /// Szene an die verbundene Firmware anpassen: Ab `sceneProtocol` 2 zeigt
+    /// das Display Umlaute, ältere Firmware nimmt nur ASCII an. Die Umschrift
+    /// ist in Bytes nie länger als das Original.
+    static func sceneForDevice(_ scene: [String: Any], sceneProtocol: Int) -> [String: Any] {
+        guard sceneProtocol < 2, let nodes = scene["nodes"] as? [[String: Any]] else { return scene }
+        let replacements: [Character: String] = ["Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ä": "ae", "ö": "oe",
+                                                 "ü": "ue", "ß": "ss", "°": ""]
+        var result = scene
+        result["nodes"] = nodes.map { node -> [String: Any] in
+            guard let text = node["text"] as? String,
+                  text.unicodeScalars.contains(where: { !$0.isASCII }) else { return node }
+            let characters = Array(text)
+            var ascii = ""
+            for (index, character) in characters.enumerated() {
+                guard let replacement = replacements[character] else {
+                    if character.isASCII { ascii.append(character) }
+                    continue
+                }
+                // In Versalien auch den zweiten Buchstaben groß: FLÜGE → FLUEGE, Über → Ueber.
+                let previous = index > 0 ? characters[index - 1] : nil
+                let next = index + 1 < characters.count ? characters[index + 1] : nil
+                let capitals = next?.isUppercase == true
+                    || (previous?.isUppercase == true && next?.isLowercase != true)
+                ascii += capitals && character != "ä" && character != "ö" && character != "ü"
+                    ? replacement.uppercased() : replacement
+            }
+            var updated = node
+            updated["text"] = ascii
+            return updated
+        }
+        return result
     }
 
     /// Statustexte in der Sprache des Displays. Die Firmware nimmt in Szenen

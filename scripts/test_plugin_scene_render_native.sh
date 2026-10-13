@@ -28,10 +28,19 @@ if ! cmake --build "$BUILD" --target lvgl -j 4 > "$BUILD/build.log" 2>&1; then
     exit 1
 fi
 
+# Die UI-Schriften mit Umlauten liegen als C-Quellen neben der Firmware.
+FONT_OBJECTS=()
+for FONT in "$ROOT"/src/font_ui_*.c; do
+    OBJECT="$BUILD/$(basename "$FONT" .c).o"
+    cc -O2 -DLV_CONF_PATH='"'"$ROOT/src/lv_conf.h"'"' -I "$ROOT/src" -I "$LVGL" -c "$FONT" -o "$OBJECT"
+    FONT_OBJECTS+=("$OBJECT")
+done
+
 c++ -std=c++17 -O2 -DLV_CONF_PATH='"'"$ROOT/src/lv_conf.h"'"' \
     -I "$ROOT/src" -I "$LVGL" -I "$ARDUINOJSON/src" \
     "$ROOT/tests/plugin_scene_render_native.cpp" \
     "$ROOT/src/plugin_scene.cpp" "$ROOT/src/plugin_scene_renderer.cpp" \
+    "${FONT_OBJECTS[@]}" \
     "$BUILD/lib/liblvgl.a" -lm -pthread -o "$BUILD/render_scene"
 
 OUTPUT="${AIMONITOR_SCENE_OUTPUT_DIR:-$BUILD}"

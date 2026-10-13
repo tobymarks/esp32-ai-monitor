@@ -2913,10 +2913,12 @@ class UsageMonitor {
         } else {
             layout = "landscape"
         }
-        let scene = id == ClaudeCodeWindow.viewID
+        let rendered = id == ClaudeCodeWindow.viewID
             ? ClaudeCodeWindow.shared.scene(layout: layout, language: Settings.shared.language,
                                             theme: DisplayPlugins.resolvedTheme())
             : DisplayPlugins.shared.scene(for: id, layout: layout, language: Settings.shared.language)
+        let scene = DisplayPlugins.sceneForDevice(rendered,
+                                                  sceneProtocol: serialPort.deviceSceneProtocol ?? 1)
         let envelope: [String: Any] = [
             "schemaVersion": 2,
             "frameId": frameId,

@@ -44,7 +44,7 @@ static const char* strings_de[] = {
     "Limit erreicht",        // STR_LIMIT_REACHED
     "pro Tag bis Reset",     // STR_PER_DAY
     "Rest bis Reset",        // STR_LEFT_UNTIL_RESET
-    "noch zu frueh",         // STR_TOO_EARLY
+    "noch zu früh",          // STR_TOO_EARLY
 };
 
 static const char* strings_en[] = {

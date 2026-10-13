@@ -2,7 +2,9 @@
 //! crate; this module owns persistence, bounded HTTPS fetches, and state.
 
 use aimonitor_core::device::Location;
-use aimonitor_core::plugin::{status_scene_with_theme, status_text, Manifest, SceneLayout, Setting};
+use aimonitor_core::plugin::{
+    scene_for_protocol, status_scene_with_theme, status_text, Manifest, SceneLayout, Setting,
+};
 use aimonitor_core::protocol::{Language, Theme};
 use aimonitor_core::plugin_package::{parse_package, MAX_PACKAGE_BYTES};
 use chrono::{DateTime, Utc};
@@ -100,7 +102,20 @@ impl PluginRecord {
 
     /// `location` is the place stored for the connected display. Data fetched
     /// for another place is dropped by [`PluginStore::set_location`].
+    /// `scene_protocol` is what the firmware reports; below 2 the text is
+    /// transliterated to ASCII.
     pub fn scene(
+        &self,
+        layout: SceneLayout,
+        language: Language,
+        theme: Theme,
+        location: Option<&Location>,
+        scene_protocol: u32,
+    ) -> Value {
+        scene_for_protocol(self.scene_utf8(layout, language, theme, location), scene_protocol)
+    }
+
+    fn scene_utf8(
         &self,
         layout: SceneLayout,
         language: Language,
@@ -735,7 +750,7 @@ mod tests {
         let assigned = HashSet::from([id.to_string()]);
         let texts = |store: &PluginStore| -> Vec<Value> {
             store.records[id]
-                .scene(SceneLayout::Portrait, Language::De, Theme::Dark, store.location())
+                .scene(SceneLayout::Portrait, Language::De, Theme::Dark, store.location(), 1)
                 ["nodes"].as_array().unwrap().iter().map(|node| node["text"].clone()).collect()
         };
 
@@ -760,6 +775,14 @@ mod tests {
         assert_eq!(due.len(), 1);
         assert!(store.apply_fetch(&due[0], Ok(response)));
         assert!(texts(&store).contains(&json!("Bonn")));
+        // Neue Firmware zeigt Umlaute, alte bekommt die Umschrift.
+        assert!(store.set_location(Some(Location { name: "Köln".into(), latitude: 50.94, longitude: 6.96 })));
+        let due = store.due_fetches(&assigned);
+        assert!(store.apply_fetch(&due[0], Ok(json!({"metric": {"value": 1}}))));
+        assert!(texts(&store).contains(&json!("Koeln")));
+        let modern = store.records[id].scene(
+            SceneLayout::Portrait, Language::De, Theme::Dark, store.location(), 2);
+        assert_eq!(modern["nodes"][0]["text"], "Köln");
 
         assert!(store.set_location(None));
         assert!(store.records[id].data.is_none());
@@ -868,7 +891,7 @@ mod tests {
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].settings, updated);
         assert!(store.apply_fetch(&due[0], Ok(response)));
-        let scene = store.records[id].scene(SceneLayout::Portrait, Language::En, Theme::Dark, None);
+        let scene = store.records[id].scene(SceneLayout::Portrait, Language::En, Theme::Dark, None, 2);
         assert!(scene["nodes"]
             .as_array()
             .unwrap()
@@ -876,13 +899,13 @@ mod tests {
             .any(|node| node["text"] == "Updated"));
 
         assert!(!store.apply_fetch(&due[0], Err("offline".into())));
-        let unavailable = store.records[id].scene(SceneLayout::Portrait, Language::En, Theme::Dark, None);
+        let unavailable = store.records[id].scene(SceneLayout::Portrait, Language::En, Theme::Dark, None, 2);
         assert!(unavailable["nodes"]
             .as_array()
             .unwrap()
             .iter()
             .any(|node| node["text"] == "Data unavailable: offline"));
-        let unavailable_de = store.records[id].scene(SceneLayout::Portrait, Language::De, Theme::Dark, None);
+        let unavailable_de = store.records[id].scene(SceneLayout::Portrait, Language::De, Theme::Dark, None, 2);
         assert!(unavailable_de["nodes"]
             .as_array()
             .unwrap()

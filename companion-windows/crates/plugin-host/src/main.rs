@@ -3,7 +3,7 @@
 
 use aimonitor_core::claude_code;
 use aimonitor_core::device::Location;
-use aimonitor_core::plugin::{Manifest, SceneLayout};
+use aimonitor_core::plugin::{scene_for_protocol, Manifest, SceneLayout};
 use aimonitor_core::protocol::Theme;
 use aimonitor_core::plugin_package::{parse_package, MAX_PACKAGE_BYTES};
 use serde_json::{json, Map, Value};
@@ -129,6 +129,9 @@ struct Options {
     locale: String,
     /// `--location={"name":…,"latitude":…,"longitude":…}` of the connected display.
     location: Option<Location>,
+    /// `--scene-protocol=N` as reported by the firmware. Defaults to 1, where
+    /// umlauts are transliterated to ASCII.
+    scene_protocol: u32,
 }
 
 fn parse_arguments(raw_args: Vec<String>) -> Result<Options, String> {
@@ -136,6 +139,7 @@ fn parse_arguments(raw_args: Vec<String>) -> Result<Options, String> {
     let mut theme = None;
     let mut locale = None;
     let mut location = None;
+    let mut scene_protocol = None;
     for (index, arg) in raw_args.into_iter().enumerate() {
         if index != 0 {
             if let Some(value) = arg.strip_prefix("--theme=") {
@@ -155,6 +159,14 @@ fn parse_arguments(raw_args: Vec<String>) -> Result<Options, String> {
                     return Err("invalid plugin locale".into());
                 }
                 locale = Some(value.to_owned());
+                continue;
+            }
+            if let Some(value) = arg.strip_prefix("--scene-protocol=") {
+                if scene_protocol.is_some() {
+                    return Err("duplicate scene protocol".into());
+                }
+                scene_protocol =
+                    Some(value.parse::<u32>().map_err(|_| "invalid scene protocol")?);
                 continue;
             }
             if let Some(value) = arg.strip_prefix("--location=") {
@@ -177,11 +189,12 @@ fn parse_arguments(raw_args: Vec<String>) -> Result<Options, String> {
         theme: theme.unwrap_or(Theme::Dark),
         locale: locale.unwrap_or_else(|| "en".into()),
         location,
+        scene_protocol: scene_protocol.unwrap_or(1),
     })
 }
 
 fn run() -> Result<Value, String> {
-    let Options { args, theme, locale, location } = parse_arguments(env::args().collect())?;
+    let Options { args, theme, locale, location, scene_protocol } = parse_arguments(env::args().collect())?;
     let location = location.as_ref();
     if args.get(1).map(String::as_str) == Some("claude-hooks") {
         return claude_hooks(&args);
@@ -250,8 +263,9 @@ fn run() -> Result<Value, String> {
                 let square = package.manifest.scene_at(
                     SceneLayout::Square, &data, &settings, theme, &locale, location,
                 )?;
+                let adapt = |scene| scene_for_protocol(scene, scene_protocol);
                 Ok(json!({
-                    "scenes": {"portrait": portrait, "landscape": landscape, "square": square},
+                    "scenes": {"portrait": adapt(portrait), "landscape": adapt(landscape), "square": adapt(square)},
                     "attention": package.manifest.attention_states(&data),
                 }))
             } else {
@@ -263,7 +277,7 @@ fn run() -> Result<Value, String> {
                 let scene = package.manifest.scene_at(
                     layout, &data, &settings, theme, &locale, location,
                 )?;
-                Ok(json!({"scene": scene}))
+                Ok(json!({"scene": scene_for_protocol(scene, scene_protocol)}))
             }
         }
         _ => Err("invalid command or arguments".into()),
@@ -319,6 +333,7 @@ mod tests {
                 assert_eq!(options.theme, Theme::Light);
                 assert_eq!(options.locale, "de");
                 assert!(options.location.is_none());
+                assert_eq!(options.scene_protocol, 1);
             }
         }
         let default = parse_arguments(expected.iter().map(|s| s.to_string()).collect()).unwrap();
@@ -343,6 +358,7 @@ mod tests {
             vec!["--locale=DE"],
             vec!["--location={\"latitude\":91,\"longitude\":0}"],
             vec!["--location=50,7"],
+            vec!["--scene-protocol=two"],
         ] {
             let input = std::iter::once("host").chain(options).map(str::to_owned).collect();
             assert!(parse_arguments(input).is_err());

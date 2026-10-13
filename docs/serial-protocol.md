@@ -156,7 +156,7 @@ Antwort auf `get_info` `(serial_receiver.cpp:353-389)`.
 | `brightness` | Int | 5..100 | 376, `(config.h:170-171)` |
 | `serialTransport` | String | `"AIM1"` | 377, `(serial_receiver.cpp:38)` |
 | `maxFrameBytes` | Int | 4095 | 377 |
-| `sceneProtocol` | Int | `1` bei Firmware mit Display-Szenen; fehlt bei älterer Firmware | `serial_receiver.cpp` |
+| `sceneProtocol` | Int | `1` bei Firmware mit Display-Szenen (Text nur ASCII), `2` mit Umlauten und Gradzeichen in Szenentext; fehlt bei älterer Firmware | `serial_receiver.cpp` |
 | `wifiConfigured` | Bool | Zugangsdaten gespeichert | 378 |
 | `wifiConnected` | Bool | WLAN verbunden | 378 |
 | `timeSynced` | Bool | NTP-Sync erfolgt | 378 |
@@ -855,7 +855,8 @@ vollständiger serieller Frame bleibt unter `maxFrameBytes` (derzeit 4095).
 Koordinaten `x`, `y`, `w`, `h` sind Ganzzahlen auf einer Fläche von 0 bis 1000;
 Breite und Höhe müssen positiv sein und innerhalb der Fläche bleiben. Farben
 sind RGB-Werte von `0` bis `0xFFFFFF`. Unterstützte Knotentypen sind `text`,
-`rect`, `circle` und `bar`. `text` hat bis zu 64 druckbare ASCII-Zeichen und
+`rect`, `circle` und `bar`. `text` hat bis zu 64 Bytes druckbares ASCII, ab
+`sceneProtocol:2` zusätzlich `Ä Ö Ü ä ö ü ß °` als UTF-8 (je zwei Bytes), und
 eine Schriftgröße aus `12`, `14`, `16`, `20`, `24`, `36`, `48`; `align` kann
 `left`, `center` oder `right` sein. `bar` ergänzt `trackColor` und `value`
 von 0 bis 100. Der Companion wählt die Hoch- oder Querformat-Szene aus dem

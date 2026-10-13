@@ -36,19 +36,14 @@ impl Location {
             && !self.name.chars().any(char::is_control)
     }
 
-    /// Name für das Display: Die Firmware nimmt in Szenen nur druckbares
-    /// ASCII an, deshalb werden Umlaute und gängige Akzente umgeschrieben.
+    /// Name für das Display. Die Schriften der Firmware kennen neben ASCII
+    /// nur die deutschen Umlaute; andere Akzente werden umgeschrieben. Für
+    /// ältere Firmware schreibt `plugin::scene_for_protocol` auch Umlaute um.
     pub fn display_name(&self) -> String {
         let mut out = String::new();
         for c in self.name.chars() {
             match c {
-                'ä' => out.push_str("ae"),
-                'ö' => out.push_str("oe"),
-                'ü' => out.push_str("ue"),
-                'Ä' => out.push_str("Ae"),
-                'Ö' => out.push_str("Oe"),
-                'Ü' => out.push_str("Ue"),
-                'ß' => out.push_str("ss"),
+                'ä' | 'ö' | 'ü' | 'Ä' | 'Ö' | 'Ü' | 'ß' => out.push(c),
                 'æ' => out.push_str("ae"),
                 'ø' => out.push('o'),
                 'Ø' => out.push('O'),
@@ -81,7 +76,8 @@ impl Location {
                 _ => {}
             }
         }
-        out.trim().chars().take(40).collect()
+        // Höchstens 30 Zeichen: Mit Umlauten bleiben das unter 64 Bytes.
+        out.trim().chars().take(30).collect()
     }
 }
 
@@ -516,7 +512,7 @@ mod tests {
         assert!(reg.profile("aa:bb").unwrap().location.is_none());
         let place = Location { name: "München".into(), latitude: 48.137, longitude: 11.575 };
         assert!(place.is_valid());
-        assert_eq!(place.display_name(), "Muenchen");
+        assert_eq!(place.display_name(), "München");
         reg.profile_mut("aa:bb").unwrap().location = Some(place.clone());
         let back = DeviceRegistry::from_json(&reg.to_json()).unwrap();
         assert_eq!(back.profile("aa:bb").unwrap().location, Some(place.clone()));
@@ -528,7 +524,7 @@ mod tests {
         let old = r#"{"devices":{"aa:bb":{"mac":"aa:bb","friendlyName":"Alt"}}}"#;
         assert!(DeviceRegistry::from_json(old).unwrap().profile("aa:bb").unwrap().location.is_none());
         assert!(!Location { name: String::new(), latitude: 91.0, longitude: 0.0 }.is_valid());
-        assert_eq!(Location { name: "Łódź / Zürich".into(), ..place }.display_name(), "Lodz / Zuerich");
+        assert_eq!(Location { name: "Łódź / Zürich".into(), ..place }.display_name(), "Lodz / Zürich");
     }
 
     #[test]

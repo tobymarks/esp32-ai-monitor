@@ -30,8 +30,14 @@ digits, dots, hyphens, or underscores. A changed ID creates a different plugin.
 IDs starting with `builtin.` are reserved for built-in windows such as the
 [Claude Code window](claude-code-window.md).
 `name`, `author`, `description`, `viewLabel`, and optional `attribution` are
-shown to users. Version 1 requires printable ASCII in metadata and display
-text because the device font and wire validator currently use that subset.
+shown to users. Metadata and display text use printable ASCII; format version 3
+adds the German umlauts `Ä Ö Ü ä ö ü ß` and the degree sign `°`, the only
+further characters in the device fonts. Formats 1 and 2 must stay ASCII.
+Length limits count UTF-8 bytes, so each of these characters uses two.
+
+Firmware with `sceneProtocol: 2` shows them as written. For older firmware the
+companion transliterates when sending (`Flüge` becomes `Fluege`, `12 °C`
+becomes `12 C`), so write natural text and do not ship ASCII spellings.
 
 An optional `localizations` object maps locale codes to exact translations of
 author-supplied strings. For example:
@@ -56,8 +62,8 @@ formatted value, so a condition need not be duplicated per language. Map
 values and text fallbacks are translated for display; numeric fallbacks remain
 numeric so they can still drive bars. Non-numeric fallbacks for numeric bindings
 can be translated. Translated metadata and setting labels must fit the same
-length limits as their originals. Localized display text remains printable
-ASCII with the current scene protocol. Companions released before this
+length limits as their originals. Localized display text follows the same
+character rules as the original text. Companions released before this
 extension reject packages containing `localizations`.
 
 Release compatibility note: Unknown `{{...}}` placeholders now cause plugin
@@ -68,7 +74,8 @@ when that node was visible. Existing packages with such placeholders must be
 corrected and reinstalled before they
 load in this version.
 
-Firmware reports `sceneProtocol: 1` through `get_info`. Older firmware cannot
+Firmware reports `sceneProtocol` through `get_info`: `1` for ASCII scene text,
+`2` with umlauts. Older firmware without the field cannot
 display plugin windows. The companion keeps up to 20 installed plugins; the
 window manager has eight slots and can place the same plugin in several slots.
 
@@ -92,7 +99,7 @@ Declare `bindings` as an array. A binding reads a dotted JSON path such as
 `daily.temperature_2m_max.0`. `settings.city` reads a setting. Its `format` is
 `text`, `integer`, `decimal1`, or `map`; `suffix`, `map`, and `fallback` control
 the displayed result. A missing field uses the fallback. Formatted results
-must fit 64 printable ASCII characters.
+must fit 64 bytes of display text.
 
 From format version 3 a numeric binding (`integer` or `decimal1`) may set
 `scale`, a non-zero factor applied before formatting, such as `0.3048` for feet
@@ -148,8 +155,8 @@ The source URL may then contain `{location.latitude}` and
 `{location.longitude}`. The companion inserts the coordinates with three
 decimals (roughly 100 m); the HTTPS origin must still remain fixed. Bindings
 can read `location.name`, `location.latitude`, and `location.longitude`. The
-name is transliterated to printable ASCII for the device (`Köln` becomes
-`Koeln`) and is missing when the user entered coordinates only, so give that
+name keeps German umlauts; other accents are written without them (`Łódź`
+becomes `Lodz`). It is missing when the user entered coordinates only, so give that
 binding a sensible fallback. In such a plugin a source field named `location`
 is not readable through these three paths.
 
