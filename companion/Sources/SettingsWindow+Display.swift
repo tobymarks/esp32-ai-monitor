@@ -104,7 +104,7 @@ extension SettingsWindowController {
             number: "1",
             title: L("disp.step.pick"),
             detail: L("disp.step.pick.detail"),
-            views: [deviceRowBuilt, deviceProfilesRow]
+            views: [deviceRowBuilt, deviceProfilesRow, buildDeviceLocationRow()]
         )
 
         let appearanceRows = NSStackView(views: [
@@ -273,6 +273,152 @@ extension SettingsWindowController {
         return deviceRow
     }
 
+    private func buildDeviceLocationRow() -> NSView {
+        deviceLocationLabel = NSTextField(labelWithString: L("disp.location.none"))
+        deviceLocationLabel.font = NSFont.appFont(.body)
+        deviceLocationLabel.lineBreakMode = .byTruncatingTail
+        deviceLocationLabel.translatesAutoresizingMaskIntoConstraints = false
+        deviceLocationLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 230).isActive = true
+
+        deviceLocationButton = NSButton(title: L("disp.location.change"), target: self,
+                                        action: #selector(presentDeviceLocationPicker))
+        deviceLocationButton.bezelStyle = .rounded
+        deviceLocationButton.toolTip = L("disp.location.tooltip")
+
+        let controls = NSStackView(views: [deviceLocationLabel, deviceLocationButton])
+        controls.orientation = .horizontal
+        controls.spacing = 8
+        controls.alignment = .centerY
+        updateDeviceLocationRow()
+        return twoColumnRow(L("disp.location.label"), controls)
+    }
+
+    func updateDeviceLocationRow() {
+        guard deviceLocationLabel != nil else { return }
+        let profile = DeviceRegistry.shared.currentProfile()
+        deviceLocationLabel.stringValue = profile?.location?.summary ?? L("disp.location.none")
+        deviceLocationLabel.textColor = profile?.location == nil ? .secondaryLabelColor : .labelColor
+        deviceLocationLabel.toolTip = profile?.location?.summary
+        // Der Standort liegt im Profil und lässt sich auch ohne Verbindung pflegen.
+        deviceLocationButton.isEnabled = profile != nil
+    }
+
+    @objc private func presentDeviceLocationPicker() {
+        guard let profile = DeviceRegistry.shared.currentProfile() else { return }
+        let alert = NSAlert()
+        alert.messageText = L("disp.location.title", profile.friendlyName)
+        alert.informativeText = L("disp.location.intro")
+        alert.alertStyle = .informational
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 268))
+        let search = NSSearchField(frame: NSRect(x: 0, y: 240, width: 272, height: 24))
+        search.placeholderString = L("disp.location.placeholder")
+        // Erst auf „Suchen“ oder Return suchen, nicht bei jedem Tastendruck abrufen.
+        search.sendsSearchStringImmediately = false
+        search.sendsWholeSearchString = true
+        container.addSubview(search)
+        let searchButton = NSButton(title: L("disp.location.search"), target: nil, action: nil)
+        searchButton.bezelStyle = .rounded
+        searchButton.frame = NSRect(x: 278, y: 236, width: 86, height: 32)
+        container.addSubview(searchButton)
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 84, width: 360, height: 150))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .noBorder
+        let tableView = NSTableView(frame: scroll.bounds)
+        tableView.style = .inset
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("place"))
+        column.width = 340
+        tableView.addTableColumn(column)
+        tableView.headerView = nil
+        scroll.documentView = tableView
+        container.addSubview(scroll)
+
+        let status = NSTextField(labelWithString: "")
+        status.frame = NSRect(x: 0, y: 60, width: 360, height: 18)
+        status.font = NSFont.appFont(.subheadline)
+        status.textColor = .secondaryLabelColor
+        container.addSubview(status)
+
+        let latitude = NSTextField(frame: NSRect(x: 0, y: 30, width: 174, height: 24))
+        latitude.placeholderString = L("disp.location.latitude")
+        latitude.setAccessibilityLabel(L("disp.location.latitude"))
+        let longitude = NSTextField(frame: NSRect(x: 186, y: 30, width: 174, height: 24))
+        longitude.placeholderString = L("disp.location.longitude")
+        longitude.setAccessibilityLabel(L("disp.location.longitude"))
+        container.addSubview(latitude)
+        container.addSubview(longitude)
+
+        let credit = NSTextField(labelWithString: L("disp.location.attribution"))
+        credit.frame = NSRect(x: 0, y: 4, width: 360, height: 18)
+        credit.font = NSFont.appFont(.subheadline)
+        credit.textColor = .tertiaryLabelColor
+        container.addSubview(credit)
+
+        let source = PlaceSearchSource()
+        source.tableView = tableView
+        source.statusLabel = status
+        source.latitudeField = latitude
+        source.longitudeField = longitude
+        source.chosen = profile.location
+        tableView.dataSource = source
+        tableView.delegate = source
+        source.searchField = search
+        search.target = source
+        search.action = #selector(PlaceSearchSource.search(_:))
+        searchButton.target = source
+        searchButton.action = #selector(PlaceSearchSource.searchPressed(_:))
+        if let current = profile.location {
+            latitude.stringValue = PlaceSearchSource.text(current.latitude)
+            longitude.stringValue = PlaceSearchSource.text(current.longitude)
+        }
+
+        alert.accessoryView = container
+        alert.addButton(withTitle: "Übernehmen")
+        alert.addButton(withTitle: "Abbrechen")
+        if profile.location != nil { alert.addButton(withTitle: L("disp.location.clear")) }
+        alert.window.initialFirstResponder = search
+
+        let response = alert.runModal()
+        let updated: DeviceLocation?
+        switch response {
+        case .alertFirstButtonReturn:
+            guard let lat = PlaceSearchSource.number(latitude.stringValue),
+                  let lon = PlaceSearchSource.number(longitude.stringValue) else {
+                presentDeviceLocationError()
+                return
+            }
+            // Ein Ortsname gilt nur, solange die Koordinaten noch zu ihm passen.
+            let named = source.chosen.flatMap { $0.latitude == lat && $0.longitude == lon ? $0.name : nil }
+            let location = DeviceLocation(name: named ?? "", latitude: lat, longitude: lon)
+            guard location.isValid else {
+                presentDeviceLocationError()
+                return
+            }
+            updated = location
+        case .alertThirdButtonReturn:
+            updated = nil
+        default:
+            return
+        }
+        // Das Profil kann während des Dialogs gewechselt haben; gezielt dieses Gerät ändern.
+        guard var target = DeviceRegistry.shared.profile(forMAC: profile.mac) else { return }
+        target.location = updated
+        DeviceRegistry.shared.save(target)
+        updateDeviceLocationRow()
+        updatePluginsSection(force: true)
+        // Standortabhängige Plugins verwerfen ihre Daten und rufen neu ab.
+        DisplayPlugins.shared.refresh(views: Settings.shared.displayViews)
+        DisplayPlugins.shared.onChange?()
+    }
+
+    private func presentDeviceLocationError() {
+        let alert = NSAlert()
+        alert.messageText = L("disp.location.err.invalid")
+        alert.alertStyle = .warning
+        alert.runModal()
+    }
+
     private func buildDeviceProfilesRow() -> NSView {
         deviceProfilesPopup = NSPopUpButton()
         deviceProfilesPopup.translatesAutoresizingMaskIntoConstraints = false
@@ -348,6 +494,7 @@ extension SettingsWindowController {
     /// kein Edit) und `.disconnected`/`.probing` (dimmed „—").
     func updateDeviceRow() {
         guard deviceNameLabel != nil else { return }
+        updateDeviceLocationRow()
         if isEditingDeviceName { return }
         let state = monitor?.serialPort.state ?? .disconnected
         switch state {

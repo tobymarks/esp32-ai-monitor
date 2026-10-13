@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 aimonitor-core = { path = "../core" }
+aimonitor-plugin-store = { path = "../plugin-store" }
 serde_json.workspace = true
 ureq.workspace = true
 url = "2"

@@ -3,11 +3,12 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Number, Value};
+use crate::device::Location;
 use crate::protocol::Theme;
 use std::collections::{BTreeMap, HashSet};
 use url::Url;
 
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 pub const SCENE_PROTOCOL: u32 = 1;
 pub const MAX_SCENE_NODES: usize = 24;
 pub const MAX_SCENE_BYTES: usize = 1536;
@@ -55,12 +56,14 @@ pub fn status_text(key: &str, language: crate::protocol::Language) -> &'static s
         (Language::De, "loading") => "Lade Daten ...",
         (Language::De, "stale") => "Daten veraltet - warte auf Update",
         (Language::De, "render") => "Plugin-Daten nicht darstellbar",
+        (Language::De, "location") => "Standort fehlt - in der App am Display festlegen",
         (Language::En, "missing") => "Plugin missing",
         (Language::En, "missing.hint") => "Install this plugin in Settings",
         (Language::En, "unavailable") => "Data unavailable",
         (Language::En, "loading") => "Loading data...",
         (Language::En, "stale") => "Data stale - waiting for update",
         (Language::En, "render") => "Cannot render plugin data",
+        (Language::En, "location") => "No location - set one for this display in the app",
         _ => "",
     }
 }
@@ -111,6 +114,9 @@ pub struct Manifest {
     pub bindings: Vec<Binding>,
     #[serde(default)]
     pub attention_rules: Vec<AttentionRule>,
+    /// Host data the plugin needs beyond its own settings (format version 3).
+    #[serde(default)]
+    pub requires: Vec<Requirement>,
     pub scenes: SceneVariants,
     /// Optional exact-text translations of author-supplied display strings.
     /// Missing locales and entries use the manifest's original text.
@@ -137,6 +143,17 @@ pub struct Setting {
     pub min: Option<f64>,
     pub max: Option<f64>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Requirement {
+    /// The location stored for the connected display. Enables the URL
+    /// placeholders `{location.latitude}` and `{location.longitude}` and the
+    /// binding paths `location.name`, `location.latitude`, `location.longitude`.
+    Location,
+}
+
+const LOCATION_TOKENS: [&str; 2] = ["{location.latitude}", "{location.longitude}"];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -225,6 +242,9 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     if header.format_version == 1 && header.fields.contains_key("attentionRules") {
         return Err("attentionRules require formatVersion 2".into());
     }
+    if header.format_version < 3 && header.fields.contains_key("requires") {
+        return Err("requires needs formatVersion 3".into());
+    }
     let manifest: Manifest =
         serde_json::from_slice(bytes).map_err(|e| format!("invalid manifest: {e}"))?;
     manifest.validate()?;
@@ -266,8 +286,14 @@ impl Manifest {
         if self.format_version == 1 && !self.attention_rules.is_empty() {
             return Err("attentionRules require formatVersion 2".into());
         }
+        if self.format_version < 3 && !self.requires.is_empty() {
+            return Err("requires needs formatVersion 3".into());
+        }
         if !(1..=FORMAT_VERSION).contains(&self.format_version) {
             return Err("unsupported plugin format".into());
+        }
+        if self.requires.len() > 1 {
+            return Err("duplicate requirement".into());
         }
         if self.min_scene_protocol == 0 || self.min_scene_protocol > SCENE_PROTOCOL {
             return Err("unsupported scene protocol".into());
@@ -323,6 +349,11 @@ impl Manifest {
                 sample_url = sample_url.replace(&token, "0");
             }
         }
+        if self.requires_location() {
+            for token in LOCATION_TOKENS {
+                sample_url = sample_url.replace(token, "0");
+            }
+        }
         if sample_url.contains('{') || sample_url.contains('}') {
             return Err("unknown URL placeholder".into());
         }
@@ -372,6 +403,13 @@ impl Manifest {
             if let Some(key) = binding.path.strip_prefix("settings.") {
                 if !setting_names.contains(key) {
                     return Err("binding references unknown setting".into());
+                }
+            }
+            if self.requires_location() {
+                if let Some(key) = binding.path.strip_prefix("location.") {
+                    if !["name", "latitude", "longitude"].contains(&key) {
+                        return Err("binding references unknown location field".into());
+                    }
                 }
             }
         }
@@ -465,8 +503,44 @@ impl Manifest {
             .collect()
     }
 
+    pub fn requires_location(&self) -> bool {
+        self.requires.contains(&Requirement::Location)
+    }
+
+    /// URL for checking settings and showing the origin. Location placeholders
+    /// are replaced with zero; use [`Manifest::request_url`] for a real fetch.
     pub fn source_url(&self, settings: &Map<String, Value>) -> Result<String, String> {
+        self.resolved_url(settings, Some((0.0, 0.0)))
+    }
+
+    /// URL for the actual request. A plugin that requires a location cannot
+    /// be fetched without one; coordinates are sent with three decimals.
+    pub fn request_url(
+        &self,
+        settings: &Map<String, Value>,
+        location: Option<&Location>,
+    ) -> Result<String, String> {
+        let place = if self.requires_location() {
+            let place = location.filter(|l| l.is_valid()).ok_or("location required")?;
+            Some((place.latitude, place.longitude))
+        } else {
+            None
+        };
+        self.resolved_url(settings, place)
+    }
+
+    fn resolved_url(
+        &self,
+        settings: &Map<String, Value>,
+        place: Option<(f64, f64)>,
+    ) -> Result<String, String> {
         let mut url = self.source.url.clone();
+        if self.requires_location() {
+            let (latitude, longitude) = place.ok_or("location required")?;
+            url = url
+                .replace(LOCATION_TOKENS[0], &format!("{latitude:.3}"))
+                .replace(LOCATION_TOKENS[1], &format!("{longitude:.3}"));
+        }
         for setting in &self.settings {
             let value = settings.get(&setting.key).unwrap_or(&setting.default);
             validate_setting(setting, value)?;
@@ -484,6 +558,11 @@ impl Manifest {
         let mut baseline = template;
         for s in &self.settings {
             baseline = baseline.replace(&format!("{{{}}}", s.key), "0");
+        }
+        if self.requires_location() {
+            for token in LOCATION_TOKENS {
+                baseline = baseline.replace(token, "0");
+            }
         }
         let base = Url::parse(&baseline).map_err(|_| "invalid source URL")?;
         if parsed.origin() != base.origin() {
@@ -545,6 +624,31 @@ impl Manifest {
         theme: Theme,
         locale: &str,
     ) -> Result<Value, String> {
+        self.scene_at(layout, data, settings, theme, locale, None)
+    }
+
+    /// Like [`Manifest::scene_with_theme_and_locale`], with the display's
+    /// location for plugins that require it. Without a location those
+    /// bindings use their fallback.
+    pub fn scene_at(
+        &self,
+        layout: SceneLayout,
+        data: &Value,
+        settings: &Map<String, Value>,
+        theme: Theme,
+        locale: &str,
+        location: Option<&Location>,
+    ) -> Result<Value, String> {
+        let place = location
+            .filter(|l| self.requires_location() && l.is_valid())
+            .map(|l| {
+                let name = l.display_name();
+                json!({
+                    "name": if name.is_empty() { Value::Null } else { json!(name) },
+                    "latitude": l.latitude,
+                    "longitude": l.longitude,
+                })
+            });
         for setting in &self.settings {
             validate_setting(
                 setting,
@@ -556,6 +660,10 @@ impl Manifest {
         for binding in &self.bindings {
             let source = if binding.path.starts_with("settings.") {
                 settings.get(&binding.path[9..])
+            } else if self.requires_location() && binding.path.starts_with("location.") {
+                // Reserved for the host; a source field named `location` is
+                // only shadowed in plugins that ask for the display location.
+                place.as_ref().and_then(|p| p.get(&binding.path[9..]))
             } else {
                 lookup(data, &binding.path)
             };
@@ -1138,13 +1246,94 @@ mod tests {
         let mut package: Value = serde_json::from_slice(include_bytes!(
             "../../../../tests/fixtures/display-plugin/plugin.json"
         )).unwrap();
-        package["formatVersion"] = json!(3);
+        package["formatVersion"] = json!(FORMAT_VERSION + 1);
         package["futureFeature"] = json!({"enabled": true});
         let err = parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err();
         assert!(err.contains("newer version of AI Monitor"), "{err}");
         package["formatVersion"] = json!(2);
         let err = parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err();
         assert!(err.contains("unknown field"), "{err}");
+    }
+
+    fn location_fixture() -> Value {
+        let mut manifest: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        ))
+        .unwrap();
+        manifest["formatVersion"] = json!(3);
+        manifest["requires"] = json!(["location"]);
+        manifest["source"]["url"] = json!(
+            "https://example.org/api?lat={location.latitude}&lon={location.longitude}&scale={scale}"
+        );
+        manifest["bindings"][0] = json!({
+            "name": "label", "path": "location.name", "format": "text",
+            "suffix": "", "map": {}, "fallback": "Here"
+        });
+        manifest
+    }
+
+    #[test]
+    fn location_requirement_fills_url_and_bindings() {
+        let manifest = parse_manifest(location_fixture().to_string().as_bytes()).unwrap();
+        assert!(manifest.requires_location());
+        let settings = manifest.default_settings();
+        let place = Location { name: "Köln".into(), latitude: 50.93751, longitude: 6.96028 };
+        assert_eq!(
+            manifest.request_url(&settings, Some(&place)).unwrap(),
+            "https://example.org/api?lat=50.938&lon=6.960&scale=1"
+        );
+        assert_eq!(manifest.request_url(&settings, None).unwrap_err(), "location required");
+        let outside = Location { latitude: 120.0, ..place.clone() };
+        assert!(manifest.request_url(&settings, Some(&outside)).is_err());
+        // The origin shown before installation needs no location.
+        assert!(manifest.source_url(&settings).unwrap().starts_with("https://example.org/api?lat=0.000"));
+
+        let data = json!({"location": {"name": "From source"}, "metric": {"value": 1}});
+        let text = |location: Option<&Location>| {
+            manifest
+                .scene_at(SceneLayout::Portrait, &data, &settings, Theme::Dark, "en", location)
+                .unwrap()["nodes"][0]["text"]
+                .clone()
+        };
+        assert_eq!(text(Some(&place)), "Koeln");
+        assert_eq!(text(None), "Here");
+        let unnamed = Location { name: String::new(), ..place };
+        assert_eq!(text(Some(&unnamed)), "Here");
+    }
+
+    #[test]
+    fn location_is_gated_by_format_and_requirement() {
+        let mut old = location_fixture();
+        old["formatVersion"] = json!(2);
+        assert_eq!(
+            parse_manifest(old.to_string().as_bytes()).unwrap_err(),
+            "requires needs formatVersion 3"
+        );
+        let mut undeclared = location_fixture();
+        undeclared.as_object_mut().unwrap().remove("requires");
+        assert_eq!(
+            parse_manifest(undeclared.to_string().as_bytes()).unwrap_err(),
+            "unknown URL placeholder"
+        );
+        let mut unknown_field = location_fixture();
+        unknown_field["bindings"][0]["path"] = json!("location.street");
+        assert!(parse_manifest(unknown_field.to_string().as_bytes()).is_err());
+        let mut unknown = location_fixture();
+        unknown["requires"] = json!(["camera"]);
+        assert!(parse_manifest(unknown.to_string().as_bytes()).is_err());
+
+        // Without the requirement a source field named `location` stays readable.
+        let mut plain: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        ))
+        .unwrap();
+        plain["bindings"][0]["path"] = json!("location.name");
+        let manifest = parse_manifest(plain.to_string().as_bytes()).unwrap();
+        let scene = manifest
+            .scene(SceneLayout::Portrait, &json!({"location": {"name": "From source"}}),
+                   &manifest.default_settings())
+            .unwrap();
+        assert_eq!(scene["nodes"][0]["text"], "From source");
     }
 
     #[test]

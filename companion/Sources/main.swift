@@ -253,6 +253,33 @@ private let kDeviceAutoAnimals: [(String, DeviceAutoGenus)] = [
     ("Nashorn",          .neutr),
 ]
 
+/// Standort eines Displays. Plugins mit `requires: ["location"]` erhalten ihn
+/// für Abruf-URL und Bindings; er verlässt die App nur über deren Datenquelle.
+struct DeviceLocation: Codable, Equatable {
+    /// Anzeigename wie „München“; leer bei reinen Koordinaten.
+    var name: String
+    var latitude: Double
+    var longitude: Double
+
+    var isValid: Bool {
+        latitude.isFinite && longitude.isFinite && abs(latitude) <= 90 && abs(longitude) <= 180
+            && name.count <= 80
+    }
+
+    /// Wert für `--location=` des Plugin-Helfers; zugleich Schlüssel dafür,
+    /// zu welchem Standort abgerufene Szenen gehören.
+    var argument: String {
+        let object: [String: Any] = ["name": name, "latitude": latitude, "longitude": longitude]
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    var summary: String {
+        let coordinates = String(format: "%.3f, %.3f", latitude, longitude)
+        return name.isEmpty ? coordinates : "\(name) (\(coordinates))"
+    }
+}
+
 /// Per-Device-Settings. Jedes am USB verbundene ESP32 hat genau ein Profil,
 /// adressiert über die MAC-Adresse (ab FW v2.10.0 im `get_info`-Response).
 /// Geräte mit älterer Firmware werden unter `kLegacyDeviceMAC` geführt — beim
@@ -281,6 +308,9 @@ struct DeviceProfile: Codable {
     var lastSeenAt: Date?
     /// Zuletzt vom Gerät gemeldete Firmware-Version ohne fuehrendes "v".
     var firmwareVersion: String?
+    /// Standort des Displays; `nil`, solange keiner hinterlegt ist. Neue
+    /// Geräte erben ihn bewusst nicht vom zuletzt aktiven Profil.
+    var location: DeviceLocation? = nil
 
     static func defaultFor(mac: String, friendlyName: String,
                            theme: String = "system",

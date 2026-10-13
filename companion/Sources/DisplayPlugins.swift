@@ -21,6 +21,10 @@ struct DisplayPluginRecord {
     var error: String?
     var sceneLocale: String?
     var sceneTheme: String?
+    /// Standort, für den zuletzt abgerufen wurde (`DeviceLocation.argument`).
+    var requestLocation: String?
+
+    var requiresLocation: Bool { info["requiresLocation"] as? Bool == true }
 }
 
 final class DisplayPlugins {
@@ -46,6 +50,26 @@ final class DisplayPlugins {
         default:
             return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
                 ? "dark" : "light"
+        }
+    }
+
+    /// Standort des verbundenen, sonst des zuletzt verbundenen Displays.
+    static func currentLocation() -> DeviceLocation? {
+        guard let location = DeviceRegistry.shared.currentProfile()?.location,
+              location.isValid else { return nil }
+        return location
+    }
+
+    /// Ortssuche für den Standort eines Displays über den Plugin-Helfer.
+    static func searchPlaces(_ query: String,
+                             completion: @escaping (Result<[[String: Any]], Error>) -> Void) {
+        let locale = Bundle.main.preferredLocalizations.first?.hasPrefix("de") == true ? "de" : "en"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { () -> [[String: Any]] in
+                let response = try Self.helper(["places", query, "--locale=\(locale)"])
+                return response["places"] as? [[String: Any]] ?? []
+            }
+            DispatchQueue.main.async { completion(result) }
         }
     }
 
@@ -293,8 +317,26 @@ final class DisplayPlugins {
     func refresh(views: [String]) {
         let locale = Settings.shared.language == "en" ? "en" : "de"
         let theme = Self.resolvedTheme()
+        let location = Self.currentLocation()
         for id in Set(views.compactMap(Self.id(from:))) {
             guard var record = records[id] else { continue }
+            if record.requiresLocation && record.requestLocation != location?.argument {
+                // Anderes Display oder geänderter Standort: Die Daten gehören
+                // zum alten Ort. Eine laufende Antwort verwirft die neue Generation.
+                record.requestLocation = location?.argument
+                record.generation = UUID()
+                record.scenes.removeAll()
+                record.attention.removeAll()
+                record.hasAttentionBaseline = false
+                record.firedAttention = false
+                record.lastAttempt = nil
+                record.fetchedAt = nil
+                record.error = nil
+                records[id] = record
+                attentionResets.insert(id)
+            }
+            // Ohne Standort gibt es nichts abzurufen; das Fenster zeigt den Hinweis.
+            if record.requiresLocation && location == nil { continue }
             guard !fetching.contains(id) else { continue }
             let interval = TimeInterval(record.info["intervalSeconds"] as? Int ?? 900)
             let now = Date()
@@ -312,9 +354,12 @@ final class DisplayPlugins {
             let package = record.packageURL.path
             let settings = settingsPath(id).path
             let generation = record.generation
+            var arguments = ["render", package, settings, "all", "--theme=\(theme)", "--locale=\(locale)"]
+            if record.requiresLocation, let location = location {
+                arguments.append("--location=\(location.argument)")
+            }
             DispatchQueue.global(qos: .utility).async {
-                let result = Result { try Self.helper(["render", package, settings, "all",
-                                                        "--theme=\(theme)", "--locale=\(locale)"]) }
+                let result = Result { try Self.helper(arguments) }
                 DispatchQueue.main.async {
                     self.fetching.remove(id)
                     guard var current = self.records[id], current.packageURL.path == package,
@@ -391,6 +436,14 @@ final class DisplayPlugins {
             return Self.statusScene(text("missing"), text("missing.hint"), theme: theme)
         }
         let title = Self.localized(record.info["viewLabel"] as? String ?? "Plugin", info: record.info, locale: language)
+        if record.requiresLocation {
+            guard let location = Self.currentLocation() else {
+                return Self.statusScene(title, text("location"), theme: theme)
+            }
+            if record.requestLocation != location.argument {
+                return Self.statusScene(title, text("loading"), theme: theme)
+            }
+        }
         if record.error != nil { return Self.statusScene(title, text("unavailable"), theme: theme) }
         // Bei einem Theme- oder Sprachwechsel die vorhandene Szene bis zur neuen Antwort stehen lassen.
         guard let scene = record.scenes[layout], let fetched = record.fetchedAt else {
@@ -413,6 +466,8 @@ final class DisplayPlugins {
         case "unavailable":  return de ? "Daten nicht abrufbar" : "Data unavailable"
         case "loading":      return de ? "Lade Daten ..." : "Loading data..."
         case "stale":        return de ? "Daten veraltet - warte auf Update" : "Data stale - waiting for update"
+        case "location":     return de ? "Standort fehlt - in der App am Display festlegen"
+                                       : "No location - set one for this display in the app"
         default:             return ""
         }
     }

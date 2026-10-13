@@ -127,6 +127,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var deviceProfilesPopup: NSPopUpButton!
     var deviceForgetButton: NSButton!
     var isEditingDeviceName: Bool = false
+    var deviceLocationLabel: NSTextField!
+    var deviceLocationButton: NSButton!
     var themePopup: NSPopUpButton!
     var percentModePopup: NSPopUpButton!
     var orientationPopup: NSPopUpButton!
@@ -1073,6 +1075,98 @@ final class TimeZoneTableSource: NSObject, NSTableViewDataSource, NSTableViewDel
         }
         cell.textField?.stringValue = filtered[row]
         return cell
+    }
+}
+
+/// Ortssuche im Standort-Dialog: Treffer des Plugin-Helfers als Tabelle. Die
+/// Auswahl füllt die Koordinatenfelder, die der Dialog am Ende übernimmt.
+final class PlaceSearchSource: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    var places: [[String: Any]] = []
+    /// Name zum zuletzt übernommenen Treffer oder zum bestehenden Standort.
+    var chosen: DeviceLocation?
+    weak var tableView: NSTableView?
+    weak var statusLabel: NSTextField?
+    weak var latitudeField: NSTextField?
+    weak var longitudeField: NSTextField?
+    weak var searchField: NSSearchField?
+    private var request = 0
+
+    /// Der „Suchen“-Knopf neben dem Feld; Return im Feld löst dieselbe Suche aus.
+    @objc func searchPressed(_ sender: Any?) {
+        guard let field = searchField else { return }
+        search(field)
+    }
+
+    @objc func search(_ sender: NSSearchField) {
+        let query = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2 else { return }
+        request += 1
+        let current = request
+        statusLabel?.stringValue = L("disp.location.searching")
+        DisplayPlugins.searchPlaces(query) { [weak self] result in
+            guard let self = self, self.request == current else { return }
+            switch result {
+            case .success(let places):
+                self.places = places
+                self.statusLabel?.stringValue = places.isEmpty ? L("disp.location.noresults") : ""
+            case .failure:
+                self.places = []
+                self.statusLabel?.stringValue = L("disp.location.err.search")
+            }
+            self.tableView?.reloadData()
+            // Ein einzelner Treffer ist eindeutig und wird gleich übernommen.
+            if self.places.count == 1 {
+                self.tableView?.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            }
+        }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { places.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let identifier = NSUserInterfaceItemIdentifier("placeCell")
+        let cell: NSTableCellView
+        if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView {
+            cell = reused
+        } else {
+            cell = NSTableCellView()
+            cell.identifier = identifier
+            let tf = NSTextField(labelWithString: "")
+            tf.translatesAutoresizingMaskIntoConstraints = false
+            tf.font = NSFont.appFont(.callout)
+            tf.lineBreakMode = .byTruncatingTail
+            cell.addSubview(tf)
+            cell.textField = tf
+            NSLayoutConstraint.activate([
+                tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+        }
+        let place = places[row]
+        let name = place["name"] as? String ?? ""
+        let detail = place["detail"] as? String ?? ""
+        cell.textField?.stringValue = detail.isEmpty ? name : "\(name) · \(detail)"
+        cell.toolTip = cell.textField?.stringValue
+        return cell
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard let row = tableView?.selectedRow, row >= 0, row < places.count,
+              let latitude = places[row]["latitude"] as? Double,
+              let longitude = places[row]["longitude"] as? Double else { return }
+        let place = DeviceLocation(name: places[row]["name"] as? String ?? "",
+                                   latitude: latitude, longitude: longitude)
+        chosen = place
+        latitudeField?.stringValue = PlaceSearchSource.text(place.latitude)
+        longitudeField?.stringValue = PlaceSearchSource.text(place.longitude)
+    }
+
+    /// Koordinate ohne Rundung, unabhängig vom Dezimaltrennzeichen des Systems.
+    static func text(_ value: Double) -> String { "\(value)" }
+
+    static func number(_ text: String) -> Double? {
+        Double(text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "."))
     }
 }
 
