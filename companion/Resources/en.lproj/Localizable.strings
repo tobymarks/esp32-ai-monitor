@@ -221,6 +221,14 @@
 "update.none.suffix" = "is up to date.";
 "update.none.title" = "No update available";
 "update.skip" = "Skip version";
+"views.blocks" = "Building blocks";
+"views.blocks.hint" = "Drag into a window or the preview. Click to assign the block to the selected window.";
+"views.drop.hint" = "Drag a data source or the clock here. The preview shows the assigned content.";
+"views.edit" = "Edit window %d";
+"views.fixed" = "Fixed window";
+"views.preview.source" = "Data source";
+"views.select.hint" = "Select to edit. Use Show to open it on the display.";
+"views.show.a11y" = "Show window %d on the display";
 "views.active" = "on display";
 "views.add" = "Add window";
 "views.intelligent" = "Intelligent";

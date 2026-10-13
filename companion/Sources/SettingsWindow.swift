@@ -66,14 +66,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var setupTestButton: NSButton!
     var displayTestButton: NSButton!
     // Display — Fenster (ab v1.30.0, siehe SettingsWindow+Views.swift)
-    var viewsListStack: NSStackView!
-    var viewsAddButton: NSButton!
+    var viewsEditor: DisplayViewEditor!
     var viewsModePopup: NSPopUpButton!
     var viewsIntervalField: NSTextField!
     var viewsIntervalRow: NSView!
     var viewsIntelligentHint: NSTextField!
     var viewsFirmwareHint: NSTextField!
-    var viewsSignature = ""
     var pluginSourceField: NSTextField!
     var pluginPreviewLabel: NSTextField!
     var pluginInstallButton: NSButton!

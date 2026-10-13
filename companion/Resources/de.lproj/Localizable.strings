@@ -221,6 +221,14 @@
 "update.none.suffix" = "ist aktuell.";
 "update.none.title" = "Kein Update verfügbar";
 "update.skip" = "Version überspringen";
+"views.blocks" = "Bausteine";
+"views.blocks.hint" = "In ein Fenster oder die Vorschau ziehen. Ein Klick weist den Baustein dem ausgewählten Fenster zu.";
+"views.drop.hint" = "Eine Datenquelle oder die Uhr hierher ziehen. Die Vorschau zeigt den zugewiesenen Inhalt.";
+"views.edit" = "Fenster %d bearbeiten";
+"views.fixed" = "Festes Fenster";
+"views.preview.source" = "Datenquelle";
+"views.select.hint" = "Zum Bearbeiten auswählen. Mit Anzeigen auf dem Display öffnen.";
+"views.show.a11y" = "Fenster %d auf dem Display anzeigen";
 "views.active" = "wird angezeigt";
 "views.add" = "Fenster hinzufügen";
 "views.intelligent" = "Intelligent";
