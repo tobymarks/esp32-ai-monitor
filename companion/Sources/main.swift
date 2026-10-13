@@ -2654,6 +2654,7 @@ class UsageMonitor {
     /// Nach jedem Connect: gemeldetes Panel und laufende Firmware-Variante.
     var onPanelReported: ((_ panel: String?, _ firmwareVariant: String?) -> Void)?
     private var heartbeatTimer: Timer?
+    private var pluginRefreshTimer: Timer?
     /// Ausstehender, gebuendelter Usage-/Notice-Frame (siehe scheduleUsageSend).
     private var pendingUsageSend: DispatchWorkItem?
     private var nextFrameId = 1
@@ -3044,11 +3045,20 @@ class UsageMonitor {
             guard let self = self else { return }
             self.sendUsageToESP32()
         }
+
+        // Plugins dürfen ab Format 3 alle 20 Sekunden abrufen; der Heartbeat
+        // allein käme nur einmal pro Minute vorbei. Fällig ist ein Abruf erst
+        // nach dem Intervall des jeweiligen Plugins.
+        pluginRefreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            DisplayPlugins.shared.refresh(views: Settings.shared.displayViews)
+        }
     }
 
     func stop() {
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
+        pluginRefreshTimer?.invalidate()
+        pluginRefreshTimer = nil
         viewEventTimer?.invalidate()
         viewEventTimer = nil
         codexBar.stop()

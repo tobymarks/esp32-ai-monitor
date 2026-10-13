@@ -58,7 +58,8 @@ one JSON response from an explicit HTTPS URL, use numeric settings in that URL,
 select JSON fields, format text values, and choose scene nodes by conditions.
 A plugin can also ask for the location stored for the connected display instead
 of defining its own coordinates; the companion then shows that the location is
-sent to the plugin's source. It does not yet combine multiple APIs, handle OAuth, load images, or run custom
+sent to the plugin's source. It can filter, sort, and limit an array in the response and scale numbers
+between units. It does not yet combine multiple APIs, handle OAuth, load images, or run custom
 code. A future executable-plugin API needs a process or runtime
 isolation design and a separate trust decision. Schema validation alone does
 not make executable code safe.

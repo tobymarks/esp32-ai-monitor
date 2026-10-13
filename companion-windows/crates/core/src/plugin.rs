@@ -13,6 +13,13 @@ pub const SCENE_PROTOCOL: u32 = 1;
 pub const MAX_SCENE_NODES: usize = 24;
 pub const MAX_SCENE_BYTES: usize = 1536;
 pub const MAX_PACKAGE_MANIFEST_BYTES: usize = 64 * 1024;
+/// Shortest refresh interval: 60 s up to format 2, 20 s from format 3.
+pub const MIN_INTERVAL_SECONDS: u32 = 60;
+pub const MIN_INTERVAL_SECONDS_V3: u32 = 20;
+const MAX_LISTS: usize = 4;
+const MAX_LIST_ITEMS: usize = 8;
+/// Entries of a source array considered for a list; later ones are ignored.
+const MAX_LIST_SOURCE_ITEMS: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneLayout {
@@ -117,6 +124,9 @@ pub struct Manifest {
     /// Host data the plugin needs beyond its own settings (format version 3).
     #[serde(default)]
     pub requires: Vec<Requirement>,
+    /// Filtered, sorted selections from arrays in the source (format version 3).
+    #[serde(default)]
+    pub lists: Vec<ListSpec>,
     pub scenes: SceneVariants,
     /// Optional exact-text translations of author-supplied display strings.
     /// Missing locales and entries use the manifest's original text.
@@ -153,6 +163,65 @@ pub enum Requirement {
     Location,
 }
 
+/// Picks entries from an array in the source JSON. Bindings and attention
+/// rules read the result as `lists.<name>.count` (all matches) and
+/// `lists.<name>.items.<index>.<field>` (the first `limit` matches).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListSpec {
+    pub name: String,
+    /// Dotted path to the source array, such as `ac`.
+    pub path: String,
+    /// Conditions an entry must all meet; paths are relative to the entry.
+    #[serde(default, rename = "where")]
+    pub filters: Vec<ListFilter>,
+    /// Numeric field to order by. Entries without it come last.
+    #[serde(default)]
+    pub sort_by: Option<String>,
+    #[serde(default)]
+    pub descending: bool,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListFilter {
+    pub path: String,
+    pub operator: FilterOperator,
+    #[serde(default)]
+    pub value: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FilterOperator {
+    Equals,
+    NotEquals,
+    AtLeast,
+    AtMost,
+    Exists,
+}
+
+impl ListFilter {
+    fn matches(&self, item: &Value) -> bool {
+        let actual = lookup(item, &self.path).filter(|value| !value.is_null());
+        let expected = self.value.as_ref();
+        let compare = |at_least: bool| {
+            actual
+                .and_then(Value::as_f64)
+                .zip(expected.and_then(Value::as_f64))
+                .is_some_and(|(a, b)| if at_least { a >= b } else { a <= b })
+        };
+        match self.operator {
+            FilterOperator::Exists => actual.is_some(),
+            FilterOperator::Equals => expected.is_some_and(|value| equal_value(actual, value)),
+            FilterOperator::NotEquals => expected.is_some_and(|value| !equal_value(actual, value)),
+            FilterOperator::AtLeast => compare(true),
+            FilterOperator::AtMost => compare(false),
+        }
+    }
+}
+
 const LOCATION_TOKENS: [&str; 2] = ["{location.latitude}", "{location.longitude}"];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -174,6 +243,14 @@ pub struct Binding {
     #[serde(default)]
     pub map: BTreeMap<String, String>,
     pub fallback: String,
+    /// Factor applied to a number before formatting, such as 0.3048 for
+    /// feet to metres (format version 3, `integer` and `decimal1` only).
+    #[serde(default)]
+    pub scale: Option<f64>,
+    /// Strip surrounding whitespace from text; an empty result uses the
+    /// fallback (format version 3, `text` and `map` only).
+    #[serde(default)]
+    pub trim: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,6 +321,9 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     }
     if header.format_version < 3 && header.fields.contains_key("requires") {
         return Err("requires needs formatVersion 3".into());
+    }
+    if header.format_version < 3 && header.fields.contains_key("lists") {
+        return Err("lists need formatVersion 3".into());
     }
     let manifest: Manifest =
         serde_json::from_slice(bytes).map_err(|e| format!("invalid manifest: {e}"))?;
@@ -322,8 +402,48 @@ impl Manifest {
         if self.version.len() > 32 || semver_parts(&self.version).is_none() {
             return Err("invalid plugin version".into());
         }
-        if !(60..=86_400).contains(&self.source.interval_seconds) {
+        let shortest = if self.format_version >= 3 {
+            MIN_INTERVAL_SECONDS_V3
+        } else {
+            MIN_INTERVAL_SECONDS
+        };
+        if !(shortest..=86_400).contains(&self.source.interval_seconds) {
             return Err("invalid refresh interval".into());
+        }
+        if self.format_version < 3 && !self.lists.is_empty() {
+            return Err("lists need formatVersion 3".into());
+        }
+        if self.lists.len() > MAX_LISTS {
+            return Err("too many lists".into());
+        }
+        let mut list_names = HashSet::new();
+        for list in &self.lists {
+            if !valid_key(&list.name, 30)
+                || !list_names.insert(list.name.as_str())
+                || !valid_dotted_path(&list.path)
+                || !(1..=MAX_LIST_ITEMS).contains(&list.limit)
+                || list.filters.len() > 8
+                || list.sort_by.as_ref().is_some_and(|path| !valid_dotted_path(path))
+            {
+                return Err("invalid list".into());
+            }
+            for filter in &list.filters {
+                let value_ok = match (filter.operator, &filter.value) {
+                    (FilterOperator::Exists, None) => true,
+                    (FilterOperator::Exists, Some(_)) | (_, None) => false,
+                    (FilterOperator::AtLeast | FilterOperator::AtMost, Some(value)) => {
+                        value.as_f64().is_some()
+                    }
+                    (_, Some(value)) => {
+                        value.is_boolean()
+                            || value.is_number()
+                            || value.as_str().is_some_and(|text| printable(text, 64))
+                    }
+                };
+                if !valid_dotted_path(&filter.path) || !value_ok {
+                    return Err("invalid list filter".into());
+                }
+            }
         }
         // URL templates may contain only numeric settings. Replace them with
         // zero here, then parse the URL before a network request is possible.
@@ -373,6 +493,7 @@ impl Manifest {
         for rule in &self.attention_rules {
             if !valid_key(&rule.id, 30) || !rule_ids.insert(rule.id.as_str())
                 || !valid_dotted_path(&rule.path)
+                || !self.valid_list_path(&rule.path)
                 || !(rule.value.is_boolean() || rule.value.is_string() || rule.value.is_number())
                 || matches!(rule.operator, AttentionOperator::AtLeast | AttentionOperator::AtMost)
                     && rule.value.as_f64().is_none()
@@ -412,6 +533,18 @@ impl Manifest {
                     }
                 }
             }
+            if !self.valid_list_path(&binding.path) {
+                return Err("binding references unknown list entry".into());
+            }
+            let numeric = matches!(binding.format, BindingFormat::Integer | BindingFormat::Decimal1);
+            if self.format_version < 3 && (binding.scale.is_some() || binding.trim) {
+                return Err("scale and trim need formatVersion 3".into());
+            }
+            if binding.scale.is_some_and(|scale| !numeric || !scale.is_finite() || scale == 0.0)
+                || (binding.trim && numeric)
+            {
+                return Err("invalid binding".into());
+            }
         }
         for variants in std::iter::once(&self.scenes).chain(self.light_scenes.as_ref()) {
             for scene in [&variants.portrait, &variants.landscape]
@@ -422,6 +555,11 @@ impl Manifest {
                     return Err("invalid scene bounds".into());
                 }
                 for node in &scene.nodes {
+                    if self.format_version < 3
+                        && node.get("visibleWhen").is_some_and(|when| when.get("notEquals").is_some())
+                    {
+                        return Err("notEquals needs formatVersion 3".into());
+                    }
                     validate_template_node(node, &names, &self.bindings)?;
                 }
             }
@@ -503,6 +641,65 @@ impl Manifest {
             .collect()
     }
 
+    /// `lists.*` is reserved in plugins that declare lists: a path there must
+    /// name a declared list and stay within its limit.
+    fn valid_list_path(&self, path: &str) -> bool {
+        if self.lists.is_empty() {
+            return true;
+        }
+        let Some(rest) = path.strip_prefix("lists.") else {
+            return path != "lists";
+        };
+        let mut parts = rest.split('.');
+        let Some(list) = parts.next().and_then(|name| self.lists.iter().find(|l| l.name == name))
+        else {
+            return false;
+        };
+        match (parts.next(), parts.next()) {
+            (Some("count"), None) => true,
+            (Some("items"), Some(index)) => {
+                index.parse::<usize>().is_ok_and(|i| i < list.limit) && parts.next().is_some()
+            }
+            _ => false,
+        }
+    }
+
+    /// The declared lists applied to one source response, shaped so that
+    /// `lists.<name>.count` and `lists.<name>.items.<index>` resolve.
+    fn selected_lists(&self, data: &Value) -> Option<Value> {
+        if self.lists.is_empty() {
+            return None;
+        }
+        let mut lists = Map::new();
+        for spec in &self.lists {
+            let mut items: Vec<&Value> = lookup(data, &spec.path)
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .take(MAX_LIST_SOURCE_ITEMS)
+                        .filter(|item| spec.filters.iter().all(|filter| filter.matches(item)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(key) = &spec.sort_by {
+                let rank = |item: &Value| lookup(item, key).and_then(Value::as_f64);
+                // A stable sort keeps the source order among equal entries.
+                items.sort_by(|a, b| match (rank(a), rank(b)) {
+                    (Some(x), Some(y)) if spec.descending => y.total_cmp(&x),
+                    (Some(x), Some(y)) => x.total_cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                });
+            }
+            let count = items.len();
+            items.truncate(spec.limit);
+            lists.insert(spec.name.clone(), json!({"count": count, "items": items}));
+        }
+        Some(json!({ "lists": lists }))
+    }
+
     pub fn requires_location(&self) -> bool {
         self.requires.contains(&Requirement::Location)
     }
@@ -574,8 +771,12 @@ impl Manifest {
     /// Declarative conditions evaluated against the source JSON, never the rendered scene.
     /// The host triggers only on false-to-true transitions after a baseline fetch.
     pub fn attention_states(&self, data: &Value) -> BTreeMap<String, bool> {
+        let lists = self.selected_lists(data);
         self.attention_rules.iter().map(|rule| {
-            let actual = lookup(data, &rule.path);
+            let actual = match &lists {
+                Some(lists) if rule.path.starts_with("lists.") => lookup(lists, &rule.path),
+                _ => lookup(data, &rule.path),
+            };
             let active = match rule.operator {
                 AttentionOperator::Equals => equal_value(actual, &rule.value),
                 AttentionOperator::AtLeast => actual.and_then(Value::as_f64)
@@ -655,6 +856,7 @@ impl Manifest {
                 settings.get(&setting.key).unwrap_or(&setting.default),
             )?;
         }
+        let lists = self.selected_lists(data);
         let mut values = BTreeMap::new();
         let mut condition_values = BTreeMap::new();
         for binding in &self.bindings {
@@ -664,6 +866,8 @@ impl Manifest {
                 // Reserved for the host; a source field named `location` is
                 // only shadowed in plugins that ask for the display location.
                 place.as_ref().and_then(|p| p.get(&binding.path[9..]))
+            } else if let (Some(lists), true) = (&lists, binding.path.starts_with("lists.")) {
+                lookup(lists, &binding.path)
             } else {
                 lookup(data, &binding.path)
             };
@@ -711,11 +915,14 @@ impl Manifest {
                     .get("binding")
                     .and_then(Value::as_str)
                     .ok_or("invalid condition")?;
-                let expected = when
-                    .get("equals")
-                    .and_then(Value::as_str)
-                    .ok_or("invalid condition")?;
-                if condition_values.get(binding).is_none_or(|value| value != expected) {
+                let actual = condition_values.get(binding);
+                let text = |key: &str| when.get(key).and_then(Value::as_str);
+                let visible = match (text("equals"), text("notEquals")) {
+                    (Some(expected), None) => actual.is_some_and(|value| value == expected),
+                    (None, Some(unwanted)) => actual.is_some_and(|value| value != unwanted),
+                    _ => return Err("invalid condition".into()),
+                };
+                if !visible {
                     continue;
                 }
             }
@@ -799,16 +1006,20 @@ fn lookup<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
 
 fn binding_value(binding: &Binding, value: Option<&Value>) -> Option<String> {
     let value = value?;
+    let scale = binding.scale.unwrap_or(1.0);
     match binding.format {
         BindingFormat::Text => value
             .as_str()
+            .map(|text| if binding.trim { text.trim() } else { text })
+            .filter(|text| !(binding.trim && text.is_empty()))
             .map(str::to_owned)
             .or_else(|| value.as_i64().map(|v| v.to_string())),
-        BindingFormat::Integer => value.as_f64().map(|v| format!("{:.0}", v)),
-        BindingFormat::Decimal1 => value.as_f64().map(|v| format!("{:.1}", v)),
+        BindingFormat::Integer => value.as_f64().map(|v| format!("{:.0}", v * scale)),
+        BindingFormat::Decimal1 => value.as_f64().map(|v| format!("{:.1}", v * scale)),
         BindingFormat::Map => {
             let key = value
                 .as_str()
+                .map(|text| if binding.trim { text.trim() } else { text })
                 .map(str::to_owned)
                 .unwrap_or_else(|| value.to_string());
             binding.map.get(&key).cloned()
@@ -832,11 +1043,12 @@ fn validate_template_node(
             .get("binding")
             .and_then(Value::as_str)
             .ok_or("invalid condition")?;
-        let equals = when
-            .get("equals")
-            .and_then(Value::as_str)
-            .ok_or("invalid condition")?;
-        if !bindings.contains(binding) || !printable(equals, 64) {
+        let text = |key: &str| when.get(key).and_then(Value::as_str);
+        let expected = match (text("equals"), text("notEquals")) {
+            (Some(value), None) | (None, Some(value)) => value,
+            _ => return Err("invalid condition".into()),
+        };
+        if !bindings.contains(binding) || !printable(expected, 64) {
             return Err("invalid condition".into());
         }
     }
@@ -1066,6 +1278,8 @@ mod tests {
             suffix: String::new(),
             map: BTreeMap::new(),
             fallback: "Unknown".into(),
+            scale: None,
+            trim: false,
         });
         for expected in ["Unknown", "Clear"] {
             plugin.scenes.portrait.nodes.push(json!({
@@ -1334,6 +1548,133 @@ mod tests {
                    &manifest.default_settings())
             .unwrap();
         assert_eq!(scene["nodes"][0]["text"], "From source");
+    }
+
+    fn list_fixture() -> Value {
+        let mut manifest: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        ))
+        .unwrap();
+        manifest["formatVersion"] = json!(3);
+        manifest["source"]["intervalSeconds"] = json!(20);
+        manifest["lists"] = json!([{
+            "name": "flights", "path": "ac", "limit": 2, "sortBy": "dst",
+            "where": [
+                {"path": "alt_baro", "operator": "notEquals", "value": "ground"},
+                {"path": "flight", "operator": "exists"}
+            ]
+        }]);
+        manifest["bindings"] = json!([
+            {"name": "label", "path": "lists.flights.items.0.flight", "format": "text",
+             "trim": true, "fallback": "No flight"},
+            {"name": "value", "path": "lists.flights.items.0.alt_baro", "format": "integer",
+             "scale": 0.3048, "suffix": " m", "fallback": "-"},
+            {"name": "level", "path": "lists.flights.count", "format": "integer", "fallback": "0"},
+            {"name": "state", "path": "lists.flights.items.1.flight", "format": "text",
+             "trim": true, "fallback": ""}
+        ]);
+        manifest["attentionRules"] = json!([
+            {"id": "overhead", "path": "lists.flights.count", "operator": "atLeast", "value": 1}
+        ]);
+        for layout in ["portrait", "landscape", "square"] {
+            manifest["scenes"][layout]["nodes"][2]["visibleWhen"] =
+                json!({"binding": "state", "notEquals": ""});
+        }
+        manifest
+    }
+
+    fn texts(scene: &Value) -> Vec<String> {
+        scene["nodes"].as_array().unwrap().iter()
+            .filter_map(|node| node["text"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn lists_filter_sort_and_limit_source_arrays() {
+        let manifest = parse_manifest(list_fixture().to_string().as_bytes()).unwrap();
+        let settings = manifest.default_settings();
+        // Unsortiert, mit Bodenverkehr, aufgefüllten Callsigns und Lücken, wie von adsb.lol.
+        let data = json!({"ac": [
+            {"flight": "DLH4WF  ", "alt_baro": 11425, "dst": 13.3},
+            {"flight": "DLH695  ", "alt_baro": "ground", "dst": 2.3},
+            {"alt_baro": 26275, "dst": 0.8},
+            {"flight": "SWR2CY  ", "alt_baro": 475, "dst": 1.9},
+            {"flight": "NODIST  ", "alt_baro": 3000},
+            {"flight": "UAL932  ", "alt_baro": 975, "dst": 2.2}
+        ]});
+        let scene = manifest.scene(SceneLayout::Portrait, &data, &settings).unwrap();
+        let shown = texts(&scene);
+        assert_eq!(shown[0], "SWR2CY");
+        assert!(shown.contains(&"145 m".to_string()), "{shown:?}");
+        // Vier Treffer insgesamt, auch wenn nur zwei Einträge bindbar sind.
+        assert!(shown.contains(&"Level 4%".to_string()), "{shown:?}");
+        assert_eq!(scene["nodes"].as_array().unwrap().len(), 8);
+        assert_eq!(manifest.attention_states(&data)["overhead"], true);
+
+        // Ein Treffer: der zweite Eintrag fehlt, sein Knoten verschwindet.
+        let one = json!({"ac": [{"flight": "SWR2CY  ", "alt_baro": 475, "dst": 1.9}]});
+        let scene = manifest.scene(SceneLayout::Portrait, &one, &settings).unwrap();
+        assert_eq!(scene["nodes"].as_array().unwrap().len(), 7);
+
+        // Leerer Himmel, fehlendes Feld oder kein Array: Ersatztexte, keine Regel.
+        for empty in [json!({"ac": []}), json!({}), json!({"ac": "none"})] {
+            let scene = manifest.scene(SceneLayout::Portrait, &empty, &settings).unwrap();
+            assert_eq!(texts(&scene)[0], "No flight");
+            assert_eq!(manifest.attention_states(&empty)["overhead"], false);
+        }
+
+        let mut descending = list_fixture();
+        descending["lists"][0]["descending"] = json!(true);
+        let manifest = parse_manifest(descending.to_string().as_bytes()).unwrap();
+        let scene = manifest.scene(SceneLayout::Portrait, &data, &settings).unwrap();
+        assert_eq!(texts(&scene)[0], "DLH4WF");
+    }
+
+    #[test]
+    fn list_features_are_gated_and_validated() {
+        let rejected = |edit: &dyn Fn(&mut Value)| {
+            let mut manifest = list_fixture();
+            edit(&mut manifest);
+            parse_manifest(manifest.to_string().as_bytes()).unwrap_err()
+        };
+        assert_eq!(rejected(&|m| m["formatVersion"] = json!(2)), "lists need formatVersion 3");
+        assert_eq!(rejected(&|m| m["source"]["intervalSeconds"] = json!(19)), "invalid refresh interval");
+        assert_eq!(rejected(&|m| m["lists"][0]["limit"] = json!(9)), "invalid list");
+        assert_eq!(rejected(&|m| m["lists"][0]["where"][1]["value"] = json!(1)), "invalid list filter");
+        assert_eq!(rejected(&|m| m["lists"][0]["where"][0]["value"] = Value::Null), "invalid list filter");
+        // Index außerhalb des Limits, unbekannte Liste, Liste ohne Feld.
+        for path in ["lists.flights.items.2.flight", "lists.other.count", "lists.flights.items.0", "lists.flights"] {
+            assert_eq!(
+                rejected(&|m| m["bindings"][0]["path"] = json!(path)),
+                "binding references unknown list entry"
+            );
+        }
+        assert_eq!(rejected(&|m| m["attentionRules"][0]["path"] = json!("lists.nope.count")), "invalid attention rule");
+        assert_eq!(rejected(&|m| m["bindings"][0]["scale"] = json!(2)), "invalid binding");
+        assert_eq!(rejected(&|m| m["bindings"][1]["trim"] = json!(true)), "invalid binding");
+        assert_eq!(rejected(&|m| m["bindings"][1]["scale"] = json!(0)), "invalid binding");
+
+        // Format 2 kennt weder das kurze Intervall noch die neuen Felder.
+        let old = |edit: &dyn Fn(&mut Value)| {
+            let mut manifest: Value = serde_json::from_str(include_str!(
+                "../../../../tests/fixtures/display-plugin/plugin.json"
+            ))
+            .unwrap();
+            manifest["formatVersion"] = json!(2);
+            edit(&mut manifest);
+            parse_manifest(manifest.to_string().as_bytes()).unwrap_err()
+        };
+        assert_eq!(old(&|m| m["source"]["intervalSeconds"] = json!(20)), "invalid refresh interval");
+        assert_eq!(old(&|m| m["bindings"][0]["trim"] = json!(true)), "scale and trim need formatVersion 3");
+        assert_eq!(
+            old(&|m| m["scenes"]["portrait"]["nodes"][2]["visibleWhen"] = json!({"binding": "state", "notEquals": "x"})),
+            "notEquals needs formatVersion 3"
+        );
+        assert_eq!(
+            rejected(&|m| m["scenes"]["portrait"]["nodes"][2]["visibleWhen"] =
+                json!({"binding": "state", "equals": "a", "notEquals": "b"})),
+            "invalid condition"
+        );
     }
 
     #[test]

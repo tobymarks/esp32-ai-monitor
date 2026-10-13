@@ -82,9 +82,10 @@ pub fn start_timer(app: AppHandle) {
         .name("aimonitor-plugin-poll".into())
         .spawn(move || loop {
             refresh_plugins(&plugins_app);
-            // PluginStore retries failed requests after 60 seconds. Keep its
-            // scheduler independent of the 180-second provider poll.
-            std::thread::sleep(std::time::Duration::from_secs(60));
+            // PluginStore decides per plugin what is due (20 seconds at the
+            // shortest, 60 after an error); this loop only has to look often
+            // enough. Keep it independent of the 180-second provider poll.
+            std::thread::sleep(std::time::Duration::from_secs(5));
         })
         .expect("Plugin poll thread");
     std::thread::Builder::new()

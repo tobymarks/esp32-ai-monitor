@@ -14,10 +14,11 @@ whole ZIP may be at most 256 KiB. The test fixture demonstrates the format
 without shipping a plugin with the companion.
 
 Set `formatVersion` to `1` for plugins without intelligent-switch rules, `2`
-when using `attentionRules`, or `3` when using `requires`. Format 1 must omit
-`attentionRules` entirely, even when the list would be empty; including it
-reports `attentionRules require formatVersion 2`. Formats 1 and 2 must likewise
-omit `requires`. Each new manifest field after format 3 requires a
+when using `attentionRules`, or `3` when using `requires`, `lists`, binding
+`scale` or `trim`, `visibleWhen.notEquals`, or a refresh interval below 60
+seconds. Format 1 must omit `attentionRules` entirely, even when the list would
+be empty; including it reports `attentionRules require formatVersion 2`.
+Formats 1 and 2 must likewise omit `requires` and `lists`. Each new manifest field after format 3 requires a
 new format version. The existing `localizations` and `lightScenes` fields remain
 valid in version 1 for compatibility with packages already published. New
 companions check `formatVersion` before strict field validation, so a package
@@ -74,7 +75,8 @@ window manager has eight slots and can place the same plugin in several slots.
 ## Data and settings
 
 The required `source` object has an HTTPS `url` and `intervalSeconds` between
-60 and 86400. It returns one JSON document of at most 64 KiB. Source requests
+60 and 86400; format version 3 allows 20 seconds for fast-moving data. Choose
+the longest interval that serves the view and respect the provider's limits. It returns one JSON document of at most 64 KiB. Source requests
 have a 12 second timeout and do not follow redirects. Authentication headers,
 multiple sources, and executable transforms are outside format version 1.
 
@@ -91,6 +93,46 @@ Declare `bindings` as an array. A binding reads a dotted JSON path such as
 `text`, `integer`, `decimal1`, or `map`; `suffix`, `map`, and `fallback` control
 the displayed result. A missing field uses the fallback. Formatted results
 must fit 64 printable ASCII characters.
+
+From format version 3 a numeric binding (`integer` or `decimal1`) may set
+`scale`, a non-zero factor applied before formatting, such as `0.3048` for feet
+to metres. A `text` or `map` binding may set `"trim": true` to strip
+surrounding whitespace; text that is empty afterwards uses the fallback.
+
+## Lists
+
+Many sources return an array in no useful order, such as nearby aircraft or
+upcoming departures. A format version 3 plugin can declare up to four `lists`
+that filter, sort, and limit such an array before bindings read it:
+
+```json
+"lists": [
+  {"name": "flights", "path": "ac", "sortBy": "dst", "limit": 3,
+   "where": [
+     {"path": "flight", "operator": "exists"},
+     {"path": "alt_baro", "operator": "notEquals", "value": "ground"},
+     {"path": "gs", "operator": "atLeast", "value": 40}
+   ]}
+]
+```
+
+`path` is the dotted path to the array; the first 500 entries are considered.
+Every `where` condition must hold (up to eight). Its `path` is relative to the
+entry and its `operator` is `exists`, `equals`, `notEquals`, `atLeast`, or
+`atMost`. `exists` takes no `value`; the two comparisons need a number. A
+missing or `null` field fails `exists`, `equals`, and the comparisons and
+passes `notEquals`. `sortBy` orders by a numeric field, ascending unless
+`"descending": true`; entries without that field come last and equal entries
+keep the source order. `limit` is 1 to 8.
+
+Bindings and attention rules read the result through reserved paths:
+`lists.<name>.count` is the number of matching entries before the limit, and
+`lists.<name>.items.<index>.<field>` reads a field of one of the first `limit`
+entries. An index at or beyond the limit, or an undeclared list, is rejected
+at installation. An entry that does not exist at run time uses the binding's
+fallback, so give optional rows an empty fallback and hide them with
+`visibleWhen`. In a plugin that declares lists, a source field named `lists`
+is not readable.
 
 ## Display location
 
@@ -179,7 +221,9 @@ Every node has `type`, geometry, and decimal RGB `color`. Supported types are
 (`12`, `14`, `16`, `20`, `24`, `36`, or `48`), and optional `align` (`left`,
 `center`, `right`). Insert a formatted binding with `{{binding_name}}`.
 A `visibleWhen` object can show a node only when a binding's formatted value
-equals a specified string. Text is clipped to its box on the device.
+equals a specified string. From format version 3 it may use `notEquals`
+instead of `equals`, for example `{"binding": "count", "notEquals": "0"}` or,
+with an empty fallback, `{"binding": "second", "notEquals": ""}`. Text is clipped to its box on the device.
 
 A bar has `trackColor` and either a fixed integer `value` from 0 to 100 or a
 `valueBinding`. A dynamic bar's binding must use `integer`, have an empty
