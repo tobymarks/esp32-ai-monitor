@@ -956,15 +956,24 @@ mod tests {
         let info = store.install(&package(URL_FIXTURE)).unwrap();
         let mut saved = info.settings.clone();
         saved.insert("label".into(), json!("Bonn"));
-        // Start from a full legacy file, then perform the pre-activation write.
+        // Start from a full legacy file. Fail staging AFTER install's early
+        // settings write, so the test catches removal of that write.
         fs::write(store.settings_path(&info.id), serde_json::to_vec(&saved).unwrap()).unwrap();
-        let store = PluginStore::load(root.clone());
-        store.write_settings(&info.id, &persisted_settings(
-            &store.records[&info.id].manifest, &store.records[&info.id].settings
-        )).unwrap();
+        let mut store = PluginStore::load(root.clone());
         let mut new: Value = serde_json::from_slice(URL_FIXTURE).unwrap();
         new["version"] = json!("1.1.0");
         new["settings"][2]["default"] = json!("https://new.example/v2");
+        let staged = root.join(format!(".{}.installing", info.id));
+        fs::create_dir(&staged).unwrap();
+        assert!(store.install(&package(new.to_string().as_bytes())).is_err());
+        let persisted: Value = serde_json::from_slice(
+            &fs::read(store.settings_path(&info.id)).unwrap()
+        ).unwrap();
+        assert!(persisted.get("endpoint").is_none());
+        let unchanged = PluginStore::load(root.clone());
+        assert_eq!(unchanged.records[&info.id].info().sha256, info.sha256);
+        assert_eq!(unchanged.records[&info.id].settings, saved);
+        fs::remove_dir(&staged).unwrap();
         fs::rename(store.package_path(&info.id), root.join(format!(".{}.previous", info.id))).unwrap();
         fs::write(store.package_path(&info.id), package(new.to_string().as_bytes())).unwrap();
         // Crash here, before the post-activation settings write.
