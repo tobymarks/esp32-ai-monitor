@@ -46,6 +46,8 @@ fn mac_helper_migrates_defaults_preserves_overrides_and_renders_sparse_settings(
     // Missing settings on first installation.
     let initial = host("restore-settings", &[&old, &saved_path]);
     assert_eq!(initial["settings"], defaults);
+    // Fresh Mac install passes a previous package path that does not yet exist.
+    assert_eq!(host("restore-settings", &[&old, &saved_path, &fixture.0.join("missing.aimplugin")]), initial);
     assert!(initial["savedSettings"].get("endpoint").is_none());
 
     manifest["version"] = json!("1.1.0");
@@ -66,6 +68,20 @@ fn mac_helper_migrates_defaults_preserves_overrides_and_renders_sparse_settings(
         } else { manifest["settings"][2]["default"].clone() });
         assert_eq!(restored["sourceOrigin"], if custom { "https://custom.example" } else { "https://new.example" });
         assert_eq!(restored["savedSettings"].get("endpoint").is_some(), custom);
+        fs::write(&saved_path, serde_json::to_vec(&restored["savedSettings"]).unwrap()).unwrap();
+        // A different plugin must never influence migration.
+        let mut other_manifest = manifest.clone();
+        other_manifest["id"] = json!("org.aimonitor.other");
+        other_manifest["settings"][2]["default"] = saved["endpoint"].clone();
+        let other = fixture.package("other.aimplugin", &other_manifest);
+        fs::write(&saved_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let unrelated = host("restore-settings", &[&new, &saved_path, &other]);
+        assert_eq!(unrelated["settings"]["endpoint"], saved["endpoint"]);
+        // Simulate the Mac pre-activation normalization and a crash immediately
+        // after package replacement, before the final settings write.
+        let previous = host("restore-settings", &[&old, &saved_path]);
+        fs::write(&saved_path, serde_json::to_vec(&previous["savedSettings"]).unwrap()).unwrap();
+        assert_eq!(host("restore-settings", &[&new, &saved_path]), restored);
         fs::write(&saved_path, serde_json::to_vec(&restored["savedSettings"]).unwrap()).unwrap();
         // Restart, using the sparse file just written.
         let restarted = host("restore-settings", &[&new, &saved_path]);

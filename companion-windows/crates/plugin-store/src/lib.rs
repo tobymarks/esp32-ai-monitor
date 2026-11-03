@@ -314,6 +314,12 @@ impl PluginStore {
             .map(|record| persisted_settings(&record.manifest, &record.settings))
             .unwrap_or_else(|| self.read_settings(&package.manifest));
         let settings = merge_valid_settings(&package.manifest, &saved);
+        // Persist inherited URLs before switching packages. If interrupted after
+        // activation, the old defaults must not look like custom URLs on restart.
+        // This representation also preserves the old package's effective settings.
+        if self.records.contains_key(&id) {
+            self.write_settings(&id, &saved)?;
+        }
         let target = self.package_path(&id);
         let staged = self.root.join(format!(".{id}.installing"));
         let backup = self.root.join(format!(".{id}.previous"));
@@ -920,6 +926,52 @@ mod tests {
                 fs::remove_dir_all(root).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn update_keeps_old_package_if_settings_cannot_be_saved() {
+        let root = test_root();
+        let mut store = PluginStore::load(root.clone());
+        let info = store.install(&package(URL_FIXTURE)).unwrap();
+        let mut saved = info.settings.clone();
+        saved.insert("label".into(), json!("Bonn"));
+        store.configure(&info.id, saved.clone()).unwrap();
+        let mut new: Value = serde_json::from_slice(URL_FIXTURE).unwrap();
+        new["version"] = json!("1.1.0");
+        new["settings"][2]["default"] = json!("https://new.example/v2");
+        // Force a real persistence failure on both Unix and Windows.
+        fs::create_dir(store.settings_path(&info.id).with_extension("part")).unwrap();
+        assert!(store.install(&package(new.to_string().as_bytes())).is_err());
+        assert_eq!(store.records[&info.id].info().sha256, info.sha256);
+        let reloaded = PluginStore::load(root.clone());
+        assert_eq!(reloaded.records[&info.id].info().sha256, info.sha256);
+        assert_eq!(reloaded.records[&info.id].settings, saved);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_update_after_package_activation_does_not_pin_old_url() {
+        let root = test_root();
+        let mut store = PluginStore::load(root.clone());
+        let info = store.install(&package(URL_FIXTURE)).unwrap();
+        let mut saved = info.settings.clone();
+        saved.insert("label".into(), json!("Bonn"));
+        // Start from a full legacy file, then perform the pre-activation write.
+        fs::write(store.settings_path(&info.id), serde_json::to_vec(&saved).unwrap()).unwrap();
+        let store = PluginStore::load(root.clone());
+        store.write_settings(&info.id, &persisted_settings(
+            &store.records[&info.id].manifest, &store.records[&info.id].settings
+        )).unwrap();
+        let mut new: Value = serde_json::from_slice(URL_FIXTURE).unwrap();
+        new["version"] = json!("1.1.0");
+        new["settings"][2]["default"] = json!("https://new.example/v2");
+        fs::rename(store.package_path(&info.id), root.join(format!(".{}.previous", info.id))).unwrap();
+        fs::write(store.package_path(&info.id), package(new.to_string().as_bytes())).unwrap();
+        // Crash here, before the post-activation settings write.
+        let reloaded = PluginStore::load(root.clone());
+        assert_eq!(reloaded.records[&info.id].settings["endpoint"], "https://new.example/v2");
+        assert_eq!(reloaded.records[&info.id].settings["label"], "Bonn");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

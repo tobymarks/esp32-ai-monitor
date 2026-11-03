@@ -249,6 +249,13 @@ final class DisplayPlugins {
                 let target = root.appendingPathComponent("\(id).aimplugin")
                 let backup = root.appendingPathComponent(".\(id).previous")
                 let settingsFile = root.appendingPathComponent("\(id).settings.json")
+                // Normalize legacy defaults while the old package is still active.
+                // An interruption after replacement must not pin its old URL.
+                if let previous = try? Self.helper(["restore-settings", target.path, settingsFile.path]),
+                   let saved = previous["savedSettings"] as? [String: Any] {
+                    let previousData = try JSONSerialization.data(withJSONObject: saved)
+                    try previousData.write(to: settingsFile, options: .atomic)
+                }
                 let restored = try Self.helper(["restore-settings", staged.path, settingsFile.path, target.path])
                 guard let settings = restored["settings"] as? [String: Any],
                       let saved = restored["savedSettings"] as? [String: Any] else {

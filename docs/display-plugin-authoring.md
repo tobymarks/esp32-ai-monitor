@@ -225,7 +225,7 @@ The latter lets the user choose the HTTPS endpoint in the companion settings:
 ```
 
 A URL setting may contain numeric `{key}` placeholders from the same settings
-list, for example `https://api.example.org/weather?lat={latitude}`. Text and
+list, for example `https://api.example.org/metrics?scale={scale}`. Text and
 URL settings cannot be placeholders. Numeric replacements cannot change the
 origin. A user-selected URL may change the origin; the installed plugin's
 source-origin label updates after saving and after restart. The endpoint must
@@ -260,8 +260,11 @@ protocol 1 through the inherited text adaptation, and with protocol 2.
 
 Unchanged URL settings follow the plugin's default after an update. Custom
 URLs are retained when valid for the new manifest. An existing saved URL equal
-to the previous default is treated as inherited, including settings written
-by older companion versions. Numeric and text preferences remain saved.
+to the currently installed package's default is treated as inherited before
+updating, including full settings files written by older companion versions.
+If an older app already updated the package and retained an even earlier default,
+that historical URL cannot be distinguished from a custom value; reset it to the
+current default manually. Numeric and text preferences remain saved.
 On load and update, an invalid setting falls back independently to its default.
 
 ## Layouts
