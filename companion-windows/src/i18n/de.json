@@ -419,5 +419,12 @@
   "panel.fix.running.detail": "Die Firmware für {from} passt nicht zum Display. Die App spielt jetzt die Firmware für {to} auf.",
   "panel.mismatch.title": "Firmware passt nicht zum Display",
   "panel.mismatch.detail": "Verbaut ist {panel}, installiert ist die Firmware für {firmware}.",
-  "panel.mismatch.action": "Passende Firmware flashen"
+  "panel.mismatch.action": "Passende Firmware flashen",
+  "plugins.sourceAscii": "Die Daten-URL darf höchstens 2048 ASCII-Zeichen und keine Leerzeichen oder Backslashes enthalten. Domains mit Umlauten bitte als Punycode eingeben.",
+  "plugins.sourceHttps": "Die Daten-URL muss HTTPS verwenden und darf keine Zugangsdaten oder Fragmente (#) enthalten.",
+  "plugins.sourceUrl": "Die Daten-URL ist ungültig. Bitte eine vollständige HTTPS-Adresse eingeben.",
+  "plugins.sourceNumeric": "In der Daten-URL sind nur Platzhalter für numerische Einstellungen erlaubt.",
+  "plugins.sourcePlaceholder": "Die Daten-URL enthält einen unbekannten Platzhalter.",
+  "plugins.sourceOrigin": "Platzhalter dürfen Host und Port der Daten-URL nicht verändern.",
+  "plugins.settingUrl": "Bitte eine gültige HTTPS-Daten-URL eingeben."
 }

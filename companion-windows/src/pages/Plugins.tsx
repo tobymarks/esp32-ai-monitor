@@ -27,7 +27,13 @@ function PluginSettings({ t, locale, plugin, hasLocation, onRefresh }: { t: Tran
     setBusy(true);
     setError(null);
     try {
-      await configurePlugin(plugin.id, values);
+      const normalized = { ...values };
+      for (const spec of plugin.settingsSpec) {
+        const value = normalized[spec.key];
+        if (spec.kind === "url" && typeof value === "string") normalized[spec.key] = value.trim();
+      }
+      const updated = await configurePlugin(plugin.id, normalized);
+      setValues(updated.settings);
       onRefresh();
     } catch (e) {
       setError(pluginError(e, t));
@@ -62,7 +68,10 @@ function PluginSettings({ t, locale, plugin, hasLocation, onRefresh }: { t: Tran
         {plugin.settingsSpec.map((spec) => (
           <label key={spec.key} className="field-row">
             <span className="field-label">{pluginText(plugin, locale, spec.label)}</span>
-            <input className="input" type={spec.kind === "number" ? "number" : "text"}
+            <input className="input" type={spec.kind === "number" ? "number" : spec.kind === "url" ? "url" : "text"}
+              style={spec.kind === "url" ? { flex: 1, minWidth: 0 } : undefined}
+              maxLength={spec.kind === "url" ? 2048 : undefined}
+              spellCheck={spec.kind === "url" ? false : undefined}
               min={spec.min ?? undefined} max={spec.max ?? undefined}
               step={spec.kind === "number" ? "any" : undefined}
               value={values[spec.key] ?? ""} disabled={busy}

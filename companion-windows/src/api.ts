@@ -83,7 +83,7 @@ export interface ProviderInfo {
 export interface PluginSettingSpec {
   key: string;
   label: string;
-  kind: "number" | "text";
+  kind: "number" | "text" | "url";
   default: string | number;
   min: number | null;
   max: number | null;

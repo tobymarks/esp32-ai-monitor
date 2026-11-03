@@ -7,6 +7,7 @@ use aimonitor_core::plugin::{scene_for_protocol, Manifest, SceneLayout};
 use aimonitor_core::protocol::Theme;
 use aimonitor_core::plugin_package::{parse_package, MAX_PACKAGE_BYTES};
 use serde_json::{json, Map, Value};
+use aimonitor_plugin_store::{merge_valid_settings, persisted_settings};
 use std::env;
 use std::fs;
 use std::io::Read;
@@ -63,6 +64,8 @@ fn fetch(
 ) -> Result<Value, String> {
     let url = manifest.request_url(settings, location)?;
     let config = ureq::Agent::config_builder()
+        .tls_config(ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
         .timeout_global(Some(Duration::from_secs(12)))
         .max_redirects(0)
         .http_status_as_error(true)
@@ -193,6 +196,15 @@ fn parse_arguments(raw_args: Vec<String>) -> Result<Options, String> {
     })
 }
 
+fn settings_response(manifest: &Manifest, settings: &Map<String, Value>) -> Result<Value, String> {
+    let url = manifest.source_url(settings)?;
+    let origin = Url::parse(&url).map_err(|_| "invalid source URL")?.origin().ascii_serialization();
+    Ok(json!({
+        "valid": true, "sourceOrigin": origin, "settings": settings,
+        "savedSettings": persisted_settings(manifest, settings),
+    }))
+}
+
 fn run() -> Result<Value, String> {
     let Options { args, theme, locale, location, scene_protocol } = parse_arguments(env::args().collect())?;
     let location = location.as_ref();
@@ -217,6 +229,22 @@ fn run() -> Result<Value, String> {
     let package = parse_package(&bytes)?;
     match args[1].as_str() {
         "inspect" if args.len() == 3 => inspect(&package.manifest, &package.sha256),
+        "restore-settings" if args.len() == 4 || args.len() == 5 => {
+            let saved = read_bounded(Path::new(&args[3]), 16 * 1024)
+                .ok().and_then(|bytes| serde_json::from_slice::<Map<String, Value>>(&bytes).ok())
+                .unwrap_or_default();
+            // During an update the old package still exists at its installed path.
+            let saved = if let Some(previous) = args.get(4) {
+                let previous = read_bounded(Path::new(previous), MAX_PACKAGE_BYTES)
+                    .ok().and_then(|bytes| parse_package(&bytes).ok())
+                    .filter(|old| old.manifest.id == package.manifest.id);
+                previous.map(|old| persisted_settings(&old.manifest, &saved)).unwrap_or(saved)
+            } else {
+                saved
+            };
+            let settings = merge_valid_settings(&package.manifest, &saved);
+            settings_response(&package.manifest, &settings)
+        }
         "validate-settings" if args.len() == 4 => {
             let bytes = read_bounded(Path::new(&args[3]), 16 * 1024)?;
             let settings: Map<String, Value> =
@@ -233,15 +261,18 @@ fn run() -> Result<Value, String> {
             {
                 return Err("settings do not match manifest".into());
             }
-            Ok(json!({"valid": true}))
+            settings_response(&package.manifest, &settings)
         }
         "render" if args.len() == 5 || args.len() == 6 => {
             let settings = if args[3] == "-" {
                 package.manifest.default_settings()
             } else {
                 let bytes = read_bounded(Path::new(&args[3]), 16 * 1024)?;
-                serde_json::from_slice::<Map<String, Value>>(&bytes)
-                    .map_err(|_| "invalid settings JSON")?
+                let saved = serde_json::from_slice::<Map<String, Value>>(&bytes)
+                    .map_err(|_| "invalid settings JSON")?;
+                let mut settings = package.manifest.default_settings();
+                settings.extend(saved);
+                settings
             };
             let orientation = args[4].as_str();
             if !matches!(orientation, "portrait" | "landscape" | "square" | "all") {

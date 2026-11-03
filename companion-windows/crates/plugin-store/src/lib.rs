@@ -3,7 +3,7 @@
 
 use aimonitor_core::device::Location;
 use aimonitor_core::plugin::{
-    scene_for_protocol, status_scene_with_theme, status_text, Manifest, SceneLayout, Setting,
+    scene_for_protocol, status_scene_with_theme, status_text, Manifest, SceneLayout, Setting, SettingKind,
 };
 use aimonitor_core::protocol::{Language, Theme};
 use aimonitor_core::plugin_package::{parse_package, MAX_PACKAGE_BYTES};
@@ -309,7 +309,17 @@ impl PluginStore {
             return Err("plugin limit reached".into());
         }
         fs::create_dir_all(&self.root).map_err(|e| format!("plugin directory: {e}"))?;
-        let settings = self.read_settings(&package.manifest);
+        // Strip inherited URL defaults using the old manifest before updating it.
+        let saved = self.records.get(&id)
+            .map(|record| persisted_settings(&record.manifest, &record.settings))
+            .unwrap_or_else(|| self.read_settings(&package.manifest));
+        let settings = merge_valid_settings(&package.manifest, &saved);
+        // Persist inherited URLs before switching packages. If interrupted after
+        // activation, the old defaults must not look like custom URLs on restart.
+        // This representation also preserves the old package's effective settings.
+        if self.records.contains_key(&id) {
+            self.write_settings(&id, &saved)?;
+        }
         let target = self.package_path(&id);
         let staged = self.root.join(format!(".{id}.installing"));
         let backup = self.root.join(format!(".{id}.previous"));
@@ -328,6 +338,13 @@ impl PluginStore {
             }
             let _ = fs::remove_file(&staged);
             return Err(format!("activate plugin: {e}"));
+        }
+        if let Err(error) = self.write_settings(&id, &persisted_settings(&package.manifest, &settings)) {
+            let _ = fs::remove_file(&target);
+            if backup.exists() {
+                let _ = fs::rename(&backup, &target);
+            }
+            return Err(error);
         }
         let _ = fs::remove_file(&backup);
         let record = PluginRecord {
@@ -350,11 +367,23 @@ impl PluginStore {
         values: Map<String, Value>,
     ) -> Result<PluginInfo, String> {
         let record = self.records.get(id).ok_or("plugin not installed")?;
+        record.manifest.source_url(&values)?;
         let merged = merge_valid_settings(&record.manifest, &values);
         if merged.len() != values.len() || merged.iter().any(|(k, v)| values.get(k) != Some(v)) {
             return Err("invalid plugin settings".into());
         }
-        let bytes = serde_json::to_vec_pretty(&merged).map_err(|e| e.to_string())?;
+        self.write_settings(id, &persisted_settings(&record.manifest, &merged))?;
+        let record = self.records.get_mut(id).unwrap();
+        record.settings = merged;
+        record.data = None;
+        record.fetched_at = None;
+        record.last_attempt = None;
+        record.last_error = None;
+        Ok(record.info())
+    }
+
+    fn write_settings(&self, id: &str, values: &Map<String, Value>) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(values).map_err(|e| e.to_string())?;
         let target = self.settings_path(id);
         let staged = target.with_extension("part");
         let backup = self.root.join(format!(".{id}.settings.previous"));
@@ -374,13 +403,7 @@ impl PluginStore {
             return Err(format!("activate settings: {error}"));
         }
         let _ = fs::remove_file(&backup);
-        let record = self.records.get_mut(id).unwrap();
-        record.settings = merged;
-        record.data = None;
-        record.fetched_at = None;
-        record.last_attempt = None;
-        record.last_error = None;
-        Ok(record.info())
+        Ok(())
     }
 
     pub fn remove(&mut self, id: &str) -> Result<(), String> {
@@ -448,7 +471,21 @@ impl PluginStore {
     }
 }
 
-fn merge_valid_settings(manifest: &Manifest, saved: &Map<String, Value>) -> Map<String, Value> {
+/// Keep numeric and text preferences, but let unchanged URL settings follow
+/// the plugin author's default. Also migrates full settings saved by older apps.
+pub fn persisted_settings(manifest: &Manifest, settings: &Map<String, Value>) -> Map<String, Value> {
+    let mut saved = settings.clone();
+    for spec in &manifest.settings {
+        if matches!(spec.kind, SettingKind::Url) && saved.get(&spec.key) == Some(&spec.default) {
+            saved.remove(&spec.key);
+        }
+    }
+    saved
+}
+
+/// Recover each valid setting independently when loading or updating a plugin.
+/// Shared with the native Mac app through the bundled helper.
+pub fn merge_valid_settings(manifest: &Manifest, saved: &Map<String, Value>) -> Map<String, Value> {
     let mut result = manifest.default_settings();
     for setting in &manifest.settings {
         if let Some(value) = saved.get(&setting.key) {
@@ -695,6 +732,8 @@ pub fn fetch(
     }
     let url = manifest.request_url(settings, location)?;
     let config = ureq::Agent::config_builder()
+        .tls_config(ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
         .timeout_global(Some(Duration::from_secs(12)))
         .max_redirects(0)
         .user_agent("AI-Monitor-Plugin/1")
@@ -827,6 +866,179 @@ mod tests {
             "aimonitor-plugin-test-{}-{nonce}",
             std::process::id()
         ))
+    }
+
+    const URL_FIXTURE: &[u8] =
+        include_bytes!("../../../../tests/fixtures/display-plugin-url/plugin.json");
+
+    #[test]
+    fn url_fixture_parses_and_renders_all_layouts() {
+        let manifest = aimonitor_core::plugin::parse_manifest(URL_FIXTURE).unwrap();
+        let response: Value = serde_json::from_slice(include_bytes!(
+            "../../../../tests/fixtures/display-plugin-url/response.json"
+        )).unwrap();
+        let settings = manifest.default_settings();
+        assert_eq!(manifest.source_url(&settings).unwrap(), "https://example.org/api?scale=1");
+        for layout in [SceneLayout::Portrait, SceneLayout::Landscape, SceneLayout::Square] {
+            let scene = manifest.scene_at(layout, &response, &settings, Theme::Dark, "en", None).unwrap();
+            let nodes = scene["nodes"].as_array().unwrap();
+            assert!(nodes.iter().any(|n| n["text"] == "18 pts"));
+            assert!(nodes.iter().any(|n| n["text"] == "Active"));
+            assert!(nodes.iter().any(|n| n["text"] == "Level 62%"));
+        }
+    }
+
+    #[test]
+    fn url_defaults_follow_updates_but_custom_urls_survive() {
+        let old: Value = serde_json::from_slice(URL_FIXTURE).unwrap();
+        let id = old["id"].as_str().unwrap();
+        let mut new = old.clone();
+        new["version"] = json!("1.1.0");
+        new["settings"][2]["default"] = json!("https://example.org/v2?scale={scale}");
+        for custom in [false, true] {
+            for legacy in [false, true] {
+                let root = test_root();
+                let mut store = PluginStore::load(root.clone());
+                store.install(&package(URL_FIXTURE)).unwrap();
+                let mut settings = store.records[id].settings.clone();
+                settings.insert("label".into(), json!("Bonn"));
+                settings.insert("scale".into(), json!(7));
+                if custom {
+                    settings.insert("endpoint".into(), json!("https://custom.example/data?scale={scale}"));
+                }
+                store.configure(id, settings.clone()).unwrap();
+                let saved: Value = serde_json::from_slice(&fs::read(store.settings_path(id)).unwrap()).unwrap();
+                assert_eq!(saved.get("endpoint").is_some(), custom);
+                if legacy {
+                    fs::write(store.settings_path(id), serde_json::to_vec(&settings).unwrap()).unwrap();
+                }
+                let mut store = PluginStore::load(root.clone());
+                store.install(&package(new.to_string().as_bytes())).unwrap();
+                let store = PluginStore::load(root.clone());
+                let restored = &store.records[id].settings;
+                assert_eq!(restored["label"], "Bonn");
+                assert_eq!(restored["scale"], 7);
+                assert_eq!(restored["endpoint"], if custom {
+                    json!("https://custom.example/data?scale={scale}")
+                } else {
+                    new["settings"][2]["default"].clone()
+                });
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn update_keeps_old_package_if_settings_cannot_be_saved() {
+        let root = test_root();
+        let mut store = PluginStore::load(root.clone());
+        let info = store.install(&package(URL_FIXTURE)).unwrap();
+        let mut saved = info.settings.clone();
+        saved.insert("label".into(), json!("Bonn"));
+        store.configure(&info.id, saved.clone()).unwrap();
+        let mut new: Value = serde_json::from_slice(URL_FIXTURE).unwrap();
+        new["version"] = json!("1.1.0");
+        new["settings"][2]["default"] = json!("https://new.example/v2");
+        // Force a real persistence failure on both Unix and Windows.
+        fs::create_dir(store.settings_path(&info.id).with_extension("part")).unwrap();
+        assert!(store.install(&package(new.to_string().as_bytes())).is_err());
+        assert_eq!(store.records[&info.id].info().sha256, info.sha256);
+        let reloaded = PluginStore::load(root.clone());
+        assert_eq!(reloaded.records[&info.id].info().sha256, info.sha256);
+        assert_eq!(reloaded.records[&info.id].settings, saved);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_update_after_package_activation_does_not_pin_old_url() {
+        let root = test_root();
+        let mut store = PluginStore::load(root.clone());
+        let info = store.install(&package(URL_FIXTURE)).unwrap();
+        let mut saved = info.settings.clone();
+        saved.insert("label".into(), json!("Bonn"));
+        // Start from a full legacy file. Fail staging AFTER install's early
+        // settings write, so the test catches removal of that write.
+        fs::write(store.settings_path(&info.id), serde_json::to_vec(&saved).unwrap()).unwrap();
+        let mut store = PluginStore::load(root.clone());
+        let mut new: Value = serde_json::from_slice(URL_FIXTURE).unwrap();
+        new["version"] = json!("1.1.0");
+        new["settings"][2]["default"] = json!("https://new.example/v2");
+        let staged = root.join(format!(".{}.installing", info.id));
+        fs::create_dir(&staged).unwrap();
+        assert!(store.install(&package(new.to_string().as_bytes())).is_err());
+        let persisted: Value = serde_json::from_slice(
+            &fs::read(store.settings_path(&info.id)).unwrap()
+        ).unwrap();
+        assert!(persisted.get("endpoint").is_none());
+        let unchanged = PluginStore::load(root.clone());
+        assert_eq!(unchanged.records[&info.id].info().sha256, info.sha256);
+        assert_eq!(unchanged.records[&info.id].settings, saved);
+        fs::remove_dir(&staged).unwrap();
+        fs::rename(store.package_path(&info.id), root.join(format!(".{}.previous", info.id))).unwrap();
+        fs::write(store.package_path(&info.id), package(new.to_string().as_bytes())).unwrap();
+        // Crash here, before the post-activation settings write.
+        let reloaded = PluginStore::load(root.clone());
+        assert_eq!(reloaded.records[&info.id].settings["endpoint"], "https://new.example/v2");
+        assert_eq!(reloaded.records[&info.id].settings["label"], "Bonn");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_url_recovers_without_resetting_other_preferences() {
+        let root = test_root();
+        let mut store = PluginStore::load(root.clone());
+        let info = store.install(&package(URL_FIXTURE)).unwrap();
+        let mut saved = info.settings.clone();
+        saved.insert("endpoint".into(), json!("http://invalid.example/"));
+        saved.insert("label".into(), json!("Bonn"));
+        saved.insert("scale".into(), json!(7));
+        fs::write(store.settings_path(&info.id), serde_json::to_vec(&saved).unwrap()).unwrap();
+        let store = PluginStore::load(root.clone());
+        let restored = &store.records[&info.id].settings;
+        assert_eq!(restored["endpoint"], info.settings["endpoint"]);
+        assert_eq!(restored["label"], "Bonn");
+        assert_eq!(restored["scale"], 7);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_endpoint_survives_restart_update_and_rejects_old_fetches() {
+        let mut manifest: Value = serde_json::from_slice(include_bytes!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        )).unwrap();
+        manifest["formatVersion"] = json!(4);
+        let template = manifest["source"].as_object_mut().unwrap().remove("url").unwrap();
+        manifest["source"]["urlSetting"] = json!("endpoint");
+        manifest["settings"].as_array_mut().unwrap().push(json!({
+            "key":"endpoint", "label":"Data URL", "kind":"url", "default":template
+        }));
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer.start_file("plugin.json", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let package = writer.finish().unwrap().into_inner();
+        let root = test_root();
+        let id = "org.aimonitor.fixture";
+        let mut store = PluginStore::load(root.clone());
+        store.install(&package).unwrap();
+        let assigned = HashSet::from([id.to_owned()]);
+        let old = store.due_fetches(&assigned).remove(0);
+        let mut settings = store.records[id].settings.clone();
+        settings.insert("endpoint".into(), json!("https://new.example:8443/metrics?scale={scale}"));
+        assert_eq!(store.configure(id, settings.clone()).unwrap().source_origin, "https://new.example:8443");
+        assert!(!store.apply_fetch(&old, Ok(json!({}))));
+        assert!(store.records[id].data.is_none());
+        let mut invalid = settings.clone();
+        invalid.insert("endpoint".into(), json!("http://new.example/"));
+        assert!(store.configure(id, invalid).is_err());
+        assert_eq!(store.records[id].settings, settings);
+        let due = store.due_fetches(&assigned).remove(0);
+        assert_eq!(due.manifest.source_url(&due.settings).unwrap(), "https://new.example:8443/metrics?scale=1");
+        let mut restored = PluginStore::load(root.clone());
+        assert_eq!(restored.records[id].settings, settings);
+        restored.install(&package).unwrap();
+        assert_eq!(restored.records[id].settings, settings);
+        assert_eq!(restored.records[id].info().source_origin, "https://new.example:8443");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
