@@ -20,13 +20,11 @@ extension SettingsWindowController {
     }
 
     func buildViewsStepContent() -> [NSView] {
-        viewsListStack = NSStackView()
-        viewsListStack.orientation = .vertical
-        viewsListStack.alignment = .leading
-        viewsListStack.spacing = 6
-
-        viewsAddButton = NSButton(title: L("views.add"), target: self, action: #selector(addDisplayView))
-        viewsAddButton.bezelStyle = .rounded
+        viewsEditor = DisplayViewEditor(frame: .zero)
+        viewsEditor.onAssign = { [weak self] index, content in self?.assignDisplayView(index, content: content) }
+        viewsEditor.onAdd = { [weak self] in self?.addDisplayView() }
+        viewsEditor.onRemove = { [weak self] index in self?.removeDisplayView(index) }
+        viewsEditor.onShow = { [weak self] index in self?.showDisplayView(index) }
 
         viewsModePopup = NSPopUpButton()
         viewsModePopup.addItems(withTitles: [L("views.manual"), L("views.automatic"), L("views.intelligent")])
@@ -61,13 +59,13 @@ extension SettingsWindowController {
         viewsFirmwareHint.textColor = .systemOrange
 
         updateViewsSection(force: true)
-        return [viewsListStack, viewsAddButton, modeRow, viewsIntervalRow, viewsIntelligentHint, viewsFirmwareHint]
+        return [viewsEditor, modeRow, viewsIntervalRow, viewsIntelligentHint, viewsFirmwareHint]
     }
 
-    /// Baut die Fensterzeilen nur neu, wenn sich Liste, Auswahl oder Modus
-    /// geändert haben — sonst würde jedes `update()` offene Menüs schließen.
-    func updateViewsSection(force: Bool = false) {
-        guard viewsListStack != nil else { return }
+    /// The editor compares its contents before rebuilding controls. Periodic
+    /// updates and touch events therefore keep keyboard focus and drag sources.
+    func updateViewsSection(force _: Bool = false) {
+        guard viewsEditor != nil else { return }
         let settings = Settings.shared
         viewsModePopup.selectItem(at: ["manual", "automatic", "intelligent"].firstIndex(of: settings.displayViewMode) ?? 0)
         viewsIntervalRow.isHidden = settings.displayViewMode != "automatic"
@@ -75,21 +73,13 @@ extension SettingsWindowController {
         if viewsIntervalField.currentEditor() == nil {
             viewsIntervalField.integerValue = settings.displayViewInterval
         }
-        viewsAddButton.isEnabled = settings.displayViews.count < Settings.maxDisplayViews
         let lacksWindows = monitor?.connectedFirmwareLacksViews ?? false
         let lacksScenes = settings.displayViews.contains(where: { DisplayPlugins.id(from: $0) != nil })
             && (monitor?.connectedFirmwareLacksPluginScenes ?? false)
         viewsFirmwareHint.stringValue = lacksScenes ? L("plugins.firmware") : L("views.firmware")
         viewsFirmwareHint.isHidden = !lacksWindows && !lacksScenes
-
-        let signature = "\(settings.displayViews)|\(settings.activeDisplayView)|\(settings.displayViewMode)|\(DisplayPlugins.shared.records.keys.sorted())"
-        guard force || signature != viewsSignature else { return }
-        viewsSignature = signature
-        viewsListStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (index, content) in settings.displayViews.enumerated() {
-            let shown = settings.displayViewMode != "automatic" && index == settings.activeDisplayView
-            viewsListStack.addArrangedSubview(buildDisplayViewRow(index: index, content: content, shown: shown))
-        }
+        viewsEditor.update(contents: settings.displayViews, items: viewContents.map(displayViewItem),
+                           active: settings.activeDisplayView, mode: settings.displayViewMode)
     }
 
     private func displayViewTitle(_ content: String) -> String {
@@ -102,91 +92,60 @@ extension SettingsWindowController {
         return CodexBarProvider.normalized(content).displayLabel
     }
 
-    private func buildDisplayViewRow(index: Int, content: String, shown: Bool) -> NSView {
-        let label = NSTextField(labelWithString: L("views.window", index + 1))
-        label.font = NSFont.appFont(.body, weight: shown ? .semibold : .regular)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.widthAnchor.constraint(equalToConstant: 100).isActive = true
-
-        let popup = NSPopUpButton()
-        popup.addItems(withTitles: viewContents.map(displayViewTitle))
-        popup.selectItem(at: viewContents.firstIndex(of: content) ?? 0)
-        popup.tag = index
-        popup.target = self
-        popup.action = #selector(displayViewContentChosen(_:))
-        popup.setAccessibilityLabel(L("views.window", index + 1))
-        popup.translatesAutoresizingMaskIntoConstraints = false
-        popup.widthAnchor.constraint(equalToConstant: 180).isActive = true
-
-        var views: [NSView] = [label, popup]
-        // Im manuellen Modus wählt „Anzeigen" das Fenster auf dem Display.
-        if Settings.shared.displayViewMode != "automatic" {
-            if shown {
-                let current = NSTextField(labelWithString: L("views.active"))
-                current.font = NSFont.appFont(.subheadline)
-                current.textColor = .secondaryLabelColor
-                views.append(current)
-            } else {
-                let show = NSButton(title: L("views.show"), target: self, action: #selector(showDisplayView(_:)))
-                show.bezelStyle = .rounded
-                show.controlSize = .small
-                show.tag = index
-                views.append(show)
-            }
+    private func displayViewItem(_ content: String) -> DisplayViewEditorItem {
+        let glyph: String
+        let symbol: String
+        switch content {
+        case Settings.clockView: glyph = "◷"; symbol = "clock"
+        case "claude": glyph = "✳"; symbol = "asterisk"
+        case "codex": glyph = "◎"; symbol = "circle.dotted"
+        case "antigravity": glyph = "✦"; symbol = "sparkles"
+        case "gemini": glyph = "✧"; symbol = "sparkle"
+        case "copilot": glyph = "◆"; symbol = "diamond.fill"
+        case "cursor": glyph = "⬡"; symbol = "hexagon"
+        case ClaudeCodeWindow.view: glyph = "✳"; symbol = "terminal"
+        default: glyph = "◇"; symbol = "puzzlepiece.extension"
         }
-        // Fenster 1 bleibt immer bestehen.
-        if index > 0 {
-            let remove = NSButton(title: L("views.remove"), target: self, action: #selector(removeDisplayView(_:)))
-            remove.bezelStyle = .rounded
-            remove.controlSize = .small
-            remove.tag = index
-            remove.setAccessibilityLabel(L("views.remove.a11y", index + 1))
-            views.append(remove)
-        }
-
-        let row = NSStackView(views: views)
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-        return row
+        return DisplayViewEditorItem(content: content, title: displayViewTitle(content), glyph: glyph, symbol: symbol)
     }
 
-    /// Asynchron, weil die Änderung die Zeilen neu aufbaut — auch die, deren
-    /// Control gerade seine Aktion auslöst.
-    private func applyDisplayViews(_ views: [String], active: Int? = nil) {
+    /// Defer changes until the originating click/drop has finished, and read the
+    /// latest settings inside that block rather than queuing stale snapshots.
+    private func editDisplayViews(_ edit: @escaping (inout DisplayViewEditorState) -> Void) {
         DispatchQueue.main.async { [weak self] in
-            self?.monitor?.updateDisplayViews(views, active: active)
+            guard let self, let monitor = self.monitor else { return }
+            let settings = Settings.shared
+            var state = DisplayViewEditorState(contents: settings.displayViews,
+                                               activeIndex: settings.activeDisplayView,
+                                               selectedIndex: self.viewsEditor.selectedIndex)
+            edit(&state)
+            if state.contents != settings.displayViews || state.activeIndex != settings.activeDisplayView {
+                monitor.updateDisplayViews(state.contents, active: state.activeIndex)
+            }
+            self.updateViewsSection()
+            self.viewsEditor.selectWindow(state.selectedIndex)
         }
     }
 
-    @objc private func addDisplayView() {
-        var views = Settings.shared.displayViews
-        guard views.count < Settings.maxDisplayViews else { return }
-        views.append(Settings.clockView)
-        applyDisplayViews(views)
+    private func addDisplayView() {
+        editDisplayViews { $0.add(clock: Settings.clockView, limit: Settings.maxDisplayViews) }
     }
 
-    @objc private func removeDisplayView(_ sender: NSButton) {
-        var views = Settings.shared.displayViews
-        let index = sender.tag
-        guard index > 0, index < views.count else { return }
-        views.remove(at: index)
-        var active = Settings.shared.activeDisplayView
-        if active == index { active = 0 } else if active > index { active -= 1 }
-        applyDisplayViews(views, active: active)
+    private func removeDisplayView(_ index: Int) {
+        editDisplayViews { $0.remove(at: index) }
     }
 
-    @objc private func displayViewContentChosen(_ sender: NSPopUpButton) {
-        var views = Settings.shared.displayViews
-        let index = sender.tag
-        guard index < views.count, sender.indexOfSelectedItem >= 0 else { return }
-        guard sender.indexOfSelectedItem < viewContents.count else { return }
-        views[index] = viewContents[sender.indexOfSelectedItem]
-        applyDisplayViews(views)
+    private func assignDisplayView(_ index: Int, content: String) {
+        editDisplayViews { [weak self] state in
+            state.assign(content, to: index, available: self?.viewContents ?? [])
+        }
     }
 
-    @objc private func showDisplayView(_ sender: NSButton) {
-        applyDisplayViews(Settings.shared.displayViews, active: sender.tag)
+    private func showDisplayView(_ index: Int) {
+        editDisplayViews { state in
+            guard Settings.shared.displayViewMode != "automatic" else { return }
+            state.show(index)
+        }
     }
 
     @objc private func displayViewModeChosen() {

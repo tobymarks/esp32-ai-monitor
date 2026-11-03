@@ -56,6 +56,8 @@ SWIFT_SOURCES=(
   Sources/SettingsWindow+Overview.swift
   Sources/SettingsWindow+Display.swift
   Sources/SettingsWindow+Views.swift
+  Sources/DisplayViewEditor.swift
+  Sources/DisplayViewEditorState.swift
   Sources/SettingsWindow+Connection.swift
   Sources/SettingsWindow+Updates.swift
   Sources/SettingsWindow+Diagnostics.swift

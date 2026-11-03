@@ -153,6 +153,9 @@ extension SettingsWindowController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
+        // Let the native editor wrap its cards within the existing page width.
+        viewsStep.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        viewsEditor.widthAnchor.constraint(equalTo: viewsStep.widthAnchor).isActive = true
         return stack
     }
 
