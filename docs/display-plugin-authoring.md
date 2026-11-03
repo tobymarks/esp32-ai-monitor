@@ -81,18 +81,20 @@ window manager has eight slots and can place the same plugin in several slots.
 
 ## Data and settings
 
-The required `source` object has an HTTPS `url` and `intervalSeconds` between
-60 and 86400; format version 3 allows 20 seconds for fast-moving data. Choose
+The required `source` object defines an HTTPS endpoint (`url`, or
+`urlSetting` in format 4) and `intervalSeconds` between 60 and 86400;
+formats 3 and 4 allow 20 seconds for fast-moving data. Choose
 the longest interval that serves the view and respect the provider's limits. It returns one JSON document of at most 64 KiB. Source requests
 have a 12 second timeout and do not follow redirects. Authentication headers,
 multiple sources, and executable transforms are outside format version 1.
 
-For formats 1 and 2, declare `settings` as an array, even when empty. Each setting has `key`,
+For all formats, declare `settings` as an array, even when empty. Each setting has `key`,
 `label`, `kind` (`number` or `text`; format 4 also supports `url`), `default`, and optional `min` and `max`.
 The settings UI is generated from this list. Only numeric settings may appear
-as `{key}` placeholders in the source URL; the URL's HTTPS origin must remain
-fixed. Text settings can still supply labels in the scene. Keep secrets out of
-the manifest and URL: version 1 has no secret store.
+as `{key}` placeholders in the source URL; replacing placeholders must keep
+its HTTPS origin fixed. Format 4 additionally allows the user to choose another
+origin through a URL setting (see below). Text settings can still supply labels
+in the scene. Keep secrets out of the manifest and URL: there is no secret store.
 
 Declare `bindings` as an array. A binding reads a dotted JSON path such as
 `current.temperature_2m` or an array index such as
@@ -229,15 +231,20 @@ origin. A user-selected URL may change the origin; the installed plugin's
 source-origin label updates after saving and after restart. The endpoint must
 return the JSON structure expected by the plugin's existing bindings.
 
+The URL setting must have a valid HTTPS `default`; an empty "bring your own
+endpoint" default is not supported. Enter internationalized domain names as
+Punycode (for example, `xn--bcher-kva.example` for `bücher.example`).
 URLs are limited to 2048 printable ASCII bytes without whitespace or
-backslashes. Only HTTPS is accepted, without embedded credentials or a
-fragment. Unknown placeholders, non-URL source settings, multiple sources,
+backslashes. The settings UI trims surrounding whitespace before saving.
+Only HTTPS is accepted, without embedded credentials or a fragment. Unknown placeholders, non-URL source settings, multiple sources,
 and numeric bounds on URL settings are rejected. URL settings cannot be used
 as display bindings. Settings are validated before saving and before each
 request. Configuring a new URL clears cached data and attention baselines;
 responses started with earlier settings are discarded.
 
-All data-source requests use the operating system's certificate trust store.
+All data-source requests, including those for formats 1–3, use the operating
+system's certificate trust store. Plugin package downloads and location searches
+continue to use the bundled certificate roots.
 A private HTTPS endpoint can use a local CA trusted by that operating system;
 an untrusted self-signed certificate is rejected. Certificate verification is
 always enabled. Redirects, custom authentication headers, secret storage,
@@ -245,16 +252,17 @@ multiple requests, and executable plugin code remain unsupported. The minimum
 refresh interval is 20 seconds in formats 3 and 4, and 60 in formats 1 and 2.
 
 Formats 1, 2, and 3 continue to load with their existing contracts. Older apps
-reject format 4 with an upgrade message. This change builds on upstream
-#23/#24/#25 and retains location requirements, lists, conversions, and umlauts.
+reject format 4 with an upgrade message.
 A format-4 URL template may use `{location.latitude}` and
 `{location.longitude}` only when the plugin declares `requires: ["location"]`.
 No firmware update is required for configurable URLs: scenes still work with
 protocol 1 through the inherited text adaptation, and with protocol 2.
 
-Separate format-4 test packages are Weather 1.5.0 (`weather-url.aimplugin`)
-and Claude Status 1.2.0 (`status-claude-url.aimplugin`). Existing format-1/2
-archives remain available for older apps.
+Unchanged URL settings follow the plugin's default after an update. Custom
+URLs are retained when valid for the new manifest. An existing saved URL equal
+to the previous default is treated as inherited, including settings written
+by older companion versions. Numeric and text preferences remain saved.
+On load and update, an invalid setting falls back independently to its default.
 
 ## Layouts
 

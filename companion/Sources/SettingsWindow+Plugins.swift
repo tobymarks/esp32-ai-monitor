@@ -45,6 +45,7 @@ extension SettingsWindowController {
         let hasLocation = DisplayPlugins.currentLocation() != nil
         let signature = "\(hasLocation)|" + records.keys.sorted().map { id in
             "\(id):\(records[id]?.info["version"] as? String ?? ""):"
+                + "\(records[id]?.info["sourceOrigin"] as? String ?? ""):"
                 + "\(records[id]?.fetchedAt?.timeIntervalSince1970 ?? 0):\(records[id]?.error ?? "")"
         }.joined(separator: "|")
         guard force || signature != pluginsSignature else { return }
@@ -191,6 +192,8 @@ extension SettingsWindowController {
                     return
                 }
                 values[key] = number
+            } else if spec["kind"] as? String == "url" {
+                values[key] = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             } else {
                 values[key] = field.stringValue
             }

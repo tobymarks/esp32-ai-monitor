@@ -320,3 +320,11 @@
 
 "plugins.requiresNewer" = "Dieses Plugin benötigt eine neuere Version von AI Monitor (Formatversion %@).";
 "plugins.rulesRequireV2" = "attentionRules benötigen formatVersion 2.";
+
+"plugins.sourceAscii" = "Die Daten-URL darf höchstens 2048 ASCII-Zeichen und keine Leerzeichen oder Backslashes enthalten. Domains mit Umlauten bitte als Punycode eingeben.";
+"plugins.sourceHttps" = "Die Daten-URL muss HTTPS verwenden und darf keine Zugangsdaten oder Fragmente (#) enthalten.";
+"plugins.sourceUrl" = "Die Daten-URL ist ungültig. Bitte eine vollständige HTTPS-Adresse eingeben.";
+"plugins.sourceNumeric" = "In der Daten-URL sind nur Platzhalter für numerische Einstellungen erlaubt.";
+"plugins.sourcePlaceholder" = "Die Daten-URL enthält einen unbekannten Platzhalter.";
+"plugins.sourceOrigin" = "Platzhalter dürfen Host und Port der Daten-URL nicht verändern.";
+"plugins.settingUrl" = "Bitte eine gültige HTTPS-Daten-URL eingeben.";

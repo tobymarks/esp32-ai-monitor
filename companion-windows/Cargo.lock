@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "aimonitor"
-version = "1.4.3-beta.1"
+version = "1.4.2"
 dependencies = [
  "aimonitor-core",
  "aimonitor-flash",
@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "aimonitor-core"
-version = "1.4.3-beta.1"
+version = "1.4.2"
 dependencies = [
  "chrono",
  "serde",
@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "aimonitor-flash"
-version = "1.4.3-beta.1"
+version = "1.4.2"
 dependencies = [
  "espflash",
  "serde",
@@ -66,18 +66,19 @@ dependencies = [
 
 [[package]]
 name = "aimonitor-plugin-host"
-version = "1.4.3-beta.1"
+version = "1.4.2"
 dependencies = [
  "aimonitor-core",
  "aimonitor-plugin-store",
  "serde_json",
  "ureq",
  "url",
+ "zip",
 ]
 
 [[package]]
 name = "aimonitor-plugin-store"
-version = "1.4.3-beta.1"
+version = "1.4.2"
 dependencies = [
  "aimonitor-core",
  "chrono",
@@ -90,7 +91,7 @@ dependencies = [
 
 [[package]]
 name = "aimonitor-serial"
-version = "1.4.3-beta.1"
+version = "1.4.2"
 dependencies = [
  "aimonitor-core",
  "chrono",

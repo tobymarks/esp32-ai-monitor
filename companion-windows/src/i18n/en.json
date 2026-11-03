@@ -419,5 +419,12 @@
   "panel.fix.running.detail": "The firmware for {from} does not match the display. The app is now flashing the firmware for {to}.",
   "panel.mismatch.title": "Firmware does not match the display",
   "panel.mismatch.detail": "Fitted: {panel}, installed: firmware for {firmware}.",
-  "panel.mismatch.action": "Flash matching firmware"
+  "panel.mismatch.action": "Flash matching firmware",
+  "plugins.sourceAscii": "The data URL must contain at most 2048 ASCII characters without whitespace or backslashes. Enter internationalized domains as Punycode.",
+  "plugins.sourceHttps": "The data URL must use HTTPS without embedded credentials or fragments (#).",
+  "plugins.sourceUrl": "The data URL is invalid. Enter a complete HTTPS address.",
+  "plugins.sourceNumeric": "The data URL only supports placeholders for numeric settings.",
+  "plugins.sourcePlaceholder": "The data URL contains an unknown placeholder.",
+  "plugins.sourceOrigin": "Placeholders must not change the data URL's host or port.",
+  "plugins.settingUrl": "Enter a valid HTTPS data URL."
 }

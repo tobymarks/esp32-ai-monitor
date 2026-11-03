@@ -27,7 +27,13 @@ function PluginSettings({ t, locale, plugin, hasLocation, onRefresh }: { t: Tran
     setBusy(true);
     setError(null);
     try {
-      await configurePlugin(plugin.id, values);
+      const normalized = { ...values };
+      for (const spec of plugin.settingsSpec) {
+        const value = normalized[spec.key];
+        if (spec.kind === "url" && typeof value === "string") normalized[spec.key] = value.trim();
+      }
+      const updated = await configurePlugin(plugin.id, normalized);
+      setValues(updated.settings);
       onRefresh();
     } catch (e) {
       setError(pluginError(e, t));

@@ -142,6 +142,27 @@ final class DisplayPlugins {
             if detail.contains("attentionRules require formatVersion 2") {
                 throw failure(L("plugins.rulesRequireV2"))
             }
+            if detail.contains("source URL must be printable ASCII without whitespace (max 2048 bytes)") {
+                throw failure(L("plugins.sourceAscii"))
+            }
+            if detail.contains("source must be an HTTPS URL without credentials or fragment") {
+                throw failure(L("plugins.sourceHttps"))
+            }
+            if detail.contains("invalid source URL") {
+                throw failure(L("plugins.sourceUrl"))
+            }
+            if detail.contains("URL placeholders must be numeric") {
+                throw failure(L("plugins.sourceNumeric"))
+            }
+            if detail.contains("unknown URL placeholder") {
+                throw failure(L("plugins.sourcePlaceholder"))
+            }
+            if detail.contains("source origin changed") {
+                throw failure(L("plugins.sourceOrigin"))
+            }
+            if detail.contains("setting must be a URL") {
+                throw failure(L("plugins.settingUrl"))
+            }
             throw failure(detail.isEmpty ? "Plugin helper failed" : String(detail.prefix(200)))
         }
         guard bytes.count <= 64 * 1024,
@@ -169,23 +190,11 @@ final class DisplayPlugins {
             guard var info = try? Self.helper(["inspect", file.path]),
                   let id = info["id"] as? String,
                   file.deletingPathExtension().lastPathComponent == id else { continue }
-            let defaults = info["settings"] as? [String: Any] ?? [:]
-            let saved = (try? Data(contentsOf: settingsPath(id))).flatMap {
-                try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
-            } ?? defaults
-            var settings = defaults
-            for key in defaults.keys { if let value = saved[key] { settings[key] = value } }
-            let check = root.appendingPathComponent(".settings-check-\(UUID().uuidString)")
-            if let bytes = try? JSONSerialization.data(withJSONObject: settings) {
-                try? bytes.write(to: check)
-                if let validation = try? Self.helper(["validate-settings", file.path, check.path]) {
-                    info["sourceOrigin"] = validation["sourceOrigin"]
-                } else {
-                    settings = defaults
-                }
-            }
-            try? FileManager.default.removeItem(at: check)
-            if let bytes = try? JSONSerialization.data(withJSONObject: settings) {
+            guard let restored = try? Self.helper(["restore-settings", file.path, settingsPath(id).path]),
+                  let settings = restored["settings"] as? [String: Any],
+                  let saved = restored["savedSettings"] as? [String: Any] else { continue }
+            info["sourceOrigin"] = restored["sourceOrigin"]
+            if let bytes = try? JSONSerialization.data(withJSONObject: saved) {
                 try? bytes.write(to: settingsPath(id), options: .atomic)
             }
             records[id] = DisplayPluginRecord(packageURL: file, info: info, settings: settings)
@@ -239,24 +248,14 @@ final class DisplayPlugins {
                 }
                 let target = root.appendingPathComponent("\(id).aimplugin")
                 let backup = root.appendingPathComponent(".\(id).previous")
-                let defaults = info["settings"] as? [String: Any] ?? [:]
                 let settingsFile = root.appendingPathComponent("\(id).settings.json")
-                let saved = (try? Data(contentsOf: settingsFile)).flatMap {
-                    try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
-                } ?? defaults
-                var settings = defaults
-                for key in defaults.keys { if let value = saved[key] { settings[key] = value } }
-                let serialized = try JSONSerialization.data(withJSONObject: settings)
-                let check = root.appendingPathComponent(".settings-check-\(UUID().uuidString)")
-                defer { try? FileManager.default.removeItem(at: check) }
-                try serialized.write(to: check)
-                do {
-                    let validation = try Self.helper(["validate-settings", staged.path, check.path])
-                    info["sourceOrigin"] = validation["sourceOrigin"]
-                } catch {
-                    settings = defaults
+                let restored = try Self.helper(["restore-settings", staged.path, settingsFile.path, target.path])
+                guard let settings = restored["settings"] as? [String: Any],
+                      let saved = restored["savedSettings"] as? [String: Any] else {
+                    throw Self.failure("Invalid plugin helper response")
                 }
-                let settingsData = try JSONSerialization.data(withJSONObject: settings)
+                info["sourceOrigin"] = restored["sourceOrigin"]
+                let settingsData = try JSONSerialization.data(withJSONObject: saved)
                 if FileManager.default.fileExists(atPath: target.path) {
                     try? FileManager.default.removeItem(at: backup)
                     try FileManager.default.moveItem(at: target, to: backup)
@@ -293,7 +292,11 @@ final class DisplayPlugins {
         let bytes = try JSONSerialization.data(withJSONObject: values)
         try bytes.write(to: staged)
         let validation = try Self.helper(["validate-settings", record.packageURL.path, staged.path])
-        try bytes.write(to: target, options: .atomic)
+        guard let saved = validation["savedSettings"] as? [String: Any] else {
+            throw Self.failure("Invalid plugin helper response")
+        }
+        let savedBytes = try JSONSerialization.data(withJSONObject: saved)
+        try savedBytes.write(to: target, options: .atomic)
         record.settings = values
         record.info["sourceOrigin"] = validation["sourceOrigin"]
         record.generation = UUID()
