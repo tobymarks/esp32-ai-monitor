@@ -59,8 +59,16 @@ jobs:
         with:
           python-version: '3.11'
 
+      # pioarduino 6.2.0.post1 haelt sich selbst fuer zu alt fuer die S3-Plattform
+      # (">=6.2.0"), entfernt sie mitten im Build und installiert sie neu – dabei
+      # verschwinden die schon gebauten CYD-Binaries. Die Plattform installiert den
+      # Kern nur nach, wenn keine passende Version vorhanden ist → 6.2.0 vorab
+      # festhalten (wie in evcc-garage-display).
       - name: Install PlatformIO
-        run: pip install platformio esptool
+        run: |
+          pip install platformio esptool
+          [ -x ~/.platformio/penv/bin/python ] || python -m venv ~/.platformio/penv
+          ~/.platformio/penv/bin/pip install "pioarduino==6.2.0"
 
       - name: Setup Rust for plugin scene contract
         uses: dtolnay/rust-toolchain@stable
