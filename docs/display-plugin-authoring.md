@@ -13,10 +13,11 @@ the archive root. The uncompressed UTF-8 manifest may be at most 64 KiB; the
 whole ZIP may be at most 256 KiB. The test fixture demonstrates the format
 without shipping a plugin with the companion.
 
-Set `formatVersion` to `1` for plugins without intelligent-switch rules or `2`
-when using `attentionRules`. Format 1 must omit the field entirely, even when
-the list would be empty; including it reports `attentionRules require formatVersion 2`.
-Each new manifest field after format 2 requires a
+Set `formatVersion` to `1` for plugins without intelligent-switch rules, `2`
+when using `attentionRules`, or `3` when using `requires`. Format 1 must omit
+`attentionRules` entirely, even when the list would be empty; including it
+reports `attentionRules require formatVersion 2`. Formats 1 and 2 must likewise
+omit `requires`. Each new manifest field after format 3 requires a
 new format version. The existing `localizations` and `lightScenes` fields remain
 valid in version 1 for compatibility with packages already published. New
 companions check `formatVersion` before strict field validation, so a package
@@ -90,6 +91,41 @@ Declare `bindings` as an array. A binding reads a dotted JSON path such as
 `text`, `integer`, `decimal1`, or `map`; `suffix`, `map`, and `fallback` control
 the displayed result. A missing field uses the fallback. Formatted results
 must fit 64 printable ASCII characters.
+
+## Display location
+
+Each display has one location, set by the user under **Display** in the
+companion and stored in that display's profile. A format version 3 plugin asks
+for it with:
+
+```json
+"requires": ["location"]
+```
+
+The source URL may then contain `{location.latitude}` and
+`{location.longitude}`. The companion inserts the coordinates with three
+decimals (roughly 100 m); the HTTPS origin must still remain fixed. Bindings
+can read `location.name`, `location.latitude`, and `location.longitude`. The
+name is transliterated to printable ASCII for the device (`Köln` becomes
+`Koeln`) and is missing when the user entered coordinates only, so give that
+binding a sensible fallback. In such a plugin a source field named `location`
+is not readable through these three paths.
+
+Do not add your own latitude, longitude, or city settings: a computer can
+drive several displays in different places, and plugin settings are shared by
+all of them. Without a stored location the window shows a hint instead of
+requesting data, and the companion fetches again when the user changes the
+location or connects another display. The install preview tells the user that
+the plugin sends the display location to your source origin. Test with:
+
+```sh
+cargo run --quiet --manifest-path companion-windows/Cargo.toml \
+  -p aimonitor-plugin-host -- render path/to/my-plugin.aimplugin - all \
+  '--location={"name":"Berlin","latitude":52.52,"longitude":13.41}'
+```
+
+Companions released before this extension report that the package needs a
+newer AI Monitor app.
 
 ## Optional intelligent-switch triggers
 

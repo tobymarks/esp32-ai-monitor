@@ -14,6 +14,77 @@ use std::collections::{BTreeMap, HashSet};
 
 pub const DEFAULT_BRIGHTNESS: i64 = 80;
 
+/// Standort eines Displays. Plugins mit `requires: ["location"]` erhalten ihn
+/// für Abruf-URL und Bindings; er verlässt die App nur über deren Quelle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Location {
+    /// Anzeigename wie „München“; darf leer sein (nur Koordinaten).
+    #[serde(default)]
+    pub name: String,
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+impl Location {
+    pub fn is_valid(&self) -> bool {
+        self.latitude.is_finite()
+            && self.longitude.is_finite()
+            && (-90.0..=90.0).contains(&self.latitude)
+            && (-180.0..=180.0).contains(&self.longitude)
+            && self.name.chars().count() <= 80
+            && !self.name.chars().any(char::is_control)
+    }
+
+    /// Name für das Display: Die Firmware nimmt in Szenen nur druckbares
+    /// ASCII an, deshalb werden Umlaute und gängige Akzente umgeschrieben.
+    pub fn display_name(&self) -> String {
+        let mut out = String::new();
+        for c in self.name.chars() {
+            match c {
+                'ä' => out.push_str("ae"),
+                'ö' => out.push_str("oe"),
+                'ü' => out.push_str("ue"),
+                'Ä' => out.push_str("Ae"),
+                'Ö' => out.push_str("Oe"),
+                'Ü' => out.push_str("Ue"),
+                'ß' => out.push_str("ss"),
+                'æ' => out.push_str("ae"),
+                'ø' => out.push('o'),
+                'Ø' => out.push('O'),
+                'à' | 'á' | 'â' | 'ã' | 'å' | 'ā' | 'ă' | 'ą' => out.push('a'),
+                'À' | 'Á' | 'Â' | 'Ã' | 'Å' => out.push('A'),
+                'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ė' | 'ę' | 'ě' => out.push('e'),
+                'È' | 'É' | 'Ê' | 'Ë' => out.push('E'),
+                'ì' | 'í' | 'î' | 'ï' | 'ī' | 'ı' => out.push('i'),
+                'Ì' | 'Í' | 'Î' | 'Ï' | 'İ' => out.push('I'),
+                'ò' | 'ó' | 'ô' | 'õ' | 'ő' => out.push('o'),
+                'Ò' | 'Ó' | 'Ô' | 'Õ' => out.push('O'),
+                'ù' | 'ú' | 'û' | 'ū' | 'ů' | 'ű' => out.push('u'),
+                'Ù' | 'Ú' | 'Û' => out.push('U'),
+                'ç' | 'ć' | 'č' => out.push('c'),
+                'Ç' | 'Ć' | 'Č' => out.push('C'),
+                'ñ' | 'ń' | 'ň' => out.push('n'),
+                'Ñ' => out.push('N'),
+                'ś' | 'š' | 'ş' => out.push('s'),
+                'Ś' | 'Š' | 'Ş' => out.push('S'),
+                'ź' | 'ż' | 'ž' => out.push('z'),
+                'Ź' | 'Ż' | 'Ž' => out.push('Z'),
+                'ł' => out.push('l'),
+                'Ł' => out.push('L'),
+                'ý' | 'ÿ' => out.push('y'),
+                'ğ' => out.push('g'),
+                'ř' => out.push('r'),
+                'ť' => out.push('t'),
+                'ď' => out.push('d'),
+                c if (' '..='~').contains(&c) => out.push(c),
+                _ => {}
+            }
+        }
+        out.trim().chars().take(40).collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceProfile {
@@ -33,6 +104,10 @@ pub struct DeviceProfile {
     pub last_seen_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub firmware_version: Option<String>,
+    /// Standort des Displays; `None`, solange keiner hinterlegt ist. Neue
+    /// Geräte erben ihn bewusst nicht vom zuletzt aktiven Profil.
+    #[serde(default)]
+    pub location: Option<Location>,
 }
 
 fn default_brightness() -> i64 {
@@ -51,6 +126,7 @@ impl DeviceProfile {
             display_variant: None,
             last_seen_at: None,
             firmware_version: None,
+            location: None,
         }
     }
 }
@@ -431,6 +507,28 @@ mod tests {
         assert_eq!(generate_auto_name(&existing, 7), "Gerät 1");
         existing.insert("Gerät 1".into());
         assert_eq!(generate_auto_name(&existing, 7), "Gerät 2");
+    }
+
+    #[test]
+    fn location_survives_round_trip_and_old_profiles_load_without_it() {
+        let mut reg = DeviceRegistry::default();
+        reg.resolve(&info("aa:bb", "2.23.0", None, None), now());
+        assert!(reg.profile("aa:bb").unwrap().location.is_none());
+        let place = Location { name: "München".into(), latitude: 48.137, longitude: 11.575 };
+        assert!(place.is_valid());
+        assert_eq!(place.display_name(), "Muenchen");
+        reg.profile_mut("aa:bb").unwrap().location = Some(place.clone());
+        let back = DeviceRegistry::from_json(&reg.to_json()).unwrap();
+        assert_eq!(back.profile("aa:bb").unwrap().location, Some(place.clone()));
+
+        // Ein zweites Gerät steht woanders und übernimmt den Standort nicht.
+        let (fresh, _) = reg.resolve(&info("cc:dd", "2.23.0", None, None), now());
+        assert!(fresh.location.is_none());
+
+        let old = r#"{"devices":{"aa:bb":{"mac":"aa:bb","friendlyName":"Alt"}}}"#;
+        assert!(DeviceRegistry::from_json(old).unwrap().profile("aa:bb").unwrap().location.is_none());
+        assert!(!Location { name: String::new(), latitude: 91.0, longitude: 0.0 }.is_valid());
+        assert_eq!(Location { name: "Łódź / Zürich".into(), ..place }.display_name(), "Lodz / Zuerich");
     }
 
     #[test]

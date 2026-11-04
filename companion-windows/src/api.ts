@@ -99,6 +99,8 @@ export interface PluginPreview {
   sourceOrigin: string;
   sha256: string;
   signed: boolean;
+  /** Das Plugin sendet den Standort des Displays an `sourceOrigin`. */
+  requiresLocation: boolean;
   settingsSpec: PluginSettingSpec[];
   localizations?: Record<string, Record<string, string>>;
 }
@@ -188,6 +190,18 @@ export interface DeviceInfo {
   heap: number | null;
 }
 
+/** Standort eines Displays; `name` darf leer sein (nur Koordinaten). */
+export interface DeviceLocation {
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+/** Treffer der Ortssuche; `detail` nennt Region und Land. */
+export interface Place extends DeviceLocation {
+  detail: string;
+}
+
 export interface DeviceProfile {
   mac: string;
   friendlyName: string;
@@ -198,6 +212,7 @@ export interface DeviceProfile {
   displayVariant: DisplayVariant | null;
   lastSeenAt: string | null;
   firmwareVersion: string | null;
+  location: DeviceLocation | null;
 }
 
 /** Felder bleiben snake_case, so serialisiert aimonitor_serial::FrameReceipt. */
@@ -252,6 +267,9 @@ export const getDevices = () => invoke<DeviceProfile[]>("get_devices");
 export const renameDevice = (mac: string, name: string) => invoke<DeviceProfile>("rename_device", { mac, name });
 export const updateProfile = (mac: string, theme: ThemeSetting, orientation: Orientation, language: DisplayLanguage) =>
   invoke<DeviceProfile>("update_profile", { mac, theme, orientation, language });
+export const setDeviceLocation = (mac: string, location: DeviceLocation | null) =>
+  invoke<DeviceProfile>("set_device_location", { mac, location });
+export const searchPlaces = (query: string, language: string) => invoke<Place[]>("search_places", { query, language });
 export const setBrightness = (value: number, persist: boolean) => invoke<void>("set_brightness", { value, persist });
 export const getTimezones = () => invoke<TimeZoneOption[]>("get_timezones");
 export const setTimezone = (timezone: string) => invoke<void>("set_timezone", { timezone });
