@@ -156,6 +156,10 @@ export function onSettingsChanged(handler: (settings: Settings) => void): Promis
   return listen<Settings>("settings-changed", (event) => handler(event.payload));
 }
 
+export function onSettingsOpened(handler: () => void): Promise<UnlistenFn> {
+  return listen("settings-opened", handler);
+}
+
 // ---------------------------------------------------------------------------
 // Verbindung und Display (Phase 2). Typen spiegeln aimonitor_core::protocol,
 // aimonitor_core::device, aimonitor_serial und serial_service.rs.

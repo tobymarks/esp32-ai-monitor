@@ -1,14 +1,18 @@
 //! Einstellungsfenster: wird bei Bedarf gebaut, Schließen versteckt nur.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 pub const SETTINGS_LABEL: &str = "settings";
 
 pub fn open_settings(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(SETTINGS_LABEL) {
+        let reopening = !win.is_visible().unwrap_or(false);
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
+        if reopening {
+            let _ = win.emit("settings-opened", ());
+        }
         return;
     }
 
