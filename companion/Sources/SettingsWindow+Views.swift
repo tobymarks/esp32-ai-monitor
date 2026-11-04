@@ -11,12 +11,20 @@ import Cocoa
 
 extension SettingsWindowController {
 
-    /// Inhalte, die ein Fenster zeigen kann: die Uhr und jeder Provider.
-    private var viewContents: [String] {
+    /// Zuweisbar sind die Uhr, Provider, Claude Code und installierte Plugins.
+    private var availableViewContents: [String] {
         let installed = DisplayPlugins.shared.records.keys.map { DisplayPlugins.prefix + $0 }
-        let assigned = Settings.shared.displayViews.filter { DisplayPlugins.id(from: $0) != nil }
         return [Settings.clockView] + CodexBarProvider.allCases.map(\.rawValue) + [ClaudeCodeWindow.view]
-            + Array(Set(installed + assigned).subtracting([ClaudeCodeWindow.view])).sorted()
+            + Array(Set(installed).subtracting([ClaudeCodeWindow.view])).sorted()
+    }
+
+    /// Fehlende Plugins bleiben für die Beschriftung bestehender Fenster bekannt.
+    private var viewItems: [DisplayViewEditorItem] {
+        let available = availableViewContents
+        let missing = Set(Settings.shared.displayViews).subtracting(available).sorted()
+        return (available + missing).map { content in
+            displayViewItem(content, isAvailable: available.contains(content))
+        }
     }
 
     func buildViewsStepContent() -> [NSView] {
@@ -58,13 +66,13 @@ extension SettingsWindowController {
         viewsFirmwareHint.font = NSFont.appFont(.subheadline)
         viewsFirmwareHint.textColor = .systemOrange
 
-        updateViewsSection(force: true)
+        updateViewsSection()
         return [viewsEditor, modeRow, viewsIntervalRow, viewsIntelligentHint, viewsFirmwareHint]
     }
 
-    /// The editor compares its contents before rebuilding controls. Periodic
-    /// updates and touch events therefore keep keyboard focus and drag sources.
-    func updateViewsSection(force _: Bool = false) {
+    /// Der Editor baut Controls nur bei geänderten Inhalten neu auf. Regelmäßige
+    /// Updates und Touch-Ereignisse erhalten dadurch Tastaturfokus und Drag-Quellen.
+    func updateViewsSection() {
         guard viewsEditor != nil else { return }
         let settings = Settings.shared
         viewsModePopup.selectItem(at: ["manual", "automatic", "intelligent"].firstIndex(of: settings.displayViewMode) ?? 0)
@@ -78,8 +86,9 @@ extension SettingsWindowController {
             && (monitor?.connectedFirmwareLacksPluginScenes ?? false)
         viewsFirmwareHint.stringValue = lacksScenes ? L("plugins.firmware") : L("views.firmware")
         viewsFirmwareHint.isHidden = !lacksWindows && !lacksScenes
-        viewsEditor.update(contents: settings.displayViews, items: viewContents.map(displayViewItem),
-                           active: settings.activeDisplayView, mode: settings.displayViewMode)
+        viewsEditor.update(contents: settings.displayViews, items: viewItems,
+                           active: settings.activeDisplayView, mode: settings.displayViewMode,
+                           deviceID: DeviceRegistry.shared.currentMAC)
     }
 
     private func displayViewTitle(_ content: String) -> String {
@@ -92,25 +101,24 @@ extension SettingsWindowController {
         return CodexBarProvider.normalized(content).displayLabel
     }
 
-    private func displayViewItem(_ content: String) -> DisplayViewEditorItem {
-        let glyph: String
+    private func displayViewItem(_ content: String, isAvailable: Bool) -> DisplayViewEditorItem {
         let symbol: String
         switch content {
-        case Settings.clockView: glyph = "◷"; symbol = "clock"
-        case "claude": glyph = "✳"; symbol = "asterisk"
-        case "codex": glyph = "◎"; symbol = "circle.dotted"
-        case "antigravity": glyph = "✦"; symbol = "sparkles"
-        case "gemini": glyph = "✧"; symbol = "sparkle"
-        case "copilot": glyph = "◆"; symbol = "diamond.fill"
-        case "cursor": glyph = "⬡"; symbol = "hexagon"
-        case ClaudeCodeWindow.view: glyph = "✳"; symbol = "terminal"
-        default: glyph = "◇"; symbol = "puzzlepiece.extension"
+        case Settings.clockView: symbol = "clock"
+        case "claude": symbol = "asterisk"
+        case "codex": symbol = "circle.dotted"
+        case "antigravity": symbol = "sparkles"
+        case "gemini": symbol = "sparkle"
+        case "copilot": symbol = "diamond.fill"
+        case "cursor": symbol = "hexagon"
+        case ClaudeCodeWindow.view: symbol = "terminal"
+        default: symbol = "puzzlepiece.extension"
         }
-        return DisplayViewEditorItem(content: content, title: displayViewTitle(content), glyph: glyph, symbol: symbol)
+        return DisplayViewEditorItem(content: content, title: displayViewTitle(content), symbol: symbol, isAvailable: isAvailable)
     }
 
-    /// Defer changes until the originating click/drop has finished, and read the
-    /// latest settings inside that block rather than queuing stale snapshots.
+    /// Änderungen erst nach Abschluss des Klicks/Drops ausführen und dabei die
+    /// aktuellen Einstellungen lesen, damit keine veralteten Daten gespeichert werden.
     private func editDisplayViews(_ edit: @escaping (inout DisplayViewEditorState) -> Void) {
         DispatchQueue.main.async { [weak self] in
             guard let self, let monitor = self.monitor else { return }
@@ -137,7 +145,7 @@ extension SettingsWindowController {
 
     private func assignDisplayView(_ index: Int, content: String) {
         editDisplayViews { [weak self] state in
-            state.assign(content, to: index, available: self?.viewContents ?? [])
+            state.assign(content, to: index, available: self?.availableViewContents ?? [])
         }
     }
 

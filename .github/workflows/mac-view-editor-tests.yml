@@ -1,0 +1,29 @@
+name: Mac View Editor Tests
+
+on:
+  pull_request:
+    paths:
+      - 'companion/Sources/**'
+      - 'companion/Tests/DisplayViewEditor/**'
+      - 'scripts/test_mac_view_editor.sh'
+      - '.github/workflows/mac-view-editor-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'companion/Sources/**'
+      - 'companion/Tests/DisplayViewEditor/**'
+      - 'scripts/test_mac_view_editor.sh'
+      - '.github/workflows/mac-view-editor-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  editor:
+    runs-on: ubuntu-latest
+    container: swift:6.2-bookworm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Parse Swift sources and test editor state
+        run: bash scripts/test_mac_view_editor.sh
