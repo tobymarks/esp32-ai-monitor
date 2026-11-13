@@ -174,6 +174,8 @@ pub fn run() {
             commands::get_devices,
             commands::rename_device,
             commands::update_profile,
+            commands::set_device_location,
+            commands::search_places,
             commands::set_brightness,
             commands::get_timezones,
             commands::set_timezone,

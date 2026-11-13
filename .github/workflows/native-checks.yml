@@ -1,0 +1,96 @@
+name: Native checks
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'companion/Sources/**'
+      - 'companion/Tests/**'
+      - 'companion-windows/crates/**'
+      - 'companion-windows/Cargo.toml'
+      - 'companion-windows/Cargo.lock'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'platformio.ini'
+      - '.github/workflows/native-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: companion-windows -> target
+      # Native tests need only headers and LVGL, not ESP32 platforms/toolchains.
+      # Read the existing version pins so CI cannot silently test another LVGL.
+      - name: Install native firmware dependencies
+        run: |
+          pip install platformio
+          python - <<'PY'
+          import configparser
+          import subprocess
+          config = configparser.ConfigParser(interpolation=None)
+          config.read('platformio.ini')
+          libraries = [line.strip() for line in config['env']['lib_deps'].splitlines()
+                       if line.strip().startswith(('lvgl/', 'bblanchon/ArduinoJson@'))]
+          assert len(libraries) == 2, libraries
+          args = ['pio', 'pkg', 'install', '--global', '--skip-dependencies',
+                  '--storage-dir', '.pio/libdeps/esp32dev']
+          for library in libraries:
+              args.extend(['--library', library])
+          subprocess.run(args, check=True)
+          PY
+      - name: Test shared core, plugin store and Mac helper
+        working-directory: companion-windows
+        run: cargo test --locked -p aimonitor-core -p aimonitor-plugin-store -p aimonitor-plugin-host
+      - name: Test panel identification
+        run: bash scripts/test_panel_id_native.sh
+      - name: Test plugin package, scene protocol and native rendering
+        run: bash scripts/test_display_plugin_scene_contract.sh
+
+  mac-smoke:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Parse Swift sources and test the display window editor state
+        run: bash scripts/test_mac_view_editor.sh
+      - name: Install native firmware dependencies
+        run: |
+          pip install platformio
+          python - <<'PY'
+          import configparser
+          import subprocess
+          config = configparser.ConfigParser(interpolation=None)
+          config.read('platformio.ini')
+          libraries = [line.strip() for line in config['env']['lib_deps'].splitlines()
+                       if line.strip().startswith(('lvgl/', 'bblanchon/ArduinoJson@'))]
+          assert len(libraries) == 2, libraries
+          args = ['pio', 'pkg', 'install', '--global', '--skip-dependencies',
+                  '--storage-dir', '.pio/libdeps/esp32dev']
+          for library in libraries:
+              args.extend(['--library', library])
+          subprocess.run(args, check=True)
+          PY
+      - name: Render dashboard screenshots without changing website assets
+        env:
+          AIMONITOR_SITE_BUILD_DIR: ${{ runner.temp }}/site-render
+          AIMONITOR_SITE_OUTPUT_DIR: ${{ runner.temp }}/site-screens
+        run: bash scripts/render_site_screens.sh

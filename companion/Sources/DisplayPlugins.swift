@@ -21,6 +21,10 @@ struct DisplayPluginRecord {
     var error: String?
     var sceneLocale: String?
     var sceneTheme: String?
+    /// Standort, für den zuletzt abgerufen wurde (`DeviceLocation.argument`).
+    var requestLocation: String?
+
+    var requiresLocation: Bool { info["requiresLocation"] as? Bool == true }
 }
 
 final class DisplayPlugins {
@@ -46,6 +50,26 @@ final class DisplayPlugins {
         default:
             return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
                 ? "dark" : "light"
+        }
+    }
+
+    /// Standort des verbundenen, sonst des zuletzt verbundenen Displays.
+    static func currentLocation() -> DeviceLocation? {
+        guard let location = DeviceRegistry.shared.currentProfile()?.location,
+              location.isValid else { return nil }
+        return location
+    }
+
+    /// Ortssuche für den Standort eines Displays über den Plugin-Helfer.
+    static func searchPlaces(_ query: String,
+                             completion: @escaping (Result<[[String: Any]], Error>) -> Void) {
+        let locale = Bundle.main.preferredLocalizations.first?.hasPrefix("de") == true ? "de" : "en"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { () -> [[String: Any]] in
+                let response = try Self.helper(["places", query, "--locale=\(locale)"])
+                return response["places"] as? [[String: Any]] ?? []
+            }
+            DispatchQueue.main.async { completion(result) }
         }
     }
 
@@ -118,6 +142,27 @@ final class DisplayPlugins {
             if detail.contains("attentionRules require formatVersion 2") {
                 throw failure(L("plugins.rulesRequireV2"))
             }
+            if detail.contains("source URL must be printable ASCII without whitespace (max 2048 bytes)") {
+                throw failure(L("plugins.sourceAscii"))
+            }
+            if detail.contains("source must be an HTTPS URL without credentials or fragment") {
+                throw failure(L("plugins.sourceHttps"))
+            }
+            if detail.contains("invalid source URL") {
+                throw failure(L("plugins.sourceUrl"))
+            }
+            if detail.contains("URL placeholders must be numeric") {
+                throw failure(L("plugins.sourceNumeric"))
+            }
+            if detail.contains("unknown URL placeholder") {
+                throw failure(L("plugins.sourcePlaceholder"))
+            }
+            if detail.contains("source origin changed") {
+                throw failure(L("plugins.sourceOrigin"))
+            }
+            if detail.contains("setting must be a URL") {
+                throw failure(L("plugins.settingUrl"))
+            }
             throw failure(detail.isEmpty ? "Plugin helper failed" : String(detail.prefix(200)))
         }
         guard bytes.count <= 64 * 1024,
@@ -142,24 +187,14 @@ final class DisplayPlugins {
         let files = (try? FileManager.default.contentsOfDirectory(at: root,
                           includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "aimplugin" {
-            guard let info = try? Self.helper(["inspect", file.path]),
+            guard var info = try? Self.helper(["inspect", file.path]),
                   let id = info["id"] as? String,
                   file.deletingPathExtension().lastPathComponent == id else { continue }
-            let defaults = info["settings"] as? [String: Any] ?? [:]
-            let saved = (try? Data(contentsOf: settingsPath(id))).flatMap {
-                try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
-            } ?? defaults
-            var settings = defaults
-            for key in defaults.keys { if let value = saved[key] { settings[key] = value } }
-            let check = root.appendingPathComponent(".settings-check-\(UUID().uuidString)")
-            if let bytes = try? JSONSerialization.data(withJSONObject: settings) {
-                try? bytes.write(to: check)
-                if (try? Self.helper(["validate-settings", file.path, check.path])) == nil {
-                    settings = defaults
-                }
-            }
-            try? FileManager.default.removeItem(at: check)
-            if let bytes = try? JSONSerialization.data(withJSONObject: settings) {
+            guard let restored = try? Self.helper(["restore-settings", file.path, settingsPath(id).path]),
+                  let settings = restored["settings"] as? [String: Any],
+                  let saved = restored["savedSettings"] as? [String: Any] else { continue }
+            info["sourceOrigin"] = restored["sourceOrigin"]
+            if let bytes = try? JSONSerialization.data(withJSONObject: saved) {
                 try? bytes.write(to: settingsPath(id), options: .atomic)
             }
             records[id] = DisplayPluginRecord(packageURL: file, info: info, settings: settings)
@@ -203,7 +238,7 @@ final class DisplayPlugins {
                 } else {
                     try FileManager.default.copyItem(at: URL(fileURLWithPath: source), to: staged)
                 }
-                let info = try Self.helper(["inspect", staged.path])
+                var info = try Self.helper(["inspect", staged.path])
                 guard let hash = info["sha256"] as? String, hash == expectedSHA256,
                       let id = info["id"] as? String, Self.id(from: Self.prefix + id) != nil else {
                     throw Self.failure("Plugin changed since inspection")
@@ -213,23 +248,21 @@ final class DisplayPlugins {
                 }
                 let target = root.appendingPathComponent("\(id).aimplugin")
                 let backup = root.appendingPathComponent(".\(id).previous")
-                let defaults = info["settings"] as? [String: Any] ?? [:]
                 let settingsFile = root.appendingPathComponent("\(id).settings.json")
-                let saved = (try? Data(contentsOf: settingsFile)).flatMap {
-                    try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
-                } ?? defaults
-                var settings = defaults
-                for key in defaults.keys { if let value = saved[key] { settings[key] = value } }
-                let serialized = try JSONSerialization.data(withJSONObject: settings)
-                let check = root.appendingPathComponent(".settings-check-\(UUID().uuidString)")
-                defer { try? FileManager.default.removeItem(at: check) }
-                try serialized.write(to: check)
-                do {
-                    _ = try Self.helper(["validate-settings", staged.path, check.path])
-                } catch {
-                    settings = defaults
+                // Normalize legacy defaults while the old package is still active.
+                // An interruption after replacement must not pin its old URL.
+                if let previous = try? Self.helper(["restore-settings", target.path, settingsFile.path]),
+                   let saved = previous["savedSettings"] as? [String: Any] {
+                    let previousData = try JSONSerialization.data(withJSONObject: saved)
+                    try previousData.write(to: settingsFile, options: .atomic)
                 }
-                let settingsData = try JSONSerialization.data(withJSONObject: settings)
+                let restored = try Self.helper(["restore-settings", staged.path, settingsFile.path, target.path])
+                guard let settings = restored["settings"] as? [String: Any],
+                      let saved = restored["savedSettings"] as? [String: Any] else {
+                    throw Self.failure("Invalid plugin helper response")
+                }
+                info["sourceOrigin"] = restored["sourceOrigin"]
+                let settingsData = try JSONSerialization.data(withJSONObject: saved)
                 if FileManager.default.fileExists(atPath: target.path) {
                     try? FileManager.default.removeItem(at: backup)
                     try FileManager.default.moveItem(at: target, to: backup)
@@ -265,9 +298,14 @@ final class DisplayPlugins {
         defer { try? FileManager.default.removeItem(at: staged) }
         let bytes = try JSONSerialization.data(withJSONObject: values)
         try bytes.write(to: staged)
-        _ = try Self.helper(["validate-settings", record.packageURL.path, staged.path])
-        try bytes.write(to: target, options: .atomic)
+        let validation = try Self.helper(["validate-settings", record.packageURL.path, staged.path])
+        guard let saved = validation["savedSettings"] as? [String: Any] else {
+            throw Self.failure("Invalid plugin helper response")
+        }
+        let savedBytes = try JSONSerialization.data(withJSONObject: saved)
+        try savedBytes.write(to: target, options: .atomic)
         record.settings = values
+        record.info["sourceOrigin"] = validation["sourceOrigin"]
         record.generation = UUID()
         record.scenes.removeAll()
         record.attention.removeAll()
@@ -293,8 +331,26 @@ final class DisplayPlugins {
     func refresh(views: [String]) {
         let locale = Settings.shared.language == "en" ? "en" : "de"
         let theme = Self.resolvedTheme()
+        let location = Self.currentLocation()
         for id in Set(views.compactMap(Self.id(from:))) {
             guard var record = records[id] else { continue }
+            if record.requiresLocation && record.requestLocation != location?.argument {
+                // Anderes Display oder geänderter Standort: Die Daten gehören
+                // zum alten Ort. Eine laufende Antwort verwirft die neue Generation.
+                record.requestLocation = location?.argument
+                record.generation = UUID()
+                record.scenes.removeAll()
+                record.attention.removeAll()
+                record.hasAttentionBaseline = false
+                record.firedAttention = false
+                record.lastAttempt = nil
+                record.fetchedAt = nil
+                record.error = nil
+                records[id] = record
+                attentionResets.insert(id)
+            }
+            // Ohne Standort gibt es nichts abzurufen; das Fenster zeigt den Hinweis.
+            if record.requiresLocation && location == nil { continue }
             guard !fetching.contains(id) else { continue }
             let interval = TimeInterval(record.info["intervalSeconds"] as? Int ?? 900)
             let now = Date()
@@ -312,9 +368,15 @@ final class DisplayPlugins {
             let package = record.packageURL.path
             let settings = settingsPath(id).path
             let generation = record.generation
+            // Szenen mit Umlauten vorhalten; für ältere Firmware schreibt
+            // `sceneForDevice` beim Senden um.
+            var arguments = ["render", package, settings, "all", "--theme=\(theme)", "--locale=\(locale)",
+                             "--scene-protocol=2"]
+            if record.requiresLocation, let location = location {
+                arguments.append("--location=\(location.argument)")
+            }
             DispatchQueue.global(qos: .utility).async {
-                let result = Result { try Self.helper(["render", package, settings, "all",
-                                                        "--theme=\(theme)", "--locale=\(locale)"]) }
+                let result = Result { try Self.helper(arguments) }
                 DispatchQueue.main.async {
                     self.fetching.remove(id)
                     guard var current = self.records[id], current.packageURL.path == package,
@@ -391,6 +453,14 @@ final class DisplayPlugins {
             return Self.statusScene(text("missing"), text("missing.hint"), theme: theme)
         }
         let title = Self.localized(record.info["viewLabel"] as? String ?? "Plugin", info: record.info, locale: language)
+        if record.requiresLocation {
+            guard let location = Self.currentLocation() else {
+                return Self.statusScene(title, text("location"), theme: theme)
+            }
+            if record.requestLocation != location.argument {
+                return Self.statusScene(title, text("loading"), theme: theme)
+            }
+        }
         if record.error != nil { return Self.statusScene(title, text("unavailable"), theme: theme) }
         // Bei einem Theme- oder Sprachwechsel die vorhandene Szene bis zur neuen Antwort stehen lassen.
         guard let scene = record.scenes[layout], let fetched = record.fetchedAt else {
@@ -403,6 +473,39 @@ final class DisplayPlugins {
         return scene
     }
 
+    /// Szene an die verbundene Firmware anpassen: Ab `sceneProtocol` 2 zeigt
+    /// das Display Umlaute, ältere Firmware nimmt nur ASCII an. Die Umschrift
+    /// ist in Bytes nie länger als das Original.
+    static func sceneForDevice(_ scene: [String: Any], sceneProtocol: Int) -> [String: Any] {
+        guard sceneProtocol < 2, let nodes = scene["nodes"] as? [[String: Any]] else { return scene }
+        let replacements: [Character: String] = ["Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ä": "ae", "ö": "oe",
+                                                 "ü": "ue", "ß": "ss", "°": ""]
+        var result = scene
+        result["nodes"] = nodes.map { node -> [String: Any] in
+            guard let text = node["text"] as? String,
+                  text.unicodeScalars.contains(where: { !$0.isASCII }) else { return node }
+            let characters = Array(text)
+            var ascii = ""
+            for (index, character) in characters.enumerated() {
+                guard let replacement = replacements[character] else {
+                    if character.isASCII { ascii.append(character) }
+                    continue
+                }
+                // In Versalien auch den zweiten Buchstaben groß: FLÜGE → FLUEGE, Über → Ueber.
+                let previous = index > 0 ? characters[index - 1] : nil
+                let next = index + 1 < characters.count ? characters[index + 1] : nil
+                let capitals = next?.isUppercase == true
+                    || (previous?.isUppercase == true && next?.isLowercase != true)
+                ascii += capitals && character != "ä" && character != "ö" && character != "ü"
+                    ? replacement.uppercased() : replacement
+            }
+            var updated = node
+            updated["text"] = ascii
+            return updated
+        }
+        return result
+    }
+
     /// Statustexte in der Sprache des Displays. Die Firmware nimmt in Szenen
     /// nur druckbares ASCII an, deshalb stehen die deutschen Texte ohne Umlaute.
     static func statusText(_ key: String, language: String) -> String {
@@ -413,6 +516,8 @@ final class DisplayPlugins {
         case "unavailable":  return de ? "Daten nicht abrufbar" : "Data unavailable"
         case "loading":      return de ? "Lade Daten ..." : "Loading data..."
         case "stale":        return de ? "Daten veraltet - warte auf Update" : "Data stale - waiting for update"
+        case "location":     return de ? "Standort fehlt - in der App am Display festlegen"
+                                       : "No location - set one for this display in the app"
         default:             return ""
         }
     }

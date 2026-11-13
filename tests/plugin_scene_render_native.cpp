@@ -63,6 +63,21 @@ int main(int argc, char **argv) {
     }
 
     lv_init();
+    // Scene protocol 2 promises real glyphs, not LVGL's missing-glyph boxes.
+    const lv_font_t *fonts[] = {&font_ui_12, &font_ui_14, &font_ui_16, &font_ui_20,
+                               &font_ui_24, &font_ui_36, &font_ui_48};
+    const uint32_t characters[] = {0xC4, 0xD6, 0xDC, 0xE4, 0xF6, 0xFC, 0xDF, 0xB0};
+    for (const lv_font_t *font : fonts) {
+        for (uint32_t character : characters) {
+            lv_font_glyph_dsc_t glyph = {};
+            if (!lv_font_get_glyph_dsc(font, &glyph, character, 0) || glyph.is_placeholder
+                || glyph.box_w == 0 || glyph.box_h == 0) {
+                fprintf(stderr, "missing UI glyph U+%04X (line height %u)\n",
+                        static_cast<unsigned>(character), static_cast<unsigned>(font->line_height));
+                return 1;
+            }
+        }
+    }
     lv_display_t *display = lv_display_create(width, height);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
     display_width = width;

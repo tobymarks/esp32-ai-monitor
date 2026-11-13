@@ -52,31 +52,39 @@
 #define LV_USE_ASSERT_OBJ           0
 
 // ============================================================
-// Fonts - Montserrat built-in
+// Fonts - Montserrat mit Umlauten
 // ============================================================
+// Die eingebauten Montserrat-Schriften kennen nur ASCII. src/font_ui_<px>.c
+// sind dieselben Schriften mit Ä Ö Ü ä ö ü ß (scripts/generate_ui_fonts.sh);
+// die eingebauten bleiben aus, damit sie nicht doppelt im Flash liegen.
 #define LV_FONT_MONTSERRAT_8   0
 #define LV_FONT_MONTSERRAT_10  0
-#define LV_FONT_MONTSERRAT_12  1
-#define LV_FONT_MONTSERRAT_14  1
-#define LV_FONT_MONTSERRAT_16  1
+#define LV_FONT_MONTSERRAT_12  0
+#define LV_FONT_MONTSERRAT_14  0
+#define LV_FONT_MONTSERRAT_16  0
 #define LV_FONT_MONTSERRAT_18  0
-#define LV_FONT_MONTSERRAT_20  1
+#define LV_FONT_MONTSERRAT_20  0
 #define LV_FONT_MONTSERRAT_22  0
-#define LV_FONT_MONTSERRAT_24  1
+#define LV_FONT_MONTSERRAT_24  0
 #define LV_FONT_MONTSERRAT_26  0
 #define LV_FONT_MONTSERRAT_28  0
 #define LV_FONT_MONTSERRAT_30  0
 #define LV_FONT_MONTSERRAT_32  0
 #define LV_FONT_MONTSERRAT_34  0
-#define LV_FONT_MONTSERRAT_36  1
+#define LV_FONT_MONTSERRAT_36  0
 #define LV_FONT_MONTSERRAT_38  0
 #define LV_FONT_MONTSERRAT_40  0
 #define LV_FONT_MONTSERRAT_42  0
 #define LV_FONT_MONTSERRAT_44  0
 #define LV_FONT_MONTSERRAT_46  0
-#define LV_FONT_MONTSERRAT_48  1
+#define LV_FONT_MONTSERRAT_48  0
 
-#define LV_FONT_DEFAULT &lv_font_montserrat_14
+#define LV_FONT_CUSTOM_DECLARE \
+    LV_FONT_DECLARE(font_ui_12) LV_FONT_DECLARE(font_ui_14) LV_FONT_DECLARE(font_ui_16) \
+    LV_FONT_DECLARE(font_ui_20) LV_FONT_DECLARE(font_ui_24) LV_FONT_DECLARE(font_ui_36) \
+    LV_FONT_DECLARE(font_ui_48)
+
+#define LV_FONT_DEFAULT &font_ui_14
 
 // ============================================================
 // Widgets - enable only what we need

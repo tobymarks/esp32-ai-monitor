@@ -62,13 +62,13 @@ static lv_obj_t* create_info_row(lv_obj_t *parent, const char *label, const char
     lv_obj_t *lbl = lv_label_create(parent);
     lv_label_set_text(lbl, label);
     lv_obj_set_style_text_color(lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &font_ui_14, LV_PART_MAIN);
     lv_obj_set_pos(lbl, 12, y);
 
     lv_obj_t *val = lv_label_create(parent);
     lv_label_set_text(val, value);
     lv_obj_set_style_text_color(val, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(val, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(val, &font_ui_14, LV_PART_MAIN);
     lv_obj_set_pos(val, 120, y);
 
     return val;
@@ -105,7 +105,7 @@ void ui_settings_create() {
     lv_obj_t *btn_back = lv_label_create(header);
     lv_label_set_text(btn_back, LV_SYMBOL_LEFT);
     lv_obj_set_style_text_color(btn_back, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(btn_back, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_font(btn_back, &font_ui_20, LV_PART_MAIN);
     lv_obj_set_pos(btn_back, 8, 6);
     lv_obj_add_flag(btn_back, LV_OBJ_FLAG_CLICKABLE);
     // Auf dem grossen Panel ist der Pfeil sonst ein winziges Ziel.
@@ -116,7 +116,7 @@ void ui_settings_create() {
     lv_obj_t *lbl_title = lv_label_create(header);
     lv_label_set_text(lbl_title, L(STR_SETTINGS));
     lv_obj_set_style_text_color(lbl_title, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_title, &font_ui_16, LV_PART_MAIN);
     lv_obj_set_pos(lbl_title, 34, 8);
 
     // Time — uses timezone offset sent by the Mac companion app.
@@ -132,7 +132,7 @@ void ui_settings_create() {
         }
     }
     lv_obj_set_style_text_color(lbl_time, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_time, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_time, &font_ui_14, LV_PART_MAIN);
     lv_obj_align(lbl_time, LV_ALIGN_TOP_RIGHT, -8, 9);
 
     // ---- Divider ----
@@ -215,7 +215,7 @@ void ui_settings_create() {
     snprintf(ver_buf, sizeof(ver_buf), "v%s", APP_VERSION);
     lv_label_set_text(lbl_ver, ver_buf);
     lv_obj_set_style_text_color(lbl_ver, UI_COLOR_TEXT_DIM, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_ver, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_ver, &font_ui_14, LV_PART_MAIN);
     lv_obj_set_pos(lbl_ver, 12, sh - 30);
 
     // ---- Load with slide animation ----

@@ -631,6 +631,8 @@ impl Service {
             ));
         }
         self.publish();
+        // Anderes Display, anderer Standort: standortabhängige Plugins neu abrufen.
+        crate::poll::refresh_plugins(&self.app);
         // Neue Geräteversion: Update-Hinweis neu bewerten, sonst bliebe er
         // nach einem Flash bis zur nächsten Release-Abfrage stehen.
         updates::emit_status(&self.app);
@@ -952,6 +954,7 @@ impl Service {
                     .map(|profile| profile.theme)
                     .unwrap_or_default()
                     .resolve(system_is_dark());
+                let scene_protocol = info.scene_protocol.unwrap_or(1);
                 let layout = if info.display == Some(DisplayVariant::St7701) {
                     SceneLayout::Square
                 } else if matches!(
@@ -965,14 +968,12 @@ impl Service {
                 let scene = if id == aimonitor_core::claude_code::VIEW_ID {
                     crate::claude_code::scene(&self.app, language, theme, layout)
                 } else {
-                    self.app
-                        .state::<AppState>()
-                        .plugins
-                        .lock()
-                        .unwrap()
+                    let state = self.app.state::<AppState>();
+                    let store = state.plugins.lock().unwrap();
+                    store
                         .records
                         .get(id)
-                        .map(|record| record.scene(layout, language, theme))
+                        .map(|record| record.scene(layout, language, theme, store.location(), scene_protocol))
                         .unwrap_or_else(|| {
                             status_scene_with_theme(
                                 status_text("missing", language),

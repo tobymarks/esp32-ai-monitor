@@ -8,8 +8,8 @@ import Cocoa
 struct DisplayViewEditorItem: Equatable {
     let content: String
     let title: String
-    let glyph: String
     let symbol: String
+    let isAvailable: Bool
 }
 
 final class DisplayViewEditor: NSView {
@@ -18,7 +18,8 @@ final class DisplayViewEditor: NSView {
     var onRemove: ((Int) -> Void)?
     var onShow: ((Int) -> Void)?
 
-    private(set) var selectedIndex = 0
+    var selectedIndex: Int { selection.index }
+    private var selection = DisplayViewEditorSelection()
     private var contents: [String] = []
     private var items: [DisplayViewEditorItem] = []
     private var activeIndex = 0
@@ -27,7 +28,7 @@ final class DisplayViewEditor: NSView {
     private let palette = NSStackView()
     private let preview = DisplayViewDropSurface()
     private let editTitle = NSTextField(labelWithString: "")
-    private let previewGlyph = NSTextField(labelWithString: "")
+    private let previewImage = DisplayViewSymbolImageView()
     private let previewTitle = NSTextField(wrappingLabelWithString: "")
     private let previewDetail = NSTextField(labelWithString: "")
     private let showButton = NSButton()
@@ -52,13 +53,14 @@ final class DisplayViewEditor: NSView {
 
         editTitle.font = NSFont.appFont(.headline)
         editTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        previewGlyph.font = NSFont.appFont(.largeTitle)
-        previewGlyph.textColor = .controlAccentColor
+        previewImage.contentTintColor = .controlAccentColor
+        previewImage.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 32, weight: .regular)
+        previewImage.setAccessibilityElement(false)
         previewTitle.font = NSFont.appFont(.title2, weight: .semibold)
         previewTitle.alignment = .center
         previewDetail.font = NSFont.appFont(.subheadline)
         previewDetail.textColor = .secondaryLabelColor
-        let previewContent = NSStackView(views: [previewGlyph, previewTitle, previewDetail])
+        let previewContent = NSStackView(views: [previewImage, previewTitle, previewDetail])
         previewContent.orientation = .vertical
         previewContent.alignment = .centerX
         previewContent.spacing = 10
@@ -66,6 +68,8 @@ final class DisplayViewEditor: NSView {
         preview.addSubview(previewContent)
         NSLayoutConstraint.activate([
             preview.heightAnchor.constraint(equalToConstant: 180),
+            previewImage.widthAnchor.constraint(equalToConstant: 36),
+            previewImage.heightAnchor.constraint(equalToConstant: 36),
             previewContent.centerXAnchor.constraint(equalTo: preview.centerXAnchor),
             previewContent.centerYAnchor.constraint(equalTo: preview.centerYAnchor),
             previewContent.widthAnchor.constraint(equalTo: preview.widthAnchor, constant: -32),
@@ -115,31 +119,35 @@ final class DisplayViewEditor: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func update(contents: [String], items: [DisplayViewEditorItem], active: Int, mode: String) {
+    func update(contents: [String], items: [DisplayViewEditorItem], active: Int, mode: String, deviceID: String?) {
         let changed = self.contents != contents || self.items != items
         let paletteChanged = self.items != items
         self.contents = contents
         self.items = items
         activeIndex = active
         self.mode = mode
-        selectedIndex = min(selectedIndex, max(0, contents.count - 1))
+        selection.update(count: contents.count, active: active, deviceID: deviceID)
         if changed { rebuildTiles() }
         if paletteChanged { rebuildPalette() }
         addButton.isEnabled = contents.count < Settings.maxDisplayViews
         refreshSelection()
     }
 
+    func resetSelection() {
+        selection.reset()
+    }
+
     func selectWindow(_ index: Int) {
         guard contents.indices.contains(index) else { return }
         let moveFocus = (window?.firstResponder as? NSView)?.isDescendant(of: grid) == true
-        selectedIndex = index
+        selection.select(index, count: contents.count)
         refreshSelection()
         if moveFocus, tiles.indices.contains(index) { window?.makeFirstResponder(tiles[index]) }
     }
 
     private func item(for content: String) -> DisplayViewEditorItem {
         items.first { $0.content == content }
-            ?? DisplayViewEditorItem(content: content, title: content, glyph: "◇", symbol: "puzzlepiece.extension")
+            ?? DisplayViewEditorItem(content: content, title: content, symbol: "puzzlepiece.extension", isAvailable: false)
     }
 
     private func rebuildTiles() {
@@ -149,7 +157,7 @@ final class DisplayViewEditor: NSView {
         var cards: [NSView] = []
         for (index, content) in contents.enumerated() {
             let item = item(for: content)
-            let tile = DisplayViewTile(title: item.title, glyph: item.glyph)
+            let tile = DisplayViewTile(title: item.title, symbol: item.symbol)
             tile.tag = index
             tile.target = self
             tile.action = #selector(selectTile(_:))
@@ -196,7 +204,7 @@ final class DisplayViewEditor: NSView {
 
     private func rebuildPalette() {
         palette.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for item in items {
+        for item in items where item.isAvailable {
             let button = DisplayViewContentButton(item: item)
             button.target = self
             button.action = #selector(assignFromPalette(_:))
@@ -212,22 +220,34 @@ final class DisplayViewEditor: NSView {
             tile.isSelected = index == selectedIndex
             let shown = mode != "automatic" && index == activeIndex
             statusLabels[index].stringValue = shown ? L("views.active") : index == 0 ? L("views.fixed") : ""
+            var accessibilityStatus = [L(tile.isSelected ? "views.selected" : "views.notSelected")]
+            if shown { accessibilityStatus.append(L("views.active")) }
+            if index == 0 { accessibilityStatus.append(L("views.fixed")) }
+            tile.setAccessibilityValue(accessibilityStatus.joined(separator: ", "))
         }
         guard contents.indices.contains(selectedIndex) else { return }
         let item = item(for: contents[selectedIndex])
         editTitle.stringValue = L("views.edit", selectedIndex + 1)
-        previewGlyph.stringValue = item.glyph
+        previewImage.image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: nil)
         previewTitle.stringValue = item.title
-        previewDetail.stringValue = contents[selectedIndex] == Settings.clockView
-            ? DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
-            : L("views.preview.source")
+        previewDetail.stringValue = L("views.preview.source")
+        refreshPreviewClock()
         showButton.isHidden = mode == "automatic"
         showButton.isEnabled = selectedIndex != activeIndex
         showButton.setAccessibilityLabel(L("views.show.a11y", selectedIndex + 1))
     }
 
+    // The existing window timer refreshes only the clock text, preserving
+    // controls, keyboard focus and the editing selection.
+    func refreshPreviewClock(at date: Date = Date()) {
+        guard contents.indices.contains(selectedIndex),
+              contents[selectedIndex] == Settings.clockView else { return }
+        let text = DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
+        if previewDetail.stringValue != text { previewDetail.stringValue = text }
+    }
+
     private func canAssign(_ content: String) -> Bool {
-        items.contains { $0.content == content }
+        items.contains { $0.content == content && $0.isAvailable }
     }
 
     private func configureDrop(_ surface: DisplayViewDropSurface) {
@@ -243,6 +263,7 @@ final class DisplayViewEditor: NSView {
     @objc private func removeWindow(_ sender: NSButton) { onRemove?(sender.tag) }
     @objc private func showWindow() { onShow?(selectedIndex) }
     @objc private func assignFromPalette(_ sender: DisplayViewContentButton) {
+        guard canAssign(sender.content) else { return }
         onAssign?(selectedIndex, sender.content)
     }
 
@@ -422,6 +443,11 @@ final class DisplayViewDropSurface: NSView {
     override func draggingEnded(_ sender: NSDraggingInfo) { dropHighlighted = false }
 }
 
+/// Decorative symbols must not intercept clicks or drops on their parent.
+private final class DisplayViewSymbolImageView: NSImageView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 private final class DisplayViewTile: NSButton {
     var acceptContent: ((String) -> Bool)?
     var onDrop: ((String) -> Void)?
@@ -429,16 +455,26 @@ private final class DisplayViewTile: NSButton {
         didSet {
             guard oldValue != isSelected else { return }
             needsDisplay = true
-            setAccessibilitySelected(isSelected)
         }
     }
     private var dropHighlighted = false { didSet { needsDisplay = true } }
-    private let glyph: String
+    private let symbolView = DisplayViewSymbolImageView()
     override var isFlipped: Bool { true }
 
-    init(title: String, glyph: String) {
-        self.glyph = glyph
+    init(title: String, symbol: String) {
         super.init(frame: .zero)
+        symbolView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        symbolView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 24, weight: .regular)
+        symbolView.contentTintColor = .controlAccentColor
+        symbolView.setAccessibilityElement(false)
+        symbolView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(symbolView)
+        NSLayoutConstraint.activate([
+            symbolView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            symbolView.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            symbolView.widthAnchor.constraint(equalToConstant: 28),
+            symbolView.heightAnchor.constraint(equalToConstant: 28),
+        ])
         self.title = title
         toolTip = title
         isBordered = false
@@ -459,9 +495,6 @@ private final class DisplayViewTile: NSButton {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         paragraph.lineBreakMode = .byTruncatingTail
-        (glyph as NSString).draw(in: NSRect(x: 8, y: 12, width: bounds.width - 16, height: 28),
-                                withAttributes: [.font: NSFont.appFont(.title1), .foregroundColor: NSColor.controlAccentColor,
-                                                 .paragraphStyle: paragraph])
         (title as NSString).draw(in: NSRect(x: 8, y: bounds.height - 34, width: bounds.width - 16, height: 22),
                                 withAttributes: [.font: NSFont.appFont(.body, weight: .semibold),
                                                  .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph])

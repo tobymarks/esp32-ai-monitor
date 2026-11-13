@@ -1,11 +1,14 @@
 //! Portable store for declarative display plugins. Validation is in the core
 //! crate; this module owns persistence, bounded HTTPS fetches, and state.
 
-use aimonitor_core::plugin::{status_scene_with_theme, status_text, Manifest, SceneLayout, Setting};
+use aimonitor_core::device::Location;
+use aimonitor_core::plugin::{
+    scene_for_protocol, status_scene_with_theme, status_text, Manifest, SceneLayout, Setting, SettingKind,
+};
 use aimonitor_core::protocol::{Language, Theme};
 use aimonitor_core::plugin_package::{parse_package, MAX_PACKAGE_BYTES};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -30,6 +33,8 @@ pub struct PluginPreview {
     pub source_origin: String,
     pub sha256: String,
     pub signed: bool,
+    /// The plugin sends the display location to `source_origin`.
+    pub requires_location: bool,
     pub settings_spec: Vec<Setting>,
     pub localizations: BTreeMap<String, BTreeMap<String, String>>,
 }
@@ -47,6 +52,7 @@ pub struct PluginInfo {
     pub source_origin: String,
     pub sha256: String,
     pub signed: bool,
+    pub requires_location: bool,
     pub settings_spec: Vec<Setting>,
     pub localizations: BTreeMap<String, BTreeMap<String, String>>,
     pub settings: Map<String, Value>,
@@ -85,6 +91,7 @@ impl PluginRecord {
             source_origin: origin,
             sha256: self.sha256.clone(),
             signed: false,
+            requires_location: self.manifest.requires_location(),
             settings_spec: self.manifest.settings.clone(),
             localizations: self.manifest.localizations.clone(),
             settings: self.settings.clone(),
@@ -93,8 +100,32 @@ impl PluginRecord {
         }
     }
 
-    pub fn scene(&self, layout: SceneLayout, language: Language, theme: Theme) -> Value {
+    /// `location` is the place stored for the connected display. Data fetched
+    /// for another place is dropped by [`PluginStore::set_location`].
+    /// `scene_protocol` is what the firmware reports; below 2 the text is
+    /// transliterated to ASCII.
+    pub fn scene(
+        &self,
+        layout: SceneLayout,
+        language: Language,
+        theme: Theme,
+        location: Option<&Location>,
+        scene_protocol: u32,
+    ) -> Value {
+        scene_for_protocol(self.scene_utf8(layout, language, theme, location), scene_protocol)
+    }
+
+    fn scene_utf8(
+        &self,
+        layout: SceneLayout,
+        language: Language,
+        theme: Theme,
+        location: Option<&Location>,
+    ) -> Value {
         let title = self.manifest.localized(language.wire(), &self.manifest.view_label);
+        if self.manifest.requires_location() && location.is_none() {
+            return status_scene_with_theme(title, status_text("location", language), theme);
+        }
         if let Some(error) = &self.last_error {
             // Auf 60 Zeichen kürzen, sonst ersetzt status_scene die Meldung.
             let message: String = format!("{}: {error}", status_text("unavailable", language))
@@ -115,7 +146,7 @@ impl PluginRecord {
             return status_scene_with_theme(title, status_text("stale", language), theme);
         }
         self.manifest
-            .scene_with_theme_and_locale(layout, data, &self.settings, theme, language.wire())
+            .scene_at(layout, data, &self.settings, theme, language.wire(), location)
             .unwrap_or_else(|_| {
                 status_scene_with_theme(title, status_text("render", language), theme)
             })
@@ -125,6 +156,29 @@ impl PluginRecord {
 pub struct PluginStore {
     root: PathBuf,
     pub records: BTreeMap<String, PluginRecord>,
+    /// Standort des verbundenen Displays, siehe [`PluginStore::set_location`].
+    location: Option<Location>,
+}
+
+/// One pending source request, see [`PluginStore::due_fetches`].
+#[derive(Debug, Clone)]
+pub struct DueFetch {
+    pub id: String,
+    pub sha256: String,
+    pub manifest: Manifest,
+    pub settings: Map<String, Value>,
+    pub location: Option<Location>,
+}
+
+/// One place found by [`search_places`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Place {
+    pub name: String,
+    /// Region und Land zur Unterscheidung gleichnamiger Orte.
+    pub detail: String,
+    pub latitude: f64,
+    pub longitude: f64,
 }
 
 impl PluginStore {
@@ -132,6 +186,7 @@ impl PluginStore {
         let mut store = Self {
             root,
             records: BTreeMap::new(),
+            location: None,
         };
         let Ok(entries) = fs::read_dir(&store.root) else {
             return store;
@@ -203,6 +258,30 @@ impl PluginStore {
         store
     }
 
+    pub fn location(&self) -> Option<&Location> {
+        self.location.as_ref()
+    }
+
+    /// Der Standort gehört zum verbundenen Display. Wechselt er, gelten die
+    /// Daten standortabhängiger Plugins nicht mehr und werden neu geholt.
+    /// Liefert `true`, wenn sich etwas geändert hat.
+    pub fn set_location(&mut self, location: Option<Location>) -> bool {
+        let location = location.filter(Location::is_valid);
+        if self.location == location {
+            return false;
+        }
+        self.location = location;
+        for record in self.records.values_mut() {
+            if record.manifest.requires_location() {
+                record.data = None;
+                record.fetched_at = None;
+                record.last_attempt = None;
+                record.last_error = None;
+            }
+        }
+        true
+    }
+
     pub fn list(&self) -> Vec<PluginInfo> {
         self.records.values().map(PluginRecord::info).collect()
     }
@@ -230,7 +309,17 @@ impl PluginStore {
             return Err("plugin limit reached".into());
         }
         fs::create_dir_all(&self.root).map_err(|e| format!("plugin directory: {e}"))?;
-        let settings = self.read_settings(&package.manifest);
+        // Strip inherited URL defaults using the old manifest before updating it.
+        let saved = self.records.get(&id)
+            .map(|record| persisted_settings(&record.manifest, &record.settings))
+            .unwrap_or_else(|| self.read_settings(&package.manifest));
+        let settings = merge_valid_settings(&package.manifest, &saved);
+        // Persist inherited URLs before switching packages. If interrupted after
+        // activation, the old defaults must not look like custom URLs on restart.
+        // This representation also preserves the old package's effective settings.
+        if self.records.contains_key(&id) {
+            self.write_settings(&id, &saved)?;
+        }
         let target = self.package_path(&id);
         let staged = self.root.join(format!(".{id}.installing"));
         let backup = self.root.join(format!(".{id}.previous"));
@@ -249,6 +338,13 @@ impl PluginStore {
             }
             let _ = fs::remove_file(&staged);
             return Err(format!("activate plugin: {e}"));
+        }
+        if let Err(error) = self.write_settings(&id, &persisted_settings(&package.manifest, &settings)) {
+            let _ = fs::remove_file(&target);
+            if backup.exists() {
+                let _ = fs::rename(&backup, &target);
+            }
+            return Err(error);
         }
         let _ = fs::remove_file(&backup);
         let record = PluginRecord {
@@ -271,11 +367,23 @@ impl PluginStore {
         values: Map<String, Value>,
     ) -> Result<PluginInfo, String> {
         let record = self.records.get(id).ok_or("plugin not installed")?;
+        record.manifest.source_url(&values)?;
         let merged = merge_valid_settings(&record.manifest, &values);
         if merged.len() != values.len() || merged.iter().any(|(k, v)| values.get(k) != Some(v)) {
             return Err("invalid plugin settings".into());
         }
-        let bytes = serde_json::to_vec_pretty(&merged).map_err(|e| e.to_string())?;
+        self.write_settings(id, &persisted_settings(&record.manifest, &merged))?;
+        let record = self.records.get_mut(id).unwrap();
+        record.settings = merged;
+        record.data = None;
+        record.fetched_at = None;
+        record.last_attempt = None;
+        record.last_error = None;
+        Ok(record.info())
+    }
+
+    fn write_settings(&self, id: &str, values: &Map<String, Value>) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(values).map_err(|e| e.to_string())?;
         let target = self.settings_path(id);
         let staged = target.with_extension("part");
         let backup = self.root.join(format!(".{id}.settings.previous"));
@@ -295,13 +403,7 @@ impl PluginStore {
             return Err(format!("activate settings: {error}"));
         }
         let _ = fs::remove_file(&backup);
-        let record = self.records.get_mut(id).unwrap();
-        record.settings = merged;
-        record.data = None;
-        record.fetched_at = None;
-        record.last_attempt = None;
-        record.last_error = None;
-        Ok(record.info())
+        Ok(())
     }
 
     pub fn remove(&mut self, id: &str) -> Result<(), String> {
@@ -314,15 +416,16 @@ impl PluginStore {
         Ok(())
     }
 
-    pub fn due_fetches(
-        &mut self,
-        assigned: &HashSet<String>,
-    ) -> Vec<(String, String, Manifest, Map<String, Value>)> {
+    pub fn due_fetches(&mut self, assigned: &HashSet<String>) -> Vec<DueFetch> {
         let mut due = Vec::new();
         for id in assigned {
             let Some(record) = self.records.get_mut(id) else {
                 continue;
             };
+            // Ohne Standort gibt es nichts abzurufen; das Fenster zeigt den Hinweis.
+            if record.manifest.requires_location() && self.location.is_none() {
+                continue;
+            }
             let interval = Duration::from_secs(if record.last_error.is_some() {
                 record.manifest.source.interval_seconds.min(60)
             } else {
@@ -332,27 +435,25 @@ impl PluginStore {
                 continue;
             }
             record.last_attempt = Some(Instant::now());
-            due.push((
-                id.clone(),
-                record.sha256.clone(),
-                record.manifest.clone(),
-                record.settings.clone(),
-            ));
+            due.push(DueFetch {
+                id: id.clone(),
+                sha256: record.sha256.clone(),
+                manifest: record.manifest.clone(),
+                settings: record.settings.clone(),
+                location: self.location.clone(),
+            });
         }
         due
     }
 
-    pub fn apply_fetch(
-        &mut self,
-        id: &str,
-        sha256: &str,
-        settings: &Map<String, Value>,
-        result: Result<Value, String>,
-    ) -> bool {
-        let Some(record) = self.records.get_mut(id) else {
+    pub fn apply_fetch(&mut self, fetch: &DueFetch, result: Result<Value, String>) -> bool {
+        let Some(record) = self.records.get_mut(&fetch.id) else {
             return false;
         };
-        if record.sha256 != sha256 || &record.settings != settings {
+        if record.sha256 != fetch.sha256
+            || record.settings != fetch.settings
+            || (record.manifest.requires_location() && self.location != fetch.location)
+        {
             return false;
         }
         match result {
@@ -370,7 +471,21 @@ impl PluginStore {
     }
 }
 
-fn merge_valid_settings(manifest: &Manifest, saved: &Map<String, Value>) -> Map<String, Value> {
+/// Keep numeric and text preferences, but let unchanged URL settings follow
+/// the plugin author's default. Also migrates full settings saved by older apps.
+pub fn persisted_settings(manifest: &Manifest, settings: &Map<String, Value>) -> Map<String, Value> {
+    let mut saved = settings.clone();
+    for spec in &manifest.settings {
+        if matches!(spec.kind, SettingKind::Url) && saved.get(&spec.key) == Some(&spec.default) {
+            saved.remove(&spec.key);
+        }
+    }
+    saved
+}
+
+/// Recover each valid setting independently when loading or updating a plugin.
+/// Shared with the native Mac app through the bundled helper.
+pub fn merge_valid_settings(manifest: &Manifest, saved: &Map<String, Value>) -> Map<String, Value> {
     let mut result = manifest.default_settings();
     for setting in &manifest.settings {
         if let Some(value) = saved.get(&setting.key) {
@@ -458,6 +573,7 @@ pub fn inspect(bytes: &[u8]) -> Result<PluginPreview, String> {
         .map_err(|_| "invalid plugin source")?
         .origin()
         .ascii_serialization();
+    let requires_location = manifest.requires_location();
     Ok(PluginPreview {
         id: manifest.id,
         name: manifest.name,
@@ -468,12 +584,140 @@ pub fn inspect(bytes: &[u8]) -> Result<PluginPreview, String> {
         source_origin,
         sha256: package.sha256,
         signed: false,
+        requires_location,
         settings_spec: manifest.settings,
         localizations: manifest.localizations,
     })
 }
 
-pub fn fetch(manifest: &Manifest, settings: &Map<String, Value>) -> Result<Value, String> {
+/// Ortssuche für den Standort eines Displays, frei und ohne Schlüssel. Orte
+/// und Postleitzahlen findet das Geocoding von Open-Meteo. Kennt es die
+/// Eingabe nicht, etwa eine Adresse mit Straße, folgt eine Anfrage an
+/// Nominatim (OpenStreetMap). Liefert höchstens acht Treffer.
+pub fn search_places(query: &str, language: &str) -> Result<Vec<Place>, String> {
+    let query = query.trim();
+    if query.chars().count() < 2 || query.chars().count() > 80 {
+        return Ok(Vec::new());
+    }
+    let language = if language == "de" { "de" } else { "en" };
+    let mut url = Url::parse("https://geocoding-api.open-meteo.com/v1/search").unwrap();
+    url.query_pairs_mut()
+        .append_pair("name", query)
+        .append_pair("count", "8")
+        .append_pair("format", "json")
+        .append_pair("language", language);
+    let places = parse_places(&search_request(&url)?);
+    if !places.is_empty() {
+        return Ok(places);
+    }
+    // Nominatim verlangt eine erkennbare Kennung und höchstens eine Anfrage
+    // pro Sekunde; die Suche läuft nur auf ausdrückliche Eingabe.
+    let mut url = Url::parse("https://nominatim.openstreetmap.org/search").unwrap();
+    url.query_pairs_mut()
+        .append_pair("q", query)
+        .append_pair("format", "jsonv2")
+        .append_pair("limit", "8")
+        .append_pair("addressdetails", "1")
+        .append_pair("accept-language", language);
+    Ok(parse_addresses(&search_request(&url)?))
+}
+
+fn search_request(url: &Url) -> Result<Value, String> {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(12)))
+        .max_redirects(0)
+        .user_agent("AI-Monitor/1 (https://github.com/tobymarks/esp32-ai-monitor)")
+        .http_status_as_error(true)
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+    let mut response = agent.get(url.as_str()).call().map_err(|e| format!("search: {e}"))?;
+    let bytes = response
+        .body_mut()
+        .with_config()
+        .limit(MAX_SOURCE_BYTES as u64)
+        .read_to_vec()
+        .map_err(|e| format!("search: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|_| "invalid search response".into())
+}
+
+/// Treffer von Nominatim. Als Name dient die Gemeinde, damit auf dem Display
+/// „Pforzheim“ steht und nicht die Straße; die Adresse steht im Detail.
+fn parse_addresses(value: &Value) -> Vec<Place> {
+    let Some(results) = value.as_array() else {
+        return Vec::new();
+    };
+    results
+        .iter()
+        .filter_map(|item| {
+            let address = item.get("address");
+            let part = |key: &str| {
+                address.and_then(|a| a.get(key)).and_then(Value::as_str).unwrap_or("").trim()
+            };
+            let coordinate = |key: &str| item.get(key)?.as_str()?.parse::<f64>().ok();
+            let town = ["city", "town", "village", "municipality", "hamlet", "county"]
+                .into_iter()
+                .map(part)
+                .find(|value| !value.is_empty())
+                .or_else(|| item.get("name").and_then(Value::as_str))
+                .unwrap_or("");
+            let name: String = town.trim().chars().take(80).collect();
+            let place = Location {
+                name: name.clone(),
+                latitude: coordinate("lat")?,
+                longitude: coordinate("lon")?,
+            };
+            if name.is_empty() || !place.is_valid() {
+                return None;
+            }
+            let street = [part("road"), part("house_number")]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let detail = [street.as_str(), part("state"), part("country")]
+                .into_iter()
+                .filter(|value| !value.is_empty() && *value != name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(Place { name, detail, latitude: place.latitude, longitude: place.longitude })
+        })
+        .take(8)
+        .collect()
+}
+
+fn parse_places(value: &Value) -> Vec<Place> {
+    let Some(results) = value.get("results").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    results
+        .iter()
+        .filter_map(|item| {
+            let text = |key: &str| item.get(key).and_then(Value::as_str).unwrap_or("").trim();
+            let name: String = text("name").chars().take(80).collect();
+            let place = Location {
+                name: name.clone(),
+                latitude: item.get("latitude")?.as_f64()?,
+                longitude: item.get("longitude")?.as_f64()?,
+            };
+            if name.is_empty() || !place.is_valid() {
+                return None;
+            }
+            let detail = [text("admin1"), text("country")]
+                .into_iter()
+                .filter(|part| !part.is_empty() && *part != name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(Place { name, detail, latitude: place.latitude, longitude: place.longitude })
+        })
+        .take(8)
+        .collect()
+}
+
+pub fn fetch(
+    manifest: &Manifest,
+    settings: &Map<String, Value>,
+    location: Option<&Location>,
+) -> Result<Value, String> {
     // Development fixture: a file named <plugin-id>.json replaces the HTTPS
     // response for that plugin only. It keeps hardware switching tests
     // deterministic without changing the installed package or source URL.
@@ -486,8 +730,10 @@ pub fn fetch(manifest: &Manifest, settings: &Map<String, Value>) -> Result<Value
             return serde_json::from_slice(&bytes).map_err(|_| "invalid source JSON".into());
         }
     }
-    let url = manifest.source_url(settings)?;
+    let url = manifest.request_url(settings, location)?;
     let config = ureq::Agent::config_builder()
+        .tls_config(ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
         .timeout_global(Some(Duration::from_secs(12)))
         .max_redirects(0)
         .user_agent("AI-Monitor-Plugin/1")
@@ -512,28 +758,292 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use zip::write::SimpleFileOptions;
 
-    fn fixture_package() -> Vec<u8> {
+    const FIXTURE: &[u8] = include_bytes!("../../../../tests/fixtures/display-plugin/plugin.json");
+
+    fn package(manifest: &[u8]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         writer
             .start_file("plugin.json", SimpleFileOptions::default())
             .unwrap();
-        writer
-            .write_all(include_bytes!(
-                "../../../../tests/fixtures/display-plugin/plugin.json"
-            ))
-            .unwrap();
+        writer.write_all(manifest).unwrap();
         writer.finish().unwrap().into_inner()
     }
 
+    fn fixture_package() -> Vec<u8> {
+        package(FIXTURE)
+    }
+
+    #[test]
+    fn location_plugin_waits_for_a_place_and_refetches_when_it_changes() {
+        let mut manifest: Value = serde_json::from_slice(FIXTURE).unwrap();
+        manifest["formatVersion"] = json!(3);
+        manifest["requires"] = json!(["location"]);
+        manifest["source"]["url"] =
+            json!("https://example.org/api?lat={location.latitude}&lon={location.longitude}");
+        manifest["bindings"][0]["path"] = json!("location.name");
+        let root = test_root();
+        let id = "org.aimonitor.fixture";
+        let mut store = PluginStore::load(root.clone());
+        let info = store.install(&package(manifest.to_string().as_bytes())).unwrap();
+        assert!(info.requires_location);
+        let assigned = HashSet::from([id.to_string()]);
+        let texts = |store: &PluginStore| -> Vec<Value> {
+            store.records[id]
+                .scene(SceneLayout::Portrait, Language::De, Theme::Dark, store.location(), 1)
+                ["nodes"].as_array().unwrap().iter().map(|node| node["text"].clone()).collect()
+        };
+
+        assert!(store.due_fetches(&assigned).is_empty());
+        assert!(texts(&store).contains(&json!("Standort fehlt - in der App am Display festlegen")));
+
+        let home = Location { name: "Köln".into(), latitude: 50.94, longitude: 6.96 };
+        assert!(store.set_location(Some(home.clone())));
+        assert!(!store.set_location(Some(home.clone())));
+        let due = store.due_fetches(&assigned);
+        assert_eq!(due[0].location, Some(home));
+        let response: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/display-plugin/response.json"
+        ))
+        .unwrap();
+
+        // Das Display wechselt, bevor die Antwort da ist: Sie gilt nicht mehr.
+        let office = Location { name: "Bonn".into(), latitude: 50.73, longitude: 7.1 };
+        assert!(store.set_location(Some(office)));
+        assert!(!store.apply_fetch(&due[0], Ok(response.clone())));
+        let due = store.due_fetches(&assigned);
+        assert_eq!(due.len(), 1);
+        assert!(store.apply_fetch(&due[0], Ok(response)));
+        assert!(texts(&store).contains(&json!("Bonn")));
+        // Neue Firmware zeigt Umlaute, alte bekommt die Umschrift.
+        assert!(store.set_location(Some(Location { name: "Köln".into(), latitude: 50.94, longitude: 6.96 })));
+        let due = store.due_fetches(&assigned);
+        assert!(store.apply_fetch(&due[0], Ok(json!({"metric": {"value": 1}}))));
+        assert!(texts(&store).contains(&json!("Koeln")));
+        let modern = store.records[id].scene(
+            SceneLayout::Portrait, Language::De, Theme::Dark, store.location(), 2);
+        assert_eq!(modern["nodes"][0]["text"], "Köln");
+
+        assert!(store.set_location(None));
+        assert!(store.records[id].data.is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn place_search_results_are_bounded_and_validated() {
+        let places = parse_places(&json!({"results": [
+            {"name": "Köln", "admin1": "Nordrhein-Westfalen", "country": "Deutschland",
+             "latitude": 50.93333, "longitude": 6.95},
+            {"name": "Luxemburg", "admin1": "Luxemburg", "country": "Luxemburg",
+             "latitude": 49.61, "longitude": 6.13},
+            {"name": "Kaputt", "latitude": 200.0, "longitude": 0.0},
+            {"name": "", "latitude": 1.0, "longitude": 1.0}
+        ]}));
+        assert_eq!(places.len(), 2);
+        assert_eq!(places[0].detail, "Nordrhein-Westfalen, Deutschland");
+        assert_eq!(places[1].detail, "");
+        assert!(parse_places(&json!({"generationtime_ms": 0.4})).is_empty());
+
+        let addresses = parse_addresses(&json!([
+            {"lat": "48.8926754", "lon": "8.6796884", "name": "Firma",
+             "address": {"house_number": "104", "road": "Maximilianstraße", "city": "Pforzheim",
+                         "state": "Baden-Württemberg", "country": "Deutschland"}},
+            {"lat": "nicht", "lon": "8.0", "address": {"city": "Kaputt"}},
+            {"lat": "47.0", "lon": "8.0", "address": {}}
+        ]));
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0].name, "Pforzheim");
+        assert_eq!(addresses[0].detail, "Maximilianstraße 104, Baden-Württemberg, Deutschland");
+        assert_eq!(addresses[0].latitude, 48.8926754);
+        assert!(parse_addresses(&json!({"error": "x"})).is_empty());
+    }
+
     fn test_root() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // SystemTime can repeat across parallel tests even when expressed in
+        // nanoseconds; each store must own its files and cleanup independently.
+        static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "aimonitor-plugin-test-{}-{nonce}",
+            "aimonitor-plugin-test-{}-{nonce}-{sequence}",
             std::process::id()
         ))
+    }
+
+    const URL_FIXTURE: &[u8] =
+        include_bytes!("../../../../tests/fixtures/display-plugin-url/plugin.json");
+
+    #[test]
+    fn url_fixture_parses_and_renders_all_layouts() {
+        let manifest = aimonitor_core::plugin::parse_manifest(URL_FIXTURE).unwrap();
+        let response: Value = serde_json::from_slice(include_bytes!(
+            "../../../../tests/fixtures/display-plugin-url/response.json"
+        )).unwrap();
+        let settings = manifest.default_settings();
+        assert_eq!(manifest.source_url(&settings).unwrap(), "https://example.org/api?scale=1");
+        for layout in [SceneLayout::Portrait, SceneLayout::Landscape, SceneLayout::Square] {
+            let scene = manifest.scene_at(layout, &response, &settings, Theme::Dark, "en", None).unwrap();
+            let nodes = scene["nodes"].as_array().unwrap();
+            assert!(nodes.iter().any(|n| n["text"] == "18 pts"));
+            assert!(nodes.iter().any(|n| n["text"] == "Active"));
+            assert!(nodes.iter().any(|n| n["text"] == "Level 62%"));
+        }
+    }
+
+    #[test]
+    fn url_defaults_follow_updates_but_custom_urls_survive() {
+        let old: Value = serde_json::from_slice(URL_FIXTURE).unwrap();
+        let id = old["id"].as_str().unwrap();
+        let mut new = old.clone();
+        new["version"] = json!("1.1.0");
+        new["settings"][2]["default"] = json!("https://example.org/v2?scale={scale}");
+        for custom in [false, true] {
+            for legacy in [false, true] {
+                let root = test_root();
+                let mut store = PluginStore::load(root.clone());
+                store.install(&package(URL_FIXTURE)).unwrap();
+                let mut settings = store.records[id].settings.clone();
+                settings.insert("label".into(), json!("Bonn"));
+                settings.insert("scale".into(), json!(7));
+                if custom {
+                    settings.insert("endpoint".into(), json!("https://custom.example/data?scale={scale}"));
+                }
+                store.configure(id, settings.clone()).unwrap();
+                let saved: Value = serde_json::from_slice(&fs::read(store.settings_path(id)).unwrap()).unwrap();
+                assert_eq!(saved.get("endpoint").is_some(), custom);
+                if legacy {
+                    fs::write(store.settings_path(id), serde_json::to_vec(&settings).unwrap()).unwrap();
+                }
+                let mut store = PluginStore::load(root.clone());
+                store.install(&package(new.to_string().as_bytes())).unwrap();
+                let store = PluginStore::load(root.clone());
+                let restored = &store.records[id].settings;
+                assert_eq!(restored["label"], "Bonn");
+                assert_eq!(restored["scale"], 7);
+                assert_eq!(restored["endpoint"], if custom {
+                    json!("https://custom.example/data?scale={scale}")
+                } else {
+                    new["settings"][2]["default"].clone()
+                });
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn update_keeps_old_package_if_settings_cannot_be_saved() {
+        let root = test_root();
+        let mut store = PluginStore::load(root.clone());
+        let info = store.install(&package(URL_FIXTURE)).unwrap();
+        let mut saved = info.settings.clone();
+        saved.insert("label".into(), json!("Bonn"));
+        store.configure(&info.id, saved.clone()).unwrap();
+        let mut new: Value = serde_json::from_slice(URL_FIXTURE).unwrap();
+        new["version"] = json!("1.1.0");
+        new["settings"][2]["default"] = json!("https://new.example/v2");
+        // Force a real persistence failure on both Unix and Windows.
+        fs::create_dir(store.settings_path(&info.id).with_extension("part")).unwrap();
+        assert!(store.install(&package(new.to_string().as_bytes())).is_err());
+        assert_eq!(store.records[&info.id].info().sha256, info.sha256);
+        let reloaded = PluginStore::load(root.clone());
+        assert_eq!(reloaded.records[&info.id].info().sha256, info.sha256);
+        assert_eq!(reloaded.records[&info.id].settings, saved);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_update_after_package_activation_does_not_pin_old_url() {
+        let root = test_root();
+        let mut store = PluginStore::load(root.clone());
+        let info = store.install(&package(URL_FIXTURE)).unwrap();
+        let mut saved = info.settings.clone();
+        saved.insert("label".into(), json!("Bonn"));
+        // Start from a full legacy file. Fail staging AFTER install's early
+        // settings write, so the test catches removal of that write.
+        fs::write(store.settings_path(&info.id), serde_json::to_vec(&saved).unwrap()).unwrap();
+        let mut store = PluginStore::load(root.clone());
+        let mut new: Value = serde_json::from_slice(URL_FIXTURE).unwrap();
+        new["version"] = json!("1.1.0");
+        new["settings"][2]["default"] = json!("https://new.example/v2");
+        let staged = root.join(format!(".{}.installing", info.id));
+        fs::create_dir(&staged).unwrap();
+        assert!(store.install(&package(new.to_string().as_bytes())).is_err());
+        let persisted: Value = serde_json::from_slice(
+            &fs::read(store.settings_path(&info.id)).unwrap()
+        ).unwrap();
+        assert!(persisted.get("endpoint").is_none());
+        let unchanged = PluginStore::load(root.clone());
+        assert_eq!(unchanged.records[&info.id].info().sha256, info.sha256);
+        assert_eq!(unchanged.records[&info.id].settings, saved);
+        fs::remove_dir(&staged).unwrap();
+        fs::rename(store.package_path(&info.id), root.join(format!(".{}.previous", info.id))).unwrap();
+        fs::write(store.package_path(&info.id), package(new.to_string().as_bytes())).unwrap();
+        // Crash here, before the post-activation settings write.
+        let reloaded = PluginStore::load(root.clone());
+        assert_eq!(reloaded.records[&info.id].settings["endpoint"], "https://new.example/v2");
+        assert_eq!(reloaded.records[&info.id].settings["label"], "Bonn");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_url_recovers_without_resetting_other_preferences() {
+        let root = test_root();
+        let mut store = PluginStore::load(root.clone());
+        let info = store.install(&package(URL_FIXTURE)).unwrap();
+        let mut saved = info.settings.clone();
+        saved.insert("endpoint".into(), json!("http://invalid.example/"));
+        saved.insert("label".into(), json!("Bonn"));
+        saved.insert("scale".into(), json!(7));
+        fs::write(store.settings_path(&info.id), serde_json::to_vec(&saved).unwrap()).unwrap();
+        let store = PluginStore::load(root.clone());
+        let restored = &store.records[&info.id].settings;
+        assert_eq!(restored["endpoint"], info.settings["endpoint"]);
+        assert_eq!(restored["label"], "Bonn");
+        assert_eq!(restored["scale"], 7);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_endpoint_survives_restart_update_and_rejects_old_fetches() {
+        let mut manifest: Value = serde_json::from_slice(include_bytes!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        )).unwrap();
+        manifest["formatVersion"] = json!(4);
+        let template = manifest["source"].as_object_mut().unwrap().remove("url").unwrap();
+        manifest["source"]["urlSetting"] = json!("endpoint");
+        manifest["settings"].as_array_mut().unwrap().push(json!({
+            "key":"endpoint", "label":"Data URL", "kind":"url", "default":template
+        }));
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer.start_file("plugin.json", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let package = writer.finish().unwrap().into_inner();
+        let root = test_root();
+        let id = "org.aimonitor.fixture";
+        let mut store = PluginStore::load(root.clone());
+        store.install(&package).unwrap();
+        let assigned = HashSet::from([id.to_owned()]);
+        let old = store.due_fetches(&assigned).remove(0);
+        let mut settings = store.records[id].settings.clone();
+        settings.insert("endpoint".into(), json!("https://new.example:8443/metrics?scale={scale}"));
+        assert_eq!(store.configure(id, settings.clone()).unwrap().source_origin, "https://new.example:8443");
+        assert!(!store.apply_fetch(&old, Ok(json!({}))));
+        assert!(store.records[id].data.is_none());
+        let mut invalid = settings.clone();
+        invalid.insert("endpoint".into(), json!("http://new.example/"));
+        assert!(store.configure(id, invalid).is_err());
+        assert_eq!(store.records[id].settings, settings);
+        let due = store.due_fetches(&assigned).remove(0);
+        assert_eq!(due.manifest.source_url(&due.settings).unwrap(), "https://new.example:8443/metrics?scale=1");
+        let mut restored = PluginStore::load(root.clone());
+        assert_eq!(restored.records[id].settings, settings);
+        restored.install(&package).unwrap();
+        assert_eq!(restored.records[id].settings, settings);
+        assert_eq!(restored.records[id].info().source_origin, "https://new.example:8443");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -582,7 +1092,8 @@ mod tests {
         let due = store.due_fetches(&assigned);
         assert_eq!(due.len(), 1);
         assert!(store.due_fetches(&assigned).is_empty());
-        let (_, sha256, _, old_settings) = &due[0];
+        let stale = due[0].clone();
+        let old_settings = &stale.settings;
         let response: Value = serde_json::from_str(include_str!(
             "../../../../tests/fixtures/display-plugin/response.json"
         ))
@@ -591,26 +1102,27 @@ mod tests {
         let mut updated = old_settings.clone();
         updated.insert("label".into(), json!("Updated"));
         store.configure(id, updated.clone()).unwrap();
-        assert!(!store.apply_fetch(id, sha256, old_settings, Ok(response.clone())));
+        assert!(!store.apply_fetch(&stale, Ok(response.clone())));
         assert!(store.records[id].data.is_none());
         let due = store.due_fetches(&assigned);
         assert_eq!(due.len(), 1);
-        assert!(store.apply_fetch(id, &due[0].1, &updated, Ok(response)));
-        let scene = store.records[id].scene(SceneLayout::Portrait, Language::En, Theme::Dark);
+        assert_eq!(due[0].settings, updated);
+        assert!(store.apply_fetch(&due[0], Ok(response)));
+        let scene = store.records[id].scene(SceneLayout::Portrait, Language::En, Theme::Dark, None, 2);
         assert!(scene["nodes"]
             .as_array()
             .unwrap()
             .iter()
             .any(|node| node["text"] == "Updated"));
 
-        assert!(!store.apply_fetch(id, &due[0].1, &updated, Err("offline".into())));
-        let unavailable = store.records[id].scene(SceneLayout::Portrait, Language::En, Theme::Dark);
+        assert!(!store.apply_fetch(&due[0], Err("offline".into())));
+        let unavailable = store.records[id].scene(SceneLayout::Portrait, Language::En, Theme::Dark, None, 2);
         assert!(unavailable["nodes"]
             .as_array()
             .unwrap()
             .iter()
             .any(|node| node["text"] == "Data unavailable: offline"));
-        let unavailable_de = store.records[id].scene(SceneLayout::Portrait, Language::De, Theme::Dark);
+        let unavailable_de = store.records[id].scene(SceneLayout::Portrait, Language::De, Theme::Dark, None, 2);
         assert!(unavailable_de["nodes"]
             .as_array()
             .unwrap()

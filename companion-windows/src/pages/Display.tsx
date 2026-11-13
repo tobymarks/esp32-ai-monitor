@@ -2,13 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import {
   getTimezones,
   renameDevice,
+  searchPlaces,
   setBrightness,
+  setDeviceLocation,
   setTimezone,
   updateProfile,
   type ConnectionSnapshot,
+  type DeviceLocation,
   type DisplayLanguage,
   type Orientation,
   type ProviderInfo,
+  type Place,
   type PluginInfo,
   type Settings,
   type ThemeSetting,
@@ -42,6 +46,13 @@ export default function Display({ t, locale, connection, settings, providers, pl
   const [nameError, setNameError] = useState<string | null>(null);
   const [brightness, setBrightnessValue] = useState(profile?.brightness ?? 80);
   const [timezones, setTimezones] = useState<TimeZoneOption[]>([]);
+  const [placeQuery, setPlaceQuery] = useState("");
+  const [places, setPlaces] = useState<Place[] | null>(null);
+  const [placeBusy, setPlaceBusy] = useState(false);
+  const [placeError, setPlaceError] = useState<string | null>(null);
+  const [latitude, setLatitude] = useState("");
+  const [longitude, setLongitude] = useState("");
+  const placeRequest = useRef(0);
   const persistTimer = useRef<number | null>(null);
   const dragging = useRef(false);
 
@@ -54,6 +65,20 @@ export default function Display({ t, locale, connection, settings, providers, pl
   useEffect(() => {
     if (!dragging.current && profile) setBrightnessValue(profile.brightness);
   }, [profile?.mac, profile?.brightness]);
+
+  // Der Standort gehört zum Profil; beim Gerätewechsel Suche und Felder zurücksetzen.
+  useEffect(() => {
+    placeRequest.current += 1;
+    setPlaceQuery("");
+    setPlaces(null);
+    setPlaceBusy(false);
+    setPlaceError(null);
+    setLatitude(profile?.location ? String(profile.location.latitude) : "");
+    setLongitude(profile?.location ? String(profile.location.longitude) : "");
+    // Eine Antwort für das alte Gerät darf auch nach dem Schließen der Seite
+    // keine Treffer, Fehler oder den Ladezustand der nächsten Suche übernehmen.
+    return () => { placeRequest.current += 1; };
+  }, [profile?.mac, profile?.location?.name, profile?.location?.latitude, profile?.location?.longitude, locale]);
 
   useEffect(() => {
     getTimezones().then(setTimezones).catch((e) => console.error("get_timezones", e));
@@ -103,6 +128,57 @@ export default function Display({ t, locale, connection, settings, providers, pl
     }
   };
 
+  const discardPlaceSearch = () => {
+    placeRequest.current += 1;
+    setPlaces(null);
+    setPlaceError(null);
+    setPlaceBusy(false);
+    return placeRequest.current;
+  };
+
+  const findPlaces = async () => {
+    const query = placeQuery.trim();
+    if (!profile || query.length < 2) return;
+    const request = discardPlaceSearch();
+    setPlaceBusy(true);
+    try {
+      const results = await searchPlaces(query, locale);
+      if (request === placeRequest.current) setPlaces(results);
+    } catch (e) {
+      if (request !== placeRequest.current) return;
+      console.error("search_places", e);
+      setPlaceError(t("disp.location.err.search"));
+    } finally {
+      if (request === placeRequest.current) setPlaceBusy(false);
+    }
+  };
+
+  const saveLocation = async (location: DeviceLocation | null) => {
+    if (!profile) return;
+    const request = discardPlaceSearch();
+    try {
+      await setDeviceLocation(profile.mac, location);
+      if (request !== placeRequest.current) return;
+      setPlaceQuery("");
+    } catch (e) {
+      if (request === placeRequest.current) setPlaceError(t(String(e)));
+    }
+  };
+
+  const saveCoordinates = () => {
+    const lat = Number(latitude.replace(",", "."));
+    const lon = Number(longitude.replace(",", "."));
+    if (!latitude.trim() || !longitude.trim() || !Number.isFinite(lat) || !Number.isFinite(lon)
+      || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      setPlaceError(t("disp.location.err.invalid"));
+      return;
+    }
+    // Ein gesuchter Ortsname bleibt nur, solange die Koordinaten dazu passen.
+    const same = profile?.location?.latitude === lat && profile?.location?.longitude === lon;
+    saveLocation({ name: same ? profile!.location!.name : "", latitude: lat, longitude: lon });
+  };
+
+  const coordinates = (place: DeviceLocation) => `${place.latitude.toFixed(3)}, ${place.longitude.toFixed(3)}`;
   const disabled = !connected || !profile;
 
   return (
@@ -245,6 +321,76 @@ export default function Display({ t, locale, connection, settings, providers, pl
         </select>
       </div>
       <p className="muted">{t("disp.tz.intro")}</p>
+
+      <h2>{t("disp.location.label")}</h2>
+      <p className="muted">{t("disp.location.intro")}</p>
+      <div className="field-row">
+        <span className="field-label">{t("disp.location.current")}</span>
+        <span>
+          {profile?.location
+            ? profile.location.name
+              ? `${profile.location.name} (${coordinates(profile.location)})`
+              : coordinates(profile.location)
+            : t("disp.location.none")}
+        </span>
+        {profile?.location && (
+          <button type="button" className="btn" onClick={() => saveLocation(null)}>{t("disp.location.clear")}</button>
+        )}
+      </div>
+      <div className="field-row">
+        <label className="field-label" htmlFor="place-search">
+          {t("disp.location.search.label")}
+        </label>
+        <input
+          id="place-search"
+          className="input"
+          type="search"
+          maxLength={80}
+          value={placeQuery}
+          disabled={!profile}
+          placeholder={t("disp.location.placeholder")}
+          onChange={(e) => {
+            discardPlaceSearch();
+            setPlaceQuery(e.target.value);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") findPlaces();
+          }}
+        />
+        <button type="button" className="btn" disabled={!profile || placeBusy || placeQuery.trim().length < 2} onClick={findPlaces}>
+          {t("disp.location.search")}
+        </button>
+      </div>
+      {places && places.length === 0 && <p className="muted">{t("disp.location.noresults")}</p>}
+      {places && places.length > 0 && (
+        <div className="place-results" role="list">
+          {places.map((place) => (
+            <button
+              key={`${place.latitude},${place.longitude}`}
+              type="button"
+              role="listitem"
+              className="btn"
+              onClick={() => saveLocation({ name: place.name, latitude: place.latitude, longitude: place.longitude })}
+            >
+              {place.detail ? `${place.name} · ${place.detail}` : place.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="field-row">
+        <label className="field-label" htmlFor="place-latitude">
+          {t("disp.location.coords.label")}
+        </label>
+        <input id="place-latitude" className="input input-coordinate" type="text" inputMode="decimal" value={latitude}
+          disabled={!profile} placeholder={t("disp.location.latitude")} aria-label={t("disp.location.latitude")}
+          onChange={(e) => { discardPlaceSearch(); setLatitude(e.target.value); }} />
+        <input className="input input-coordinate" type="text" inputMode="decimal" value={longitude}
+          disabled={!profile} placeholder={t("disp.location.longitude")} aria-label={t("disp.location.longitude")}
+          onChange={(e) => { discardPlaceSearch(); setLongitude(e.target.value); }} />
+        <button type="button" className="btn" disabled={!profile} onClick={saveCoordinates}>{t("disp.location.coords.apply")}</button>
+      </div>
+      {placeError && <p className="notice-bad" role="alert">{placeError}</p>}
+      <p className="muted small">{t("disp.location.attribution")}</p>
       <p className="muted">{t("disp.test.hint")}</p>
     </section>
   );

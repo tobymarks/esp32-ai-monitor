@@ -42,8 +42,10 @@ extension SettingsWindowController {
     func updatePluginsSection(force: Bool = false) {
         guard pluginListStack != nil else { return }
         let records = DisplayPlugins.shared.records
-        let signature = records.keys.sorted().map { id in
+        let hasLocation = DisplayPlugins.currentLocation() != nil
+        let signature = "\(hasLocation)|" + records.keys.sorted().map { id in
             "\(id):\(records[id]?.info["version"] as? String ?? ""):"
+                + "\(records[id]?.info["sourceOrigin"] as? String ?? ""):"
                 + "\(records[id]?.fetchedAt?.timeIntervalSince1970 ?? 0):\(records[id]?.error ?? "")"
         }.joined(separator: "|")
         guard force || signature != pluginsSignature else { return }
@@ -62,8 +64,12 @@ extension SettingsWindowController {
             let title = makeSectionHeading("\(name)  \(version)")
             let origin = info["sourceOrigin"] as? String ?? "?"
             let author = info["author"] as? String ?? "?"
-            let detail = NSTextField(wrappingLabelWithString:
-                L("plugins.detail", id, author, origin))
+            var detailText = L("plugins.detail", id, author, origin)
+            if record.requiresLocation {
+                detailText += "\n" + L("plugins.location", origin)
+                if !hasLocation { detailText += " " + L("plugins.location.missing") }
+            }
+            let detail = NSTextField(wrappingLabelWithString: detailText)
             detail.font = NSFont.appFont(.subheadline)
             detail.textColor = .secondaryLabelColor
             let attribution = DisplayPlugins.localized(info["attribution"] as? String ?? "", info: info)
@@ -90,7 +96,9 @@ extension SettingsWindowController {
                 let value = record.settings[key]
                 let field = NSTextField(string: value.map { "\($0)" } ?? "")
                 field.translatesAutoresizingMaskIntoConstraints = false
-                field.widthAnchor.constraint(equalToConstant: 220).isActive = true
+                let isURL = spec["kind"] as? String == "url"
+                field.widthAnchor.constraint(equalToConstant: isURL ? 420 : 220).isActive = true
+                if isURL { field.placeholderString = "https://" }
                 rows.append(twoColumnRow(label, field))
                 fields[key] = field
             }
@@ -101,7 +109,9 @@ extension SettingsWindowController {
             let remove = NSButton(title: L("plugins.remove"), target: self,
                                   action: #selector(removeInstalledPlugin(_:)))
             remove.identifier = NSUserInterfaceItemIdentifier(id)
-            let actions = NSStackView(views: [save, remove])
+            // Ohne eigene Einstellungen (etwa bei Plugins, die nur den Standort
+            // des Displays nutzen) gibt es nichts zu speichern.
+            let actions = NSStackView(views: fields.isEmpty ? [remove] : [save, remove])
             actions.orientation = .horizontal
             actions.spacing = 8
             rows.append(actions)
@@ -138,8 +148,11 @@ extension SettingsWindowController {
                 let author = info["author"] as? String ?? "?"
                 let origin = info["sourceOrigin"] as? String ?? "?"
                 let hash = info["sha256"] as? String ?? "?"
-                self.pluginPreviewLabel.stringValue = L("plugins.preview", name, author, origin,
-                                                         String(hash.prefix(16)))
+                var preview = L("plugins.preview", name, author, origin, String(hash.prefix(16)))
+                if info["requiresLocation"] as? Bool == true {
+                    preview += " " + L("plugins.location", origin)
+                }
+                self.pluginPreviewLabel.stringValue = preview
                 self.pluginInstallButton.isEnabled = true
             case .failure(let error):
                 self.pluginPreviewLabel.stringValue = error.localizedDescription
@@ -159,7 +172,7 @@ extension SettingsWindowController {
                 self.pluginPreview = nil
                 self.pluginPreviewLabel.stringValue = L("plugins.installed", DisplayPlugins.localized(info["name"] as? String ?? "Plugin", info: info))
                 self.updatePluginsSection(force: true)
-                self.updateViewsSection(force: true)
+                self.updateViewsSection()
             case .failure(let error):
                 self.pluginPreviewLabel.stringValue = error.localizedDescription
             }
@@ -179,6 +192,8 @@ extension SettingsWindowController {
                     return
                 }
                 values[key] = number
+            } else if spec["kind"] as? String == "url" {
+                values[key] = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             } else {
                 values[key] = field.stringValue
             }
@@ -206,7 +221,7 @@ extension SettingsWindowController {
             }
             monitor?.updateDisplayViews(views)
             updatePluginsSection(force: true)
-            updateViewsSection(force: true)
+            updateViewsSection()
         } catch {
             pluginPreviewLabel.stringValue = error.localizedDescription
         }
