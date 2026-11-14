@@ -40,6 +40,7 @@ jobs:
       - name: Install native firmware dependencies
         run: |
           pip install platformio
+          mkdir -p .pio/libdeps/esp32dev
           python - <<'PY'
           import configparser
           import subprocess
@@ -75,6 +76,7 @@ jobs:
       - name: Install native firmware dependencies
         run: |
           pip install platformio
+          mkdir -p .pio/libdeps/esp32dev
           python - <<'PY'
           import configparser
           import subprocess
