@@ -159,7 +159,7 @@ extension SettingsWindowController {
                 self.pluginPreview = nil
                 self.pluginPreviewLabel.stringValue = L("plugins.installed", DisplayPlugins.localized(info["name"] as? String ?? "Plugin", info: info))
                 self.updatePluginsSection(force: true)
-                self.updateViewsSection(force: true)
+                self.updateViewsSection()
             case .failure(let error):
                 self.pluginPreviewLabel.stringValue = error.localizedDescription
             }
@@ -206,7 +206,7 @@ extension SettingsWindowController {
             }
             monitor?.updateDisplayViews(views)
             updatePluginsSection(force: true)
-            updateViewsSection(force: true)
+            updateViewsSection()
         } catch {
             pluginPreviewLabel.stringValue = error.localizedDescription
         }

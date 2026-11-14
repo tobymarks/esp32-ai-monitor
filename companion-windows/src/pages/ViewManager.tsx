@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { CLAUDE_CODE_VIEW, pluginText, pluginViewLabel, type ConnectionSnapshot, type PluginInfo, type ProviderInfo, type Settings, type ViewContent } from "../api";
+import { CLAUDE_CODE_VIEW, onSettingsOpened, pluginText, pluginViewLabel, type ConnectionSnapshot, type PluginInfo, type ProviderInfo, type Settings, type ViewContent } from "../api";
 import type { Translate } from "../i18n";
 
 interface Props {
@@ -20,7 +20,8 @@ const GLYPHS: Record<string, string> = {
 };
 
 export default function ViewManager({ t, locale, settings, providers, plugins, connection, onSettings }: Props) {
-  const [selected, setSelected] = useState(0);
+  const [selected, setSelected] = useState(() => Math.max(0, Math.min(settings.activeView, settings.views.length - 1)));
+  const selectedDevice = useRef(connection?.profile?.mac);
   const [dragging, setDragging] = useState(false);
   const [dragPoint, setDragPoint] = useState<{ x: number; y: number } | null>(null);
   const [dragContent, setDragContent] = useState<ViewContent | null>(null);
@@ -28,8 +29,29 @@ export default function ViewManager({ t, locale, settings, providers, plugins, c
   const suppressClick = useRef(false);
   const [draftInterval, setDraftInterval] = useState(String(settings.viewIntervalSeconds));
   const views = settings.views;
+  const activeSelection = useRef(0);
+  activeSelection.current = Math.max(0, Math.min(settings.activeView, views.length - 1));
 
-  useEffect(() => setSelected((index) => Math.min(index, views.length - 1)), [views.length]);
+  // Das native Fenster wird beim Schliessen nur versteckt. Beim erneuten
+  // Oeffnen wird der Editor deshalb nicht automatisch neu gemountet.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    onSettingsOpened(() => setSelected(activeSelection.current)).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
+
+  useEffect(() => setSelected((index) => Math.max(0, Math.min(index, views.length - 1))), [views.length]);
+  useEffect(() => {
+    const device = connection?.profile?.mac;
+    if (device && device !== selectedDevice.current) {
+      setSelected(Math.max(0, Math.min(settings.activeView, views.length - 1)));
+      selectedDevice.current = device;
+    }
+  }, [connection?.profile?.mac, settings.activeView, views.length]);
   useEffect(() => setDraftInterval(String(settings.viewIntervalSeconds)), [settings.viewIntervalSeconds]);
 
   const commitInterval = () => {

@@ -34,3 +34,37 @@ struct DisplayViewEditorState {
         activeIndex = index
     }
 }
+
+/// Editing selection per opening and device. Live updates must not make it
+/// follow the active display window.
+struct DisplayViewEditorSelection {
+    private(set) var index = 0
+    private var initialized = false
+    private var deviceID: String?
+
+    mutating func reset() {
+        initialized = false
+    }
+
+    mutating func update(count: Int, active: Int, deviceID: String?) {
+        guard count > 0 else {
+            index = 0
+            initialized = false
+            return
+        }
+        if !initialized || (deviceID != nil && deviceID != self.deviceID) {
+            index = min(max(0, active), count - 1)
+            initialized = true
+        } else {
+            index = min(max(0, index), count - 1)
+        }
+        // A disconnect alone is not a change of device.
+        if let deviceID { self.deviceID = deviceID }
+    }
+
+    mutating func select(_ index: Int, count: Int) {
+        guard (0..<count).contains(index) else { return }
+        self.index = index
+        initialized = true
+    }
+}

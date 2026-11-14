@@ -161,6 +161,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var footerAboutButton: NSButton!
 
     var refreshTimer: Timer?
+    private var resetViewsSelectionOnShow = true
 
     enum SettingsSection: Int, CaseIterable {
         case overview
@@ -266,6 +267,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Von AppDelegate aufgerufen
     func show() {
+        if resetViewsSelectionOnShow {
+            viewsEditor?.resetSelection()
+            resetViewsSelectionOnShow = false
+        }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         update()
@@ -273,6 +278,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        resetViewsSelectionOnShow = true
         stopRefreshTimer()
         brightnessPersistTimer?.invalidate()
         brightnessPersistTimer = nil
@@ -482,6 +488,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func showSection(_ section: SettingsSection) {
+        if section == .display, sectionViews[section.rawValue].isHidden {
+            viewsEditor?.resetSelection()
+            updateViewsSection()
+        }
         for (index, view) in sectionViews.enumerated() {
             view.isHidden = index != section.rawValue
         }
@@ -923,8 +933,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refreshLiveLabels()
     }
 
-    /// Für Timer-Tick (Alter des letzten Updates).
+    /// Für Timer-Tick (Alter des letzten Updates und Uhrvorschau).
     private func refreshLiveLabels() {
+        if viewsEditor?.isHiddenOrHasHiddenAncestor == false {
+            viewsEditor?.refreshPreviewClock()
+        }
         guard let monitor = monitor else { return }
         // Ab v1.14.2: „Letztes Update an ESP32" nur im State `.connected`
         // anzeigen — sonst ist die Aussage nicht definiert.

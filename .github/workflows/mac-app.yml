@@ -90,6 +90,9 @@ jobs:
             exit 1
           fi
 
+      - name: Test Mac display view editor
+        run: bash scripts/test_mac_view_editor.sh
+
       - name: Install PlatformIO (fuer esptool-Bundle in AI Monitor.app)
         run: |
           # build.sh kopiert das PlatformIO-esptool-Package in die App-Bundle-
