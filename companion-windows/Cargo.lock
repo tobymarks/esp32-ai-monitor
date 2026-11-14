@@ -69,6 +69,7 @@ name = "aimonitor-plugin-host"
 version = "1.4.2"
 dependencies = [
  "aimonitor-core",
+ "aimonitor-plugin-store",
  "serde_json",
  "ureq",
  "url",

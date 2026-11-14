@@ -2,6 +2,7 @@
 //! executed: the package is a validated declarative manifest.
 
 use aimonitor_core::claude_code;
+use aimonitor_core::device::Location;
 use aimonitor_core::plugin::{Manifest, SceneLayout};
 use aimonitor_core::protocol::Theme;
 use aimonitor_core::plugin_package::{parse_package, MAX_PACKAGE_BYTES};
@@ -48,14 +49,19 @@ fn inspect(manifest: &Manifest, sha256: &str) -> Result<Value, String> {
         "intervalSeconds": manifest.source.interval_seconds,
         "sha256": sha256,
         "signed": false,
+        "requiresLocation": manifest.requires_location(),
         "settingsSpec": manifest.settings,
         "localizations": manifest.localizations,
         "settings": manifest.default_settings(),
     }))
 }
 
-fn fetch(manifest: &Manifest, settings: &Map<String, Value>) -> Result<Value, String> {
-    let url = manifest.source_url(settings)?;
+fn fetch(
+    manifest: &Manifest,
+    settings: &Map<String, Value>,
+    location: Option<&Location>,
+) -> Result<Value, String> {
+    let url = manifest.request_url(settings, location)?;
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(12)))
         .max_redirects(0)
@@ -117,10 +123,19 @@ fn download_package(source: &str) -> Result<Vec<u8>, String> {
     Err("too many plugin redirects".into())
 }
 
-fn parse_arguments(raw_args: Vec<String>) -> Result<(Vec<String>, Theme, String), String> {
+struct Options {
+    args: Vec<String>,
+    theme: Theme,
+    locale: String,
+    /// `--location={"name":…,"latitude":…,"longitude":…}` of the connected display.
+    location: Option<Location>,
+}
+
+fn parse_arguments(raw_args: Vec<String>) -> Result<Options, String> {
     let mut args = Vec::with_capacity(raw_args.len());
     let mut theme = None;
     let mut locale = None;
+    let mut location = None;
     for (index, arg) in raw_args.into_iter().enumerate() {
         if index != 0 {
             if let Some(value) = arg.strip_prefix("--theme=") {
@@ -142,19 +157,42 @@ fn parse_arguments(raw_args: Vec<String>) -> Result<(Vec<String>, Theme, String)
                 locale = Some(value.to_owned());
                 continue;
             }
+            if let Some(value) = arg.strip_prefix("--location=") {
+                if location.is_some() {
+                    return Err("duplicate plugin location".into());
+                }
+                let place: Location =
+                    serde_json::from_str(value).map_err(|_| "invalid plugin location")?;
+                if !place.is_valid() {
+                    return Err("invalid plugin location".into());
+                }
+                location = Some(place);
+                continue;
+            }
         }
         args.push(arg);
     }
-    Ok((args, theme.unwrap_or(Theme::Dark), locale.unwrap_or_else(|| "en".into())))
+    Ok(Options {
+        args,
+        theme: theme.unwrap_or(Theme::Dark),
+        locale: locale.unwrap_or_else(|| "en".into()),
+        location,
+    })
 }
 
 fn run() -> Result<Value, String> {
-    let (args, theme, locale) = parse_arguments(env::args().collect())?;
+    let Options { args, theme, locale, location } = parse_arguments(env::args().collect())?;
+    let location = location.as_ref();
     if args.get(1).map(String::as_str) == Some("claude-hooks") {
         return claude_hooks(&args);
     }
     if args.len() < 3 {
         return Err("usage: aimonitor-plugin-host inspect|render PACKAGE [SETTINGS] [portrait|landscape|square|all] [FIXTURE]".into());
+    }
+    // `places QUERY`: Ortssuche für den Standort eines Displays.
+    if args[1] == "places" && args.len() == 3 {
+        let places = aimonitor_plugin_store::search_places(&args[2], &locale)?;
+        return Ok(json!({"places": places}));
     }
     if args[1] == "download" && args.len() == 4 {
         let bytes = download_package(&args[2])?;
@@ -200,17 +238,17 @@ fn run() -> Result<Value, String> {
                 let bytes = read_bounded(Path::new(&args[5]), MAX_SOURCE_BYTES)?;
                 serde_json::from_slice(&bytes).map_err(|_| "invalid fixture JSON")?
             } else {
-                fetch(&package.manifest, &settings)?
+                fetch(&package.manifest, &settings, location)?
             };
             if orientation == "all" {
-                let portrait = package.manifest.scene_with_theme_and_locale(
-                    SceneLayout::Portrait, &data, &settings, theme, &locale,
+                let portrait = package.manifest.scene_at(
+                    SceneLayout::Portrait, &data, &settings, theme, &locale, location,
                 )?;
-                let landscape = package.manifest.scene_with_theme_and_locale(
-                    SceneLayout::Landscape, &data, &settings, theme, &locale,
+                let landscape = package.manifest.scene_at(
+                    SceneLayout::Landscape, &data, &settings, theme, &locale, location,
                 )?;
-                let square = package.manifest.scene_with_theme_and_locale(
-                    SceneLayout::Square, &data, &settings, theme, &locale,
+                let square = package.manifest.scene_at(
+                    SceneLayout::Square, &data, &settings, theme, &locale, location,
                 )?;
                 Ok(json!({
                     "scenes": {"portrait": portrait, "landscape": landscape, "square": square},
@@ -222,8 +260,8 @@ fn run() -> Result<Value, String> {
                     "square" => SceneLayout::Square,
                     _ => SceneLayout::Portrait,
                 };
-                let scene = package.manifest.scene_with_theme_and_locale(
-                    layout, &data, &settings, theme, &locale,
+                let scene = package.manifest.scene_at(
+                    layout, &data, &settings, theme, &locale, location,
                 )?;
                 Ok(json!({"scene": scene}))
             }
@@ -275,25 +313,36 @@ mod tests {
                 let mut input = expected.clone();
                 input.insert(first, "--theme=light");
                 input.insert(second, "--locale=de");
-                let (args, theme, locale) =
+                let options =
                     parse_arguments(input.into_iter().map(str::to_owned).collect()).unwrap();
-                assert_eq!(args, expected);
-                assert_eq!(theme, Theme::Light);
-                assert_eq!(locale, "de");
+                assert_eq!(options.args, expected);
+                assert_eq!(options.theme, Theme::Light);
+                assert_eq!(options.locale, "de");
+                assert!(options.location.is_none());
             }
         }
         let default = parse_arguments(expected.iter().map(|s| s.to_string()).collect()).unwrap();
-        assert_eq!(default.1, Theme::Dark);
-        assert_eq!(default.2, "en");
+        assert_eq!(default.theme, Theme::Dark);
+        assert_eq!(default.locale, "en");
+        let place = parse_arguments(vec![
+            "host".into(),
+            "--location={\"name\":\"Köln\",\"latitude\":50.94,\"longitude\":6.96}".into(),
+        ])
+        .unwrap()
+        .location
+        .unwrap();
+        assert_eq!((place.name.as_str(), place.latitude), ("Köln", 50.94));
         for locale in ["pt_br", "pt.br"] {
             let input = vec!["host".to_owned(), format!("--locale={locale}")];
-            assert_eq!(parse_arguments(input).unwrap().2, locale);
+            assert_eq!(parse_arguments(input).unwrap().locale, locale);
         }
         for options in [
             vec!["--theme=light", "--theme=dark"],
             vec!["--locale=de", "--locale=en"],
             vec!["--theme=unknown"],
             vec!["--locale=DE"],
+            vec!["--location={\"latitude\":91,\"longitude\":0}"],
+            vec!["--location=50,7"],
         ] {
             let input = std::iter::once("host").chain(options).map(str::to_owned).collect();
             assert!(parse_arguments(input).is_err());

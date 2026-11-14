@@ -100,6 +100,24 @@ pub fn start_timer(app: AppHandle) {
 /// Fetch only installed plugin views that are assigned to a display window.
 /// Network requests happen outside every AppState lock.
 pub fn refresh_plugins(app: &AppHandle) {
+    // Der Standort gehört zum verbundenen Display. Hier abgleichen, damit ein
+    // Gerätewechsel oder eine Änderung im Profil ohne eigenen Auslöser greift.
+    let location = app
+        .state::<AppState>()
+        .registry
+        .lock()
+        .unwrap()
+        .current_profile()
+        .and_then(|profile| profile.location.clone());
+    let moved = {
+        let state = app.state::<AppState>();
+        let mut store = state.plugins.lock().unwrap();
+        store.set_location(location).then(|| store.list())
+    };
+    if let Some(list) = moved {
+        let _ = app.emit(plugins::PLUGINS_EVENT, list);
+        serial_service::request_resend(app);
+    }
     let assigned: HashSet<String> = app
         .state::<AppState>()
         .settings
@@ -126,16 +144,18 @@ pub fn refresh_plugins(app: &AppHandle) {
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        for (id, sha256, manifest, settings) in due {
-            let fetched_settings = settings.clone();
-            let result =
-                tauri::async_runtime::spawn_blocking(move || plugins::fetch(&manifest, &settings))
-                    .await;
+        for fetch in due {
+            let id = fetch.id.clone();
+            let request = fetch.clone();
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                plugins::fetch(&request.manifest, &request.settings, request.location.as_ref())
+            })
+            .await;
             let result = result.unwrap_or_else(|_| Err("fetch worker failed".into()));
             let state = app.state::<AppState>();
             let (list, attention) = {
                 let mut store = state.plugins.lock().unwrap();
-                let accepted = store.apply_fetch(&id, &sha256, &fetched_settings, result);
+                let accepted = store.apply_fetch(&fetch, result);
                 let attention = if accepted {
                     store.records.get(&id).and_then(|record| record.data.as_ref()
                         .map(|data| record.manifest.attention_states(data)))
