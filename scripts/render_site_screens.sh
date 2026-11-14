@@ -6,8 +6,14 @@ OUTPUT="${AIMONITOR_SITE_OUTPUT_DIR:-$ROOT/installer/assets/screens}"
 LVGL="$ROOT/.pio/libdeps/esp32dev/lvgl"
 JSON="$ROOT/.pio/libdeps/esp32dev/ArduinoJson/src"
 mkdir -p "$BUILD" "$OUTPUT"
-cmake -S "$LVGL" -B "$BUILD" -DLV_BUILD_CONF_PATH="$ROOT/src/lv_conf.h" -DCONFIG_LV_BUILD_DEMOS=OFF -DCONFIG_LV_BUILD_EXAMPLES=OFF -DCONFIG_LV_USE_THORVG_INTERNAL=OFF -DCMAKE_BUILD_TYPE=Release > "$BUILD/configure.log" 2>&1
-cmake --build "$BUILD" --target lvgl -j 4 > "$BUILD/build.log" 2>&1
+if ! cmake -S "$LVGL" -B "$BUILD" -DLV_BUILD_CONF_PATH="$ROOT/src/lv_conf.h" -DCONFIG_LV_BUILD_DEMOS=OFF -DCONFIG_LV_BUILD_EXAMPLES=OFF -DCONFIG_LV_USE_THORVG_INTERNAL=OFF -DCMAKE_BUILD_TYPE=Release > "$BUILD/configure.log" 2>&1; then
+  cat "$BUILD/configure.log" >&2
+  exit 1
+fi
+if ! cmake --build "$BUILD" --target lvgl -j 4 > "$BUILD/build.log" 2>&1; then
+  tail -100 "$BUILD/build.log" >&2
+  exit 1
+fi
 cc -O2 -DLV_CONF_PATH=\""$ROOT/src/lv_conf.h"\" -I "$LVGL" -c "$ROOT/src/font_standby_clock_76.c" -o "$BUILD/clock.o"
 FONT_OBJECTS=()
 for FONT in "$ROOT"/src/font_ui_*.c; do

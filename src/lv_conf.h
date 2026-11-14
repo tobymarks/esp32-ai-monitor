@@ -8,7 +8,12 @@
 #ifndef LV_CONF_H
 #define LV_CONF_H
 
+// LVGL's .S files include this configuration with __ASSEMBLY__ defined.
+// C type declarations must not reach the assembler, even when its optimized
+// drawing routines are disabled and the assembly units are otherwise empty.
+#if !defined(__ASSEMBLY__) && !defined(__ASSEMBLER__)
 #include <stdint.h>
+#endif
 
 // ============================================================
 // Color settings
