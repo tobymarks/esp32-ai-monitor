@@ -206,13 +206,28 @@ cannot establish those results.
 A subsequent [S3 hardware test on 14 November 2026](../hardware-test/esp32s3-4848s040/standalone-2026-11-14.md)
 flashed commit `36edce5` after a verified full backup. It confirmed protocol-2
 scene acceptance, profile transfer and rejection, persistence across commanded
-reboots, removal, and USB ownership transitions without Wi-Fi. Actual panel
-readability remains unconfirmed; Wi-Fi/TLS, interrupted writes, touch and
-sustained operation are still hardware gates.
+reboots, removal, and USB ownership transitions. The user confirmed all seven
+UTF-8 font rows were readable and stable. Subsequent physical tests confirmed
+Wi-Fi/NTP, successful public status/weather HTTPS fetches, roughly 60–61-second
+refreshes, recovery after a commanded reboot, rejection of an expired
+certificate with an actual X.509 failure, USB takeover from a delayed fetch,
+successful chunked responses, and rejection of oversized, non-JSON, gzip and
+redirect-source responses. The wrong-host endpoint only timed out, so hostname
+rejection remains unproven. The smallest sampled free heap in these manual
+tests before the 24-hour observation was 103,432 bytes, not an internal-heap
+minimum; sampled frame glitches remained zero.
+A 24-hour diagnostic observation started on 14 November at 09:44:52 CET,
+with 30-second read-only samples and USB power. It has not yet completed and
+does not replace wall-power or continuous visual/touch qualification.
+Its first four samples already include a lower free heap of 55,668 bytes;
+the final range and trend require evaluation after the observation.
 
 Before release, test all three boards from wall power with current weather and
 service status; absent Wi-Fi/NTP; expired/wrong-host certificates; slow, chunked,
 oversized and malformed responses; USB takeover during fetch; interrupted saves;
-and a 24-hour refresh/touch run. Measure minimum internal heap, largest free
-block, worker stack margin, resets and S3 frame glitches under simultaneous
-HTTPS and explicit filesystem saves. No such physical acceptance is claimed.
+and a 24-hour refresh/touch run. S3 tests above cover only part of this matrix;
+network-loss/stale-data recovery, absent-NTP gating, wall-power/cold starts,
+interrupted writes, touch and sustained operation remain hardware gates.
+Measure minimum internal heap, largest free block, worker stack margin, resets
+and S3 frame glitches under simultaneous
+HTTPS and explicit filesystem saves. Full physical acceptance is not claimed.

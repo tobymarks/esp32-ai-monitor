@@ -27,7 +27,7 @@ Partitionstabelle und NVS wurden nicht mit einem Factory-Image überschrieben.
 Die automatische Schreibprüfung und ein separater `verify-flash`-Durchlauf
 waren erfolgreich.
 
-## Ergebnisse am laufenden Gerät
+## Erste Geräteprüfung ohne WLAN
 
 | Prüfung | Beobachtetes Ergebnis |
 |---|---|
@@ -51,25 +51,90 @@ ohne TLS-Last, kein gemessener Mindest-Heap oder Nachweis ausreichender
 Speicherreserve während HTTPS. Neustarts erfolgten per Gerätebefehl; die Tests
 simulieren keinen Stromausfall während eines Schreibvorgangs.
 
-## Zustand nach dem Test und offene Abnahme
+Nach dieser ersten Phase wurden Testprofil und Testansicht entfernt und die
+installierte Companion-App wieder gestartet.
 
-Das Testprofil wurde entfernt, die ursprüngliche Fensterkonfiguration
-wiederhergestellt und die installierte Companion-App wieder gestartet.
-Die geprüfte Entwicklungsfirmware bleibt auf dem S3. Der Plugin-Speicher ist
-initialisiert; es sind keine Standalone-Profile aktiv und keine WLAN-Zugangsdaten
-hinzugefügt worden. Die vollständige Rücksicherung ist verfügbar.
+## Sichtprüfung und WLAN-/HTTPS-Prüfung
 
-Die Sichtprüfung der tatsächlichen Zeichen und des Bildes wurde angefragt,
-aber noch nicht bestätigt. Ein ACK ist kein Nachweis lesbarer Panel-Ausgabe.
-WLAN-Zugangsdaten wurden noch nicht bereitgestellt. Somit bleiben offen:
+Anschließend wurde das S3 für die fortgesetzte Abnahme mit dem vom Nutzer
+angegebenen WLAN eingerichtet. Das Passwort wurde über eine geschützte
+Einmaleingabe übertragen und deren temporäre Datei anschließend gelöscht.
+Zugangsdaten und Rohprotokolle werden nicht im Repository veröffentlicht.
 
-- Tatsächlicher WLAN-/NTP-/TLS-Betrieb, Zertifikatsfehler, Netzwerkunterbrechung
-  und Wiederherstellung, Live-Daten und Aktualisierungsintervalle.
-- USB-Übernahme während eines laufenden Netzwerkabrufs und Laufzeit-Heap
-  unter gleichzeitiger HTTPS-, Dateisystem- und Display-Last.
-- Stromunterbrechung während eines Speichervorgangs, Betrieb am Netzteil,
-  Touch-Abnahme auf S3 und CYD sowie der 24-Stunden-Dauerlauf.
-- Sichtbare Umlaute, Zeilenhöhen und Clipping auf den physischen Panels.
+Der Nutzer bestätigte für die erneut angezeigten sieben Zeilen
+`ÄÖÜ äöü ß 12 °C` in den Schriftgrößen 12, 14, 16, 20, 24, 36 und 48:
+**alles lesbar, Bild stabil**. Das ergänzt die technische Frame-Bestätigung um
+eine tatsächliche Sichtprüfung auf diesem S3.
+
+| Prüfung | Beobachtetes Ergebnis |
+|---|---|
+| WLAN und Uhrzeit | `wifiConnected: true`, `timeSynced: true`; keine Host-Zeit gesetzt |
+| Öffentliche Statusquelle | GitHub-Statusprofil wird `fresh`, ohne Fehler und mit Erfolgsalter |
+| Wiederholte Aktualisierung | Gepaarte Laufzeit-/Altersabfragen ergeben mindestens zwei Aktualisierungen im Abstand von etwa 60–61 Sekunden |
+| Wetterquelle | Open-Meteo-Profil für den öffentlichen Beispielort Köln wird `fresh`; kein Nutzerstandort verwendet |
+| Neustart mit WLAN | Nach Gerätebefehl-Neustart WLAN, vertrauenswürdige Uhrzeit und gespeichertes Wetterprofil wieder aktiv; bei Laufzeit 15 s bereits ein erfolgreicher Abruf |
+| Abgelaufenes Zertifikat | `expired.badssl.com` ergibt `tls_error`; Geräteprotokoll bestätigt X.509-Prüffehler und fehlgeschlagenen TLS-Handshake |
+| Falscher Zertifikats-Hostname | `wrong.host.badssl.com` ergibt nur `request_timeout`; kein Nachweis einer Hostnamen-Ablehnung |
+| USB während verzögertem Abruf | Fünf-Sekunden-Quelle zunächst `loading`; `set_views` und UTF-8-Szene akzeptiert, danach `usb` ohne akzeptiertes Netzwerkergebnis; nach `standby` wieder `fresh` |
+| Antwort in Teilstücken | Profil mit `https://httpbin.org/stream/1` wird `fresh`; separate Host-Abfrage bestätigt Chunked-Framing ohne Content-Length |
+| Zu große Antwort | 9.000-Byte-Quelle `https://httpbin.org/stream-bytes/9000?chunk_size=1024` wird mit `response_too_large` abgelehnt |
+| Ungültige JSON-Daten | HTML-Antwort von `https://httpbin.org/html` wird mit `json_root` abgelehnt |
+| Komprimierte Antwort | `https://httpbin.org/gzip` wird mit `http_encoding` abgelehnt; separate Host-Abfrage bestätigt gzip |
+| Umleitungsquelle | `https://httpbin.org/redirect/1` wird mit `http_status` abgelehnt; separate Host-Abfrage liefert 302, der konkrete Gerätestatus wurde nicht aufgezeichnet |
+| Display-Zähler | Weiterhin `frameGlitches: 0` an allen abgefragten Messpunkten |
+
+Die Refresh-Messreihe enthält die Paare Geräte-Laufzeit/Erfolgsalter
+`305/15`, `334/44`, `364/13`, `393/42`, `422/11` Sekunden. Abfragen erfolgen
+nacheinander und erlauben keine millisekundengenaue Intervallmessung.
+
+Der kleinste abgefragte freie Heap der manuellen WLAN-Tests vor dem
+24-Stunden-Dauerlauf betrug 103.432 Bytes
+(UTF-8-Frame-ACK während der USB-Übernahme). Das ist weiterhin nur ein
+Stichprobenwert: minimaler interner Heap, größter freier Block und Worker-Stack
+wurden nicht instrumentiert. Beim USB-Test wurden Zustandswechsel beobachtet,
+kein genauer Zeitpunkt eines Socket-Abbruchs. Die HTTP-Antwortheader wurden
+am Host geprüft, nicht aus dem verschlüsselten Geräteverkehr mitgeschnitten.
+
+Die Negativtests ersetzen jeweils das Profil und löschen damit die vorherige
+Szene. Sie belegen keine Erhaltung alter Daten bei einem Ausfall derselben
+Quelle. Der anfängliche Zustand `waiting_time` wurde nicht beobachtet und die
+NTP-Sperre ohne erreichbaren Zeitserver somit nicht physisch geprüft.
+
+## Fortgesetzter Test und offene Abnahme
+
+Die Entwicklungsfirmware und die neu eingerichtete WLAN-Verbindung bleiben
+auf dem S3. Für die fortgesetzten Standalone-Tests ist die installierte
+Companion-App vorübergehend geschlossen. Die vollständige Rücksicherung ist
+verfügbar; sie stammt von vor der WLAN-Einrichtung.
+
+Nach den Negativtests wurde das Wetterprofil wieder erfolgreich geladen. Die
+ursprüngliche Fensterkonfiguration ist bereits wiederhergestellt; `standby`
+überlässt dem Standalone-Profil die Anzeige. Ein separater 24-Stunden-Dauerlauf
+startete nach erneut bestätigter WLAN-/NTP-/Profilbereitschaft am **14.11.2026
+um 09:44:52 MEZ**, vorgesehenes Ende **15.11.2026 um 09:44:52 MEZ**. Er ist zum
+Zeitpunkt dieses Berichts **gestartet, nicht bestanden**.
+
+Ein separater Recorder fragt alle 30 Sekunden ausschließlich `get_info` und
+`standalone_status` ab. Er zeichnet Zeitstempel, Laufzeit, freien Heap,
+Bildfehlerzähler, Verbindungszustand und Erfolgsalter auf. Er verändert keine
+Profile, setzt keine Host-Zeit, übernimmt USB nicht und öffnet bei einem
+Verbindungsfehler den Port nicht erneut. Der Mac wird für die Messung wach
+gehalten; die Stromversorgung erfolgt weiterhin über USB. Diese Messung ist
+kein separater Netzteiltest und keine durchgehende Sicht- oder Touchprüfung.
+Bereits die ersten vier Dauerlauf-Stichproben enthalten einen niedrigeren
+freien Heap von 55.668 Bytes; der endgültige Messbereich und Verlauf werden
+erst nach Ende der Beobachtung bewertet.
+
+Weiterhin offen sind:
+
+- Netzwerkunterbrechung und Wiederherstellung mit derselben Quelle sowie die
+  sichtbare Erhaltung alter Daten; fehlendes NTP und eindeutiger
+  Zertifikats-Hostnamenfehler.
+- Interne Speicher- und Stackreserven unter gleichzeitiger HTTPS-,
+  Dateisystem- und Display-Last.
+- Stromunterbrechung während eines Speichervorgangs, Kaltstart am separaten
+  Netzteil, Touch-Abnahme auf S3 und CYD sowie der 24-Stunden-Dauerlauf.
+- Sichtbare Umlaute, Zeilenhöhen und Clipping auf den CYD-Panels.
 
 Die drei CYD-/S3-Firmwarebuilds und nativen Regressionen ersetzen diese offenen
 Geräteprüfungen nicht. Es wurde kein Release erstellt.
