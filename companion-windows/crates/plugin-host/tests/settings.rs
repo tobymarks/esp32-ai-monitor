@@ -5,13 +5,16 @@ use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 use zip::write::SimpleFileOptions;
 
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("aimonitor-host-{}-{nonce}", std::process::id()));
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("aimonitor-host-{}-{nonce}-{sequence}", std::process::id()));
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }
@@ -110,4 +113,27 @@ fn mac_helper_migrates_defaults_preserves_overrides_and_renders_sparse_settings(
     assert_eq!(restored["settings"]["label"], "Bonn");
     assert_eq!(restored["settings"]["scale"], 7);
     assert_eq!(restored["settings"]["endpoint"], manifest["settings"][2]["default"]);
+}
+
+#[test]
+fn standalone_helper_exports_exact_bounded_snapshot_without_fetching() {
+    use sha2::{Digest, Sha256};
+    let fixture=Fixture::new();
+    let manifest:Value=serde_json::from_slice(include_bytes!("../../../../tests/fixtures/standalone-weather/plugin.json")).unwrap();
+    let package=fixture.package("weather.aimplugin",&manifest);
+    let output=Command::new(env!("CARGO_BIN_EXE_aimonitor-plugin-host"))
+        .arg("export-standalone").arg(package).args(["-","square","--theme=light","--locale=de","--location={\"name\":\"Köln\",\"latitude\":50.941,\"longitude\":6.958}"])
+        .output().unwrap();
+    assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+    let result:Value=serde_json::from_slice(&output.stdout).unwrap();
+    let profile=result["profile"].as_str().unwrap();
+    assert!(profile.len()<=8192);
+    assert_eq!(result["sha256"],format!("{:x}",Sha256::digest(profile.as_bytes())));
+    assert_eq!(result["refreshSeconds"],60);
+    assert_eq!(result["origin"],"https://api.open-meteo.com");
+    assert_eq!(result["sendsLocation"],true);
+    let profile=aimonitor_core::standalone::parse_profile(profile.as_bytes()).unwrap();
+    assert_eq!(profile.layout,"square");
+    assert_eq!(profile.locale,"de");
+    assert_eq!(profile.bindings[0].constant,Some(serde_json::json!("Köln")));
 }

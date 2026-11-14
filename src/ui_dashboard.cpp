@@ -32,6 +32,7 @@
 #include "localization.h"
 #include "serial_receiver.h"
 #include "wifi_time.h"
+#include "standalone_runtime.h"
 
 #include <lvgl.h>
 #include <ArduinoJson.h>
@@ -181,6 +182,7 @@ static lv_obj_t *clock_overlay      = nullptr;
 static lv_obj_t *clock_time         = nullptr;
 static lv_obj_t *clock_date         = nullptr;
 static lv_obj_t *plugin_overlay     = nullptr;
+static lv_obj_t *plugin_offline_status = nullptr;
 static uint8_t plugin_rendered_view = 0xFF;
 static uint32_t plugin_rendered_revision = 0;
 static bool long_press_handled = false;
@@ -249,38 +251,76 @@ static const lv_font_t *clock_font() {
     return &font_standby_clock_76;
 }
 
-static void update_plugin_view() {
-    uint8_t index = serial_active_view();
-    const PluginSceneSlot *slot = plugin_scene_get(index);
-    if (plugin_overlay && index == plugin_rendered_view && slot
-        && slot->revision == plugin_rendered_revision) return;
+static const char *offline_status_text() {
+    const char *state = standalone_status();
+    bool de = g_language == LANG_DE;
+    if (!strcmp(state, "waiting_wifi")) return de ? "WLAN verbinden" : "Waiting for Wi-Fi";
+    if (!strcmp(state, "waiting_time")) return de ? "Warte auf Uhrzeit" : "Waiting for time";
+    if (!strcmp(state, "storage_unavailable")) return de ? "Profil nicht verfuegbar" : "Profile unavailable";
+    if (!strcmp(state, "configuration_changed")) return de ? "Profil erneut speichern" : "Resync display profile";
+    if (!strcmp(state, "loading")) return de ? "Lade Plugin ..." : "Loading plugin ...";
+    if (!strcmp(state, "tls_error")) return de ? "HTTPS-Verbindung fehlgeschlagen" : "HTTPS connection failed";
+    if (!strcmp(state, "http_error")) return de ? "Quelle nicht erreichbar" : "Source unavailable";
+    if (!strcmp(state, "response_too_large")) return de ? "Antwort zu gross" : "Response too large";
+    if (!strcmp(state, "response_invalid") || !strcmp(state, "render_error")) return de ? "Ungueltige Quelldaten" : "Invalid source data";
+    if (!strcmp(state, "request_timeout")) return de ? "Zeitlimit der Anfrage erreicht" : "Request timed out";
+    if (!strcmp(state, "dns_error") || !strcmp(state, "dns_pending")) return de ? "Quelle nicht erreichbar" : "Source unavailable";
+    if (!strncmp(state, "json_", 5) || !strncmp(state, "binding_", 8) || !strncmp(state, "render_", 7)) return de ? "Ungueltige Quelldaten" : "Invalid source data";
+    if (!strcmp(state, "resource_limit")) return de ? "Speicherlimit erreicht" : "Memory limit reached";
+    return de ? "Warte auf Aktualisierung" : "Waiting for update";
+}
 
-    if (plugin_overlay) lv_obj_delete(plugin_overlay);
-    plugin_overlay = lv_obj_create(scr_dashboard);
-    lv_obj_remove_style_all(plugin_overlay);
-    lv_obj_set_size(plugin_overlay, SCREEN_WIDTH, SCREEN_HEIGHT);
-    lv_obj_set_style_bg_color(plugin_overlay, UI_COLOR_BG, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(plugin_overlay, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_add_flag(plugin_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(plugin_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(plugin_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
-    lv_obj_add_event_cb(plugin_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
-    lv_obj_add_event_cb(plugin_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
-    plugin_rendered_view = index;
-    plugin_rendered_revision = slot ? slot->revision : 0;
-
-    if (!slot || !slot->ready) {
-        lv_obj_t *waiting = lv_label_create(plugin_overlay);
-        lv_label_set_text(waiting, "Loading plugin view...");
-        lv_obj_set_style_text_color(waiting, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-        lv_obj_set_style_text_font(waiting, &font_ui_16, LV_PART_MAIN);
-        lv_obj_center(waiting);
-        return;
+static void update_plugin_view(bool offline = false) {
+    uint8_t index = offline ? 0xFE : serial_active_view();
+    const PluginSceneSlot *slot = offline ? standalone_scene() : plugin_scene_get(index);
+    bool ready = slot && slot->ready;
+    if (!(plugin_overlay && index == plugin_rendered_view && slot
+          && slot->revision == plugin_rendered_revision)) {
+        if (plugin_overlay) lv_obj_delete(plugin_overlay);
+        plugin_offline_status = nullptr;
+        plugin_overlay = lv_obj_create(scr_dashboard);
+        lv_obj_remove_style_all(plugin_overlay);
+        lv_obj_set_size(plugin_overlay, SCREEN_WIDTH, SCREEN_HEIGHT);
+        lv_obj_set_style_bg_color(plugin_overlay, UI_COLOR_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(plugin_overlay, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_add_flag(plugin_overlay, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(plugin_overlay, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(plugin_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
+        lv_obj_add_event_cb(plugin_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
+        lv_obj_add_event_cb(plugin_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
+        plugin_rendered_view = index;
+        plugin_rendered_revision = slot ? slot->revision : 0;
+        if (ready) {
+            JsonDocument doc;
+            if (!deserializeJson(doc, slot->json))
+                plugin_scene_draw(plugin_overlay, doc.as<JsonObjectConst>(), SCREEN_WIDTH, SCREEN_HEIGHT);
+        }
+        if (offline || !ready) {
+            plugin_offline_status = lv_label_create(plugin_overlay);
+            lv_obj_set_width(plugin_offline_status, SCREEN_WIDTH - 12);
+            lv_obj_set_style_text_align(plugin_offline_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(plugin_offline_status, UI_COLOR_TEXT, LV_PART_MAIN);
+            lv_obj_set_style_text_font(plugin_offline_status, &font_ui_14, LV_PART_MAIN);
+            lv_obj_set_style_bg_color(plugin_offline_status, UI_COLOR_BG, LV_PART_MAIN);
+            lv_obj_set_style_bg_opa(plugin_offline_status, LV_OPA_COVER, LV_PART_MAIN);
+            lv_label_set_text(plugin_offline_status, g_language == LANG_DE ? "Lade Plugin ..." : "Loading plugin ...");
+        }
     }
-
-    JsonDocument doc;
-    if (deserializeJson(doc, slot->json)) return; // validated at receive time
-    plugin_scene_draw(plugin_overlay, doc.as<JsonObjectConst>(), SCREEN_WIDTH, SCREEN_HEIGHT);
+    if (offline && plugin_offline_status) {
+        if (ready && !standalone_stale()) {
+            lv_obj_add_flag(plugin_offline_status, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(plugin_offline_status, LV_OBJ_FLAG_HIDDEN);
+            char label[160];
+            if (ready) {
+                snprintf(label, sizeof(label), "%s (%lu min)\n%s",
+                         g_language == LANG_DE ? "Veraltet" : "Stale",
+                         (unsigned long)(standalone_success_age_seconds() / 60), offline_status_text());
+            } else snprintf(label, sizeof(label), "%s", offline_status_text());
+            lv_label_set_text(plugin_offline_status, label);
+            lv_obj_align(plugin_offline_status, ready ? LV_ALIGN_BOTTOM_MID : LV_ALIGN_CENTER, 0, ready ? -4 : 0);
+        }
+    } else if (!ready && plugin_offline_status) lv_obj_center(plugin_offline_status);
 }
 
 static void update_clock_view() {
@@ -1627,18 +1667,23 @@ void ui_dashboard_update(const MonitorState &state) {
     memcpy(&last_state, &state, sizeof(MonitorState));
     state_stored = true;
 
-    if (serial_is_plugin_view()) {
+    if (standalone_active() || serial_is_plugin_view()) {
+        if (clock_overlay) {
+            lv_obj_delete(clock_overlay);
+            clock_overlay = clock_time = clock_date = nullptr;
+        }
         if (splash_overlay) {
             lv_obj_delete(splash_overlay);
             splash_overlay = splash_spinner = nullptr;
         }
         hide_standby_overlay();
-        update_plugin_view();
+        update_plugin_view(standalone_active());
         return;
     }
     if (plugin_overlay) {
         lv_obj_delete(plugin_overlay);
         plugin_overlay = nullptr;
+        plugin_offline_status = nullptr;
         plugin_rendered_view = 0xFF;
     }
 
@@ -2027,6 +2072,7 @@ void ui_dashboard_recreate() {
         clock_time         = nullptr;
         clock_date         = nullptr;
         plugin_overlay     = nullptr;
+        plugin_offline_status = nullptr;
         plugin_rendered_view = 0xFF;
         plugin_rendered_revision = 0;
     }

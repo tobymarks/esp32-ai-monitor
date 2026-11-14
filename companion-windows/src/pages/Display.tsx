@@ -20,6 +20,7 @@ import {
 } from "../api";
 import type { Translate } from "../i18n";
 import ViewManager from "./ViewManager";
+import Standalone from "./Standalone";
 
 interface Props {
   t: Translate;
@@ -231,6 +232,8 @@ export default function Display({ t, locale, connection, settings, providers, pl
       )}
 
       {settings && <ViewManager t={t} locale={locale} settings={settings} providers={providers} plugins={plugins} connection={connection} onSettings={onSettings} />}
+
+      <Standalone connection={connection} plugins={plugins} t={t} />
 
       <h2>{t("disp.step.look")}</h2>
       <div className="field-row">

@@ -24,6 +24,8 @@
 #include "ui_common.h"
 #include "ui_dashboard.h"
 #include "wifi_time.h"
+#include "standalone_runtime.h"
+#include "display_owner.h"
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -77,8 +79,11 @@ static uint8_t active_view = 0;
 static bool views_automatic = false;
 static uint16_t view_interval_seconds = 10;
 static unsigned long last_view_change = 0;
-static unsigned long last_host_frame_ms = 0;
-static bool host_frame_seen = false;
+static DisplayOwner display_owner;
+static void accept_host_frame() {
+    if (!display_owner.host_active(millis())) standalone_invalidate();
+    display_owner.accept_host(millis());
+}
 // Erst ein Host mit set_views schaltet Wechsel per Timer und Touch frei. Ohne
 // ihn (Boot, alter Companion) bleibt die gespeicherte Auswahl stehen.
 static bool views_host_configured = false;
@@ -115,6 +120,7 @@ void serial_select_view(uint8_t index) {
 }
 
 void serial_next_view() {
+    if (standalone_active()) return;
     if (views_host_configured && view_count > 1) {
         serial_select_view((active_view + 1) % view_count);
         persist_touch_view();
@@ -122,6 +128,7 @@ void serial_next_view() {
 }
 
 void serial_previous_view() {
+    if (standalone_active()) return;
     if (views_host_configured && view_count > 1) {
         serial_select_view((active_view + view_count - 1) % view_count);
         persist_touch_view();
@@ -300,6 +307,7 @@ static void handle_set_orientation(JsonDocument &doc) {
         return;
     }
     if (new_orient != g_config.orientation) {
+        standalone_invalidate();
         g_config.orientation = new_orient;
         config_save(g_config);
         apply_orientation(new_orient);  // live rotation — no ESP.restart()
@@ -354,7 +362,7 @@ static void handle_wifi_forget() {
 static void handle_standby() {
     // The companion is leaving intentionally, so do not wait five minutes
     // for its last data frame to expire before showing the standby clock.
-    host_frame_seen = false;
+    display_owner.relinquish();
     for (uint8_t i = 0; i < view_count; ++i) {
         if (view_states[i].usage.valid && view_states[i].usage.last_fetch > 0) {
             view_states[i].usage.last_fetch = millis() - DATA_TIMEOUT_MS - 1;
@@ -382,6 +390,7 @@ static void handle_set_theme(JsonDocument &doc) {
         Serial.printf("{\"type\":\"error\",\"message\":\"set_theme: invalid value '%s'\"}\n", val);
         return;
     }
+    standalone_invalidate();
     g_config.theme = new_theme;
     config_save(g_config);
     ui_apply_theme(new_theme);
@@ -406,6 +415,7 @@ static void handle_set_language(JsonDocument &doc) {
         Serial.printf("{\"type\":\"error\",\"message\":\"set_language: invalid value '%s'\"}\n", val);
         return;
     }
+    standalone_invalidate();
     g_language = new_lang;
     g_config.language = new_lang;
     config_save(g_config);
@@ -441,7 +451,7 @@ static void handle_get_info() {
                   "\"display\":\"%s\",\"panel\":\"%s\",\"panelId\":\"%s\","
                   "\"orientation\":\"%s\","
                   "\"theme\":\"%s\",\"language\":\"%s\",\"brightness\":%u,"
-                  "\"serialTransport\":\"%s\",\"maxFrameBytes\":%u,\"sceneProtocol\":2,"
+                  "\"serialTransport\":\"%s\",\"maxFrameBytes\":%u,\"sceneProtocol\":2,\"standaloneProtocol\":1,"
                   "\"wifiConfigured\":%s,\"wifiConnected\":%s,\"timeSynced\":%s,"
                   "\"uptime\":%lu,\"heap\":%u,\"frameGlitches\":%lu}\n",
                   APP_VERSION, mac_str, DISPLAY_ID, board_panel_id(), board_panel_raw(),
@@ -586,6 +596,7 @@ static void handle_set_views(JsonDocument &doc) {
         prefs.putUChar("view_active", (uint8_t)active);
         prefs.end();
     }
+    accept_host_frame();
     views_host_configured = true;
     serial_select_view((uint8_t)active);
     Serial.printf("{\"type\":\"ok\",\"cmd\":\"set_views\",\"count\":%u}\n", (unsigned)view_count);
@@ -596,6 +607,12 @@ static bool parse_command(JsonDocument &doc) {
     if (!doc["cmd"].is<const char*>()) return false;
 
     const char *cmd = doc["cmd"];
+    JsonDocument standalone_reply;
+    if (standalone_command(doc.as<JsonObjectConst>(), standalone_reply)) {
+        serializeJson(standalone_reply, Serial);
+        Serial.println();
+        return true;
+    }
     Serial.printf("[Serial] Command received: %s\n", cmd);
 
     if (strcmp(cmd, "set_orientation") == 0) {
@@ -656,7 +673,7 @@ static void parse_time_block(JsonDocument &doc) {
         time_t epoch = iso8601_to_epoch(time_str);
         if (epoch > 0) {
             struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
-            settimeofday(&tv, nullptr);
+            if (settimeofday(&tv, nullptr) == 0) wifi_time_note_host_clock();
         }
     }
 }
@@ -915,8 +932,7 @@ static void parse_json(const char *json_str) {
                       "\"message\":\"accepted\",\"bytes\":%u,\"provider\":\"PLUGIN\","
                       "\"rows\":0,\"heap\":%u}\n",
                       frame_id, (unsigned)frame_bytes, (unsigned)ESP.getFreeHeap());
-        last_host_frame_ms = millis();
-        host_frame_seen = true;
+        accept_host_frame();
         if (index == active_view) new_data_flag = true;
         return;
     }
@@ -989,8 +1005,7 @@ static void parse_json(const char *json_str) {
         Serial.printf("[Serial] Notice frame: %s\n", notice);
         view_states[frame_view] = state;
         state = view_states[active_view];
-        last_host_frame_ms = millis();
-        host_frame_seen = true;
+        accept_host_frame();
         if (frame_view == active_view) new_data_flag = true;
         return;
     }
@@ -1039,8 +1054,7 @@ static void parse_json(const char *json_str) {
     print_frame_ack(frame_id, schema_version, frame_bytes, state.provider, state.usage.row_count);
     view_states[frame_view] = state;
     state = view_states[active_view];
-    last_host_frame_ms = millis();
-    host_frame_seen = true;
+    accept_host_frame();
     if (frame_view == active_view) new_data_flag = true;
 }
 
@@ -1053,8 +1067,7 @@ void serial_receiver_init() {
     serial_receiving_frame = false;
     serial_frame_expected = 0;
     serial_frame_received = 0;
-    host_frame_seen = false;
-    last_host_frame_ms = 0;
+    display_owner.relinquish();
     memset(&state, 0, sizeof(state));
     usage_data_clear(state.usage);
     state.token_valid = false;
@@ -1229,7 +1242,7 @@ bool serial_has_recent_data() {
 }
 
 bool serial_has_recent_host_frame() {
-    return host_frame_seen && (millis() - last_host_frame_ms) < DATA_TIMEOUT_MS;
+    return display_owner.host_active(millis());
 }
 
 // ============================================================

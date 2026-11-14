@@ -3,6 +3,7 @@
 #include "ui_common.h"
 #include "config.h"
 #include "localization.h"
+#include "standalone_runtime.h"
 #include <vector>
 #include <cstdlib>
 
@@ -17,6 +18,12 @@ void serial_previous_view() {}
 void serial_next_view() {}
 const char *serial_get_display_time() { return "14:32"; }
 bool wifi_time_is_connected() { return false; }
+// Website captures show USB usage with the optional offline profile disabled.
+bool standalone_active() { return false; }
+const PluginSceneSlot *standalone_scene() { return nullptr; }
+const char *standalone_status() { return "disabled"; }
+uint32_t standalone_success_age_seconds() { return UINT32_MAX; }
+bool standalone_stale() { return false; }
 void ui_settings_create() {}
 // Keep all dates, countdowns and clocks reproducible without changing system time.
 extern "C" time_t time(time_t *out) {

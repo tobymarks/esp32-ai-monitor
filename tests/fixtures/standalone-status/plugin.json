@@ -1,0 +1,453 @@
+{
+  "formatVersion": 4,
+  "id": "org.aimonitor.status",
+  "name": "Service Status",
+  "version": "1.0.0",
+  "author": "AI Monitor tests",
+  "description": "Synthetic data and layouts for testing the display-plugin contract.",
+  "viewLabel": "Status",
+  "attribution": null,
+  "minSceneProtocol": 2,
+  "source": {
+    "url": "https://www.githubstatus.com/api/v2/status.json",
+    "intervalSeconds": 60
+  },
+  "settings": [],
+  "bindings": [
+    {
+      "name": "label",
+      "path": "page.name",
+      "format": "text",
+      "trim": true,
+      "fallback": "Service"
+    },
+    {
+      "name": "reading",
+      "path": "status.description",
+      "format": "text",
+      "trim": true,
+      "fallback": "Unknown"
+    },
+    {
+      "name": "state",
+      "path": "status.indicator",
+      "format": "map",
+      "trim": true,
+      "map": {
+        "none": "Operational",
+        "maintenance": "Maintenance"
+      },
+      "fallback": "Unknown"
+    },
+    {
+      "name": "scaled",
+      "path": "metric.percent",
+      "format": "integer",
+      "fallback": "0"
+    }
+  ],
+  "scenes": {
+    "portrait": {
+      "background": 1580575,
+      "nodes": [
+        {
+          "type": "text",
+          "x": 40,
+          "y": 40,
+          "w": 920,
+          "h": 120,
+          "color": 16777215,
+          "font": 24,
+          "text": "{{label}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 220,
+          "w": 920,
+          "h": 180,
+          "color": 16777215,
+          "font": 24,
+          "text": "Current {{reading}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 450,
+          "w": 920,
+          "h": 120,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{state}}"
+        },
+        {
+          "type": "circle",
+          "x": 40,
+          "y": 620,
+          "w": 80,
+          "h": 80,
+          "color": 65280,
+          "visibleWhen": {
+            "binding": "state",
+            "notEquals": "Unknown"
+          }
+        },
+        {
+          "type": "rect",
+          "x": 40,
+          "y": 800,
+          "w": 920,
+          "h": 3,
+          "color": 3717119
+        },
+        {
+          "type": "bar",
+          "x": 40,
+          "y": 850,
+          "w": 920,
+          "h": 40,
+          "color": 65280,
+          "trackColor": 3717119,
+          "valueBinding": "scaled"
+        }
+      ]
+    },
+    "landscape": {
+      "background": 1580575,
+      "nodes": [
+        {
+          "type": "text",
+          "x": 40,
+          "y": 40,
+          "w": 920,
+          "h": 120,
+          "color": 16777215,
+          "font": 24,
+          "text": "{{label}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 220,
+          "w": 920,
+          "h": 180,
+          "color": 16777215,
+          "font": 24,
+          "text": "Current {{reading}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 450,
+          "w": 920,
+          "h": 120,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{state}}"
+        },
+        {
+          "type": "circle",
+          "x": 40,
+          "y": 620,
+          "w": 80,
+          "h": 80,
+          "color": 65280,
+          "visibleWhen": {
+            "binding": "state",
+            "notEquals": "Unknown"
+          }
+        },
+        {
+          "type": "rect",
+          "x": 40,
+          "y": 800,
+          "w": 920,
+          "h": 3,
+          "color": 3717119
+        },
+        {
+          "type": "bar",
+          "x": 40,
+          "y": 850,
+          "w": 920,
+          "h": 40,
+          "color": 65280,
+          "trackColor": 3717119,
+          "valueBinding": "scaled"
+        }
+      ]
+    },
+    "square": {
+      "background": 1580575,
+      "nodes": [
+        {
+          "type": "text",
+          "x": 40,
+          "y": 40,
+          "w": 920,
+          "h": 120,
+          "color": 16777215,
+          "font": 24,
+          "text": "{{label}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 220,
+          "w": 920,
+          "h": 180,
+          "color": 16777215,
+          "font": 24,
+          "text": "Current {{reading}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 450,
+          "w": 920,
+          "h": 120,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{state}}"
+        },
+        {
+          "type": "circle",
+          "x": 40,
+          "y": 620,
+          "w": 80,
+          "h": 80,
+          "color": 65280,
+          "visibleWhen": {
+            "binding": "state",
+            "notEquals": "Unknown"
+          }
+        },
+        {
+          "type": "rect",
+          "x": 40,
+          "y": 800,
+          "w": 920,
+          "h": 3,
+          "color": 3717119
+        },
+        {
+          "type": "bar",
+          "x": 40,
+          "y": 850,
+          "w": 920,
+          "h": 40,
+          "color": 65280,
+          "trackColor": 3717119,
+          "valueBinding": "scaled"
+        }
+      ]
+    }
+  },
+  "localizations": {
+    "de": {
+      "Clear": "Klar",
+      "Cloudy": "Wolkig",
+      "Unknown": "Unbekannt",
+      "Operational": "Verfügbar",
+      "Maintenance": "Wartung",
+      "Current {{reading}}": "Aktuell {{reading}}"
+    }
+  },
+  "lightScenes": {
+    "portrait": {
+      "background": 16119802,
+      "nodes": [
+        {
+          "type": "text",
+          "x": 40,
+          "y": 40,
+          "w": 920,
+          "h": 120,
+          "color": 1515823,
+          "font": 24,
+          "text": "{{label}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 220,
+          "w": 920,
+          "h": 180,
+          "color": 1515823,
+          "font": 24,
+          "text": "Current {{reading}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 450,
+          "w": 920,
+          "h": 120,
+          "color": 1515823,
+          "font": 20,
+          "text": "{{state}}"
+        },
+        {
+          "type": "circle",
+          "x": 40,
+          "y": 620,
+          "w": 80,
+          "h": 80,
+          "color": 65280,
+          "visibleWhen": {
+            "binding": "state",
+            "notEquals": "Unknown"
+          }
+        },
+        {
+          "type": "rect",
+          "x": 40,
+          "y": 800,
+          "w": 920,
+          "h": 3,
+          "color": 3717119
+        },
+        {
+          "type": "bar",
+          "x": 40,
+          "y": 850,
+          "w": 920,
+          "h": 40,
+          "color": 65280,
+          "trackColor": 3717119,
+          "valueBinding": "scaled"
+        }
+      ]
+    },
+    "landscape": {
+      "background": 16119802,
+      "nodes": [
+        {
+          "type": "text",
+          "x": 40,
+          "y": 40,
+          "w": 920,
+          "h": 120,
+          "color": 1515823,
+          "font": 24,
+          "text": "{{label}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 220,
+          "w": 920,
+          "h": 180,
+          "color": 1515823,
+          "font": 24,
+          "text": "Current {{reading}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 450,
+          "w": 920,
+          "h": 120,
+          "color": 1515823,
+          "font": 20,
+          "text": "{{state}}"
+        },
+        {
+          "type": "circle",
+          "x": 40,
+          "y": 620,
+          "w": 80,
+          "h": 80,
+          "color": 65280,
+          "visibleWhen": {
+            "binding": "state",
+            "notEquals": "Unknown"
+          }
+        },
+        {
+          "type": "rect",
+          "x": 40,
+          "y": 800,
+          "w": 920,
+          "h": 3,
+          "color": 3717119
+        },
+        {
+          "type": "bar",
+          "x": 40,
+          "y": 850,
+          "w": 920,
+          "h": 40,
+          "color": 65280,
+          "trackColor": 3717119,
+          "valueBinding": "scaled"
+        }
+      ]
+    },
+    "square": {
+      "background": 16119802,
+      "nodes": [
+        {
+          "type": "text",
+          "x": 40,
+          "y": 40,
+          "w": 920,
+          "h": 120,
+          "color": 1515823,
+          "font": 24,
+          "text": "{{label}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 220,
+          "w": 920,
+          "h": 180,
+          "color": 1515823,
+          "font": 24,
+          "text": "Current {{reading}}"
+        },
+        {
+          "type": "text",
+          "x": 40,
+          "y": 450,
+          "w": 920,
+          "h": 120,
+          "color": 1515823,
+          "font": 20,
+          "text": "{{state}}"
+        },
+        {
+          "type": "circle",
+          "x": 40,
+          "y": 620,
+          "w": 80,
+          "h": 80,
+          "color": 65280,
+          "visibleWhen": {
+            "binding": "state",
+            "notEquals": "Unknown"
+          }
+        },
+        {
+          "type": "rect",
+          "x": 40,
+          "y": 800,
+          "w": 920,
+          "h": 3,
+          "color": 3717119
+        },
+        {
+          "type": "bar",
+          "x": 40,
+          "y": 850,
+          "w": 920,
+          "h": 40,
+          "color": 65280,
+          "trackColor": 3717119,
+          "valueBinding": "scaled"
+        }
+      ]
+    }
+  }
+}

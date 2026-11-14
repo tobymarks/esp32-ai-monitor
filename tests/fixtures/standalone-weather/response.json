@@ -1,0 +1,11 @@
+{
+  "current": {
+    "temperature_2m": 18.25,
+    "weather_code": 0
+  },
+  "extra": {
+    "feet": [
+      100
+    ]
+  }
+}

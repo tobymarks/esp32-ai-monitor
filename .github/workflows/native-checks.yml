@@ -7,6 +7,11 @@ on:
       - 'companion/Sources/**'
       - 'companion/Tests/**'
       - 'companion-windows/crates/**'
+      - 'companion-windows/src/**'
+      - 'companion-windows/src-tauri/**'
+      - 'companion-windows/tests/**'
+      - 'companion-windows/package.json'
+      - 'companion-windows/pnpm-lock.yaml'
       - 'companion-windows/Cargo.toml'
       - 'companion-windows/Cargo.lock'
       - 'tests/**'
@@ -60,6 +65,15 @@ jobs:
         run: cargo test --locked -p aimonitor-core -p aimonitor-plugin-store -p aimonitor-plugin-host
       - name: Test panel identification
         run: bash scripts/test_panel_id_native.sh
+      - name: Test standalone ownership and host/device rendering contract
+        run: |
+          bash scripts/test_display_owner_native.sh
+          bash scripts/test_standalone_bounds_native.sh
+          bash scripts/test_standalone_transfer_native.sh
+          bash scripts/test_standalone_http_native.sh
+          bash scripts/test_standalone_record_native.sh
+          bash scripts/test_standalone_policy_native.sh
+          bash scripts/test_standalone_contract.sh
       - name: Test plugin package, scene protocol and native rendering
         run: bash scripts/test_display_plugin_scene_contract.sh
 
@@ -73,6 +87,8 @@ jobs:
           python-version: '3.11'
       - name: Parse Swift sources and test the display window editor state
         run: bash scripts/test_mac_view_editor.sh
+      - name: Test standalone commands across device reconnects
+        run: python3 tests/standalone_mac_connection.py
       - name: Install native firmware dependencies
         run: |
           pip install platformio
@@ -96,3 +112,27 @@ jobs:
           AIMONITOR_SITE_BUILD_DIR: ${{ runner.temp }}/site-render
           AIMONITOR_SITE_OUTPUT_DIR: ${{ runner.temp }}/site-screens
         run: bash scripts/render_site_screens.sh
+
+  companion-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: companion-windows/pnpm-lock.yaml
+      - name: Build frontend
+        working-directory: companion-windows
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Test standalone capability and asynchronous state
+        run: |
+          STANDALONE_TEST_DEPS="$(mktemp -d)"
+          npm install --prefix "$STANDALONE_TEST_DEPS" --no-package-lock --ignore-scripts react@18.3.1 react-test-renderer@18.3.1
+          AIMONITOR_REACT_TEST_DEPS="$STANDALONE_TEST_DEPS" node companion-windows/tests/standalone.cjs

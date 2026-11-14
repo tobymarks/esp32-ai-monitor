@@ -149,11 +149,14 @@ extension SettingsWindowController {
             views: [testButton, testHelper, lastUpdateLabel]
         )
 
-        let stack = NSStackView(views: [heading, intro, deviceStep, appearanceStep, viewsStep, testStep])
+        let standalone = StandaloneDisplayView(monitor: monitor)
+        standaloneDisplayView = standalone
+        let stack = NSStackView(views: [heading, intro, deviceStep, appearanceStep, viewsStep, standalone, testStep])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         // Let the native editor wrap its cards within the existing page width.
+        standalone.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         viewsStep.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         viewsEditor.widthAnchor.constraint(equalTo: viewsStep.widthAnchor).isActive = true
         return stack
