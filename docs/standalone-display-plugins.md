@@ -225,8 +225,11 @@ with 30-second read-only samples and USB power. The recorder failed with
 5 minutes, ending at 16:49:52, with fresh data and no recorded resets,
 standalone errors or frame glitches. Sampled free heap was 51,560–105,100 bytes;
 these are not internal minimum/fragmentation/stack measurements. The failed
-next query was not appended, and the exception class does not establish a
-firmware or host-side cause. This is **not a 24-hour pass** and does not
+next query was not appended. Subsequent macOS kernel logs establish loss of
+the upstream USB hub at 16:50:01 CET, removing the serial adapter and other
+peripherals together; the host then switched to battery power. The recorder
+failed at its next query. This was an externally interrupted observation,
+not evidence of an isolated S3 crash. This is **not a 24-hour pass** and does not
 qualify wall-power or continuous visual/touch operation. Readiness samples
 also captured the normal `waiting_time` transition; sustained absent-NTP
 behavior remains untested.
@@ -238,13 +241,19 @@ the original 1.32.0; the separate standalone candidate (also version 1.32.0)
 was not installed. The tested development firmware and configured Wi-Fi remain
 on the S3.
 
-Before release, test all three boards from wall power with current weather and
+Release validation combines the seven-hour S3 observation and confirmed manual
+tests with final versioned firmware/app builds and automated regressions. A
+24-hour duration is not a mandatory release threshold. Standalone remains an
+explicitly experimental, opt-in feature; untested hardware cases are not
+represented as passed.
+
+Further hardware qualification should test all three boards from wall power with current weather and
 service status; absent Wi-Fi/NTP; expired/wrong-host certificates; slow, chunked,
 oversized and malformed responses; USB takeover during fetch; interrupted saves;
-and a 24-hour refresh/touch run. S3 tests above cover only part of this matrix;
+and an extended refresh/touch run. S3 tests above cover only part of this matrix;
 network-loss/stale-data recovery, absent-NTP gating, wall-power/cold starts,
 interrupted writes, CYD touch and sustained operation with repeated touch
-remain hardware gates.
+remain additional hardware qualification tasks.
 Measure minimum internal heap, largest free block, worker stack margin, resets
 and S3 frame glitches under simultaneous
 HTTPS and explicit filesystem saves. Full physical acceptance is not claimed.

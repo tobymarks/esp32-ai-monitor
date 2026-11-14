@@ -110,9 +110,24 @@ Nach den Negativtests wurde das Wetterprofil wieder erfolgreich geladen.
 Ein auf 24 Stunden angelegter Recorder startete am **14.11.2026 um 09:44:52
 MEZ** nach bestätigter WLAN-/NTP-/Profilbereitschaft. Er endete bereits um
 **16:50:22 MEZ mit `SerialException`**. Die letzte vollständige Abfrage stammt
-von 16:49:52 MEZ. Die Fehlerklasse allein unterscheidet weder Kabel-/USB-/Host-
-Probleme noch einen möglichen Firmwarefehler. **Keine bestandene
-24-Stunden-Abnahme.**
+von 16:49:52 MEZ. Die Fehlerklasse allein bestimmte zunächst keine Ursache.
+Die spätere Prüfung der macOS-Systemprotokolle ordnet den Abbruch dem Verlust
+der übergeordneten USB-Verbindung zu:
+
+- 16:50:01,500 MEZ: USB-2-Hub meldet `hardware connection lost`.
+- 16:50:01,531 MEZ: Der USB-Serial-Adapter wird wegen
+  `upstream hub is terminating` entfernt; weitere Geräte und der USB-3-Hub
+  verschwinden gleichzeitig.
+- 16:50:05,990 MEZ: macOS wechselt auf Batteriebetrieb.
+- 16:50:22,667 MEZ: Die nächste Recorder-Abfrage endet mit `SerialException`.
+
+Damit ist ein Verlust der USB-Hub-Verbindung als unmittelbare Ursache belegt,
+kein isolierter beobachteter S3-Absturz. Ob Stecker, Dockversorgung oder
+Controller die Ursache waren, ist nicht feststellbar. **Die sieben Stunden
+bleiben ein gültiger Teil-Dauerlauf; eine volle 24-Stunden-Messung fand nicht
+statt.** Die produktive Mac-App besitzt bereits einen Wiederverbindungsweg;
+der Recorder stoppte absichtlich, statt die Messung durch einen erneuten
+Portaufbau möglicherweise mit Geräteneustart fortzusetzen.
 
 Gespeichert sind **851 vollständige Stichproben über 7 Stunden und 5 Minuten**:
 
@@ -154,7 +169,17 @@ Entwicklungsfirmware aus `36edce5` bleibt auf dem S3, weiterhin mit
 Versionsnummer 2.23.0 und Protokollen 2/1. WLAN-Einstellungen wurden erhalten.
 Die vollständige Rücksicherung stammt von vor der WLAN-Einrichtung.
 
-Weiterhin offen sind:
+## Bewertung für die Veröffentlichung
+
+Die sieben Stunden Messdaten sowie die bestätigten Bild-, Touch-, Protokoll-,
+WLAN-/HTTPS- und Persistenztests werden als S3-Nachweis für die Veröffentlichung
+mit ausdrücklich experimentellem Standalone-Modus verwendet. 24 Stunden sind
+kein starres Freigabekriterium. Die finale Version muss weiterhin alle drei
+Firmware-Builds, die App-Builds und die automatisierten Regressionen bestehen.
+Die untenstehenden zusätzlichen Geräteprüfungen bleiben als Nacharbeit
+dokumentiert; sie werden nicht als bestanden ausgegeben.
+
+Zusätzliche Geräteprüfungen:
 
 - Netzwerkunterbrechung und Wiederherstellung mit derselben Quelle sowie die
   sichtbare Erhaltung alter Daten; fehlendes NTP und eindeutiger
@@ -168,4 +193,5 @@ Weiterhin offen sind:
 - Sichtbare Umlaute, Zeilenhöhen und Clipping auf den CYD-Panels.
 
 Die drei CYD-/S3-Firmwarebuilds und nativen Regressionen ersetzen diese offenen
-Geräteprüfungen nicht. Es wurde kein Release erstellt.
+Geräteprüfungen nicht. Versionsumfang und Veröffentlichungsnachweise stehen in
+den [Release-Unterlagen](../../docs/releases/2026-11-14.md).
