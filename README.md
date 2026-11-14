@@ -35,11 +35,26 @@ The companion apps can install declarative `.aimplugin` files from disk or an
 HTTPS release URL. Each installed plugin appears as a placeable window in the
 display manager. Plugins can define separate portrait, landscape, and square
 layouts; the built-in AI dashboards remain the main purpose of the device.
-The desktop fetches plugin data and
-sends bounded drawing scenes to firmware with `sceneProtocol: 1`. Install that
-firmware once; installing another compatible plugin does not require flashing
-again. Plugins in this format contain no executable code, and the app shows
-their data origin and unsigned status before installation. See the
+The desktop fetches plugin data and sends bounded drawing scenes to firmware.
+Firmware with `sceneProtocol: 2` displays German umlauts, `ß`, and the degree
+sign; the companions adapt text for older `sceneProtocol: 1` firmware. Firmware
+without scene support needs an update before plugin windows can be used.
+Installing another compatible plugin does not require flashing again.
+
+Formats 1–4 are supported. Format 3 adds a location stored separately for each
+display, filtered and sorted source lists, numeric conversion, and refresh
+intervals down to 20 seconds. Plugins that require a location show a hint until
+one is set under Display; their data requests then include its coordinates.
+Format 4 lets a plugin expose an HTTPS data URL in its settings. The endpoint
+must return the structure the plugin expects. Unchanged URLs follow the
+plugin author's new default after an update; custom URLs are preserved when
+valid. These features are handled by the companion, so they work with either
+scene protocol.
+
+Plugins contain no executable code, and the app shows their data origin and
+unsigned status before installation, including whether they request the display
+location. On macOS, the visual window editor lets you assign providers, clocks,
+and plugins by clicking or dragging them onto a window. See the
 [plugin architecture](docs/display-plugins.md), [authoring guide](docs/display-plugin-authoring.md),
 and [acceptance test](docs/display-plugin-test.md).
 
@@ -136,7 +151,13 @@ If a CYD stays white or shows noise after flashing, flash the other CYD panel va
 - **Touch:** GT911
 - **MCU:** ESP32-S3 with octal PSRAM and 16 MB flash
 
-The square layout shows the weekly limit as a large ring with countdown and reset time, and the session as a bar. The board keeps no settings of its own: writing to flash while the panel is running disturbs the RGB output, so the app sends the display settings every time it connects. The apps pick the chip automatically when flashing.
+The square layout shows the weekly limit as a large ring with countdown and
+reset time, and the session as a bar. Since firmware 2.21.0, the S3 board saves
+its settings in flash, including the settings needed for its standby clock.
+The companion also keeps a per-device profile and reapplies it on connection.
+Plugin packages, source data, and the display location remain on the computer;
+plugin windows need the companion to fetch data and send scenes over USB.
+The apps pick the chip automatically when flashing.
 
 ## Enclosures
 

@@ -37,5 +37,12 @@ export function pluginError(error: unknown, t: Translate): string {
   const newer = message.match(/This plugin requires a newer version of AI Monitor \(formatVersion (\d+)\)/);
   if (newer) return t("plugins.requiresNewer", { version: newer[1] });
   if (message.includes("attentionRules require formatVersion 2")) return t("plugins.rulesRequireV2");
+  if (message.includes("source URL must be printable ASCII without whitespace (max 2048 bytes)")) return t("plugins.sourceAscii");
+  if (message.includes("source must be an HTTPS URL without credentials or fragment")) return t("plugins.sourceHttps");
+  if (message.includes("invalid source URL")) return t("plugins.sourceUrl");
+  if (message.includes("URL placeholders must be numeric")) return t("plugins.sourceNumeric");
+  if (message.includes("unknown URL placeholder")) return t("plugins.sourcePlaceholder");
+  if (message.includes("source origin changed")) return t("plugins.sourceOrigin");
+  if (message.includes("setting must be a URL")) return t("plugins.settingUrl");
   return message;
 }

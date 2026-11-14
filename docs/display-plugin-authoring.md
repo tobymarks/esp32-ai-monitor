@@ -13,10 +13,12 @@ the archive root. The uncompressed UTF-8 manifest may be at most 64 KiB; the
 whole ZIP may be at most 256 KiB. The test fixture demonstrates the format
 without shipping a plugin with the companion.
 
-Set `formatVersion` to `1` for plugins without intelligent-switch rules or `2`
-when using `attentionRules`. Format 1 must omit the field entirely, even when
-the list would be empty; including it reports `attentionRules require formatVersion 2`.
-Each new manifest field after format 2 requires a
+Set `formatVersion` to `1` for plugins without intelligent-switch rules, `2`
+when using `attentionRules`, or `3` when using `requires`, `lists`, binding
+`scale` or `trim`, `visibleWhen.notEquals`, or a refresh interval below 60
+seconds. Format 1 must omit `attentionRules` entirely, even when the list would
+be empty; including it reports `attentionRules require formatVersion 2`.
+Formats 1 and 2 must likewise omit `requires` and `lists`. Each new manifest field after format 3 requires a
 new format version. The existing `localizations` and `lightScenes` fields remain
 valid in version 1 for compatibility with packages already published. New
 companions check `formatVersion` before strict field validation, so a package
@@ -28,8 +30,14 @@ digits, dots, hyphens, or underscores. A changed ID creates a different plugin.
 IDs starting with `builtin.` are reserved for built-in windows such as the
 [Claude Code window](claude-code-window.md).
 `name`, `author`, `description`, `viewLabel`, and optional `attribution` are
-shown to users. Version 1 requires printable ASCII in metadata and display
-text because the device font and wire validator currently use that subset.
+shown to users. Metadata and display text use printable ASCII; format version 3
+adds the German umlauts `Ä Ö Ü ä ö ü ß` and the degree sign `°`, the only
+further characters in the device fonts. Formats 1 and 2 must stay ASCII.
+Length limits count UTF-8 bytes, so each of these characters uses two.
+
+Firmware with `sceneProtocol: 2` shows them as written. For older firmware the
+companion transliterates when sending (`Flüge` becomes `Fluege`, `12 °C`
+becomes `12 C`), so write natural text and do not ship ASCII spellings.
 
 An optional `localizations` object maps locale codes to exact translations of
 author-supplied strings. For example:
@@ -54,8 +62,8 @@ formatted value, so a condition need not be duplicated per language. Map
 values and text fallbacks are translated for display; numeric fallbacks remain
 numeric so they can still drive bars. Non-numeric fallbacks for numeric bindings
 can be translated. Translated metadata and setting labels must fit the same
-length limits as their originals. Localized display text remains printable
-ASCII with the current scene protocol. Companions released before this
+length limits as their originals. Localized display text follows the same
+character rules as the original text. Companions released before this
 extension reject packages containing `localizations`.
 
 Release compatibility note: Unknown `{{...}}` placeholders now cause plugin
@@ -66,30 +74,109 @@ when that node was visible. Existing packages with such placeholders must be
 corrected and reinstalled before they
 load in this version.
 
-Firmware reports `sceneProtocol: 1` through `get_info`. Older firmware cannot
+Firmware reports `sceneProtocol` through `get_info`: `1` for ASCII scene text,
+`2` with umlauts. Older firmware without the field cannot
 display plugin windows. The companion keeps up to 20 installed plugins; the
 window manager has eight slots and can place the same plugin in several slots.
 
 ## Data and settings
 
-The required `source` object has an HTTPS `url` and `intervalSeconds` between
-60 and 86400. It returns one JSON document of at most 64 KiB. Source requests
+The required `source` object defines an HTTPS endpoint (`url`, or
+`urlSetting` in format 4) and `intervalSeconds` between 60 and 86400;
+formats 3 and 4 allow 20 seconds for fast-moving data. Choose
+the longest interval that serves the view and respect the provider's limits. It returns one JSON document of at most 64 KiB. Source requests
 have a 12 second timeout and do not follow redirects. Authentication headers,
 multiple sources, and executable transforms are outside format version 1.
 
-Declare `settings` as an array, even when empty. Each setting has `key`,
-`label`, `kind` (`number` or `text`), `default`, and optional `min` and `max`.
+For all formats, declare `settings` as an array, even when empty. Each setting has `key`,
+`label`, `kind` (`number` or `text`; format 4 also supports `url`), `default`, and optional `min` and `max`.
 The settings UI is generated from this list. Only numeric settings may appear
-as `{key}` placeholders in the source URL; the URL's HTTPS origin must remain
-fixed. Text settings can still supply labels in the scene. Keep secrets out of
-the manifest and URL: version 1 has no secret store.
+as `{key}` placeholders in the source URL; replacing placeholders must keep
+its HTTPS origin fixed. Format 4 additionally allows the user to choose another
+origin through a URL setting (see below). Text settings can still supply labels
+in the scene. Keep secrets out of the manifest and URL: there is no secret store.
 
 Declare `bindings` as an array. A binding reads a dotted JSON path such as
 `current.temperature_2m` or an array index such as
 `daily.temperature_2m_max.0`. `settings.city` reads a setting. Its `format` is
 `text`, `integer`, `decimal1`, or `map`; `suffix`, `map`, and `fallback` control
 the displayed result. A missing field uses the fallback. Formatted results
-must fit 64 printable ASCII characters.
+must fit 64 bytes of display text.
+
+From format version 3 a numeric binding (`integer` or `decimal1`) may set
+`scale`, a non-zero factor applied before formatting, such as `0.3048` for feet
+to metres. A `text` or `map` binding may set `"trim": true` to strip
+surrounding whitespace; text that is empty afterwards uses the fallback.
+
+## Lists
+
+Many sources return an array in no useful order, such as nearby aircraft or
+upcoming departures. A format version 3 plugin can declare up to four `lists`
+that filter, sort, and limit such an array before bindings read it:
+
+```json
+"lists": [
+  {"name": "flights", "path": "ac", "sortBy": "dst", "limit": 3,
+   "where": [
+     {"path": "flight", "operator": "exists"},
+     {"path": "alt_baro", "operator": "notEquals", "value": "ground"},
+     {"path": "gs", "operator": "atLeast", "value": 40}
+   ]}
+]
+```
+
+`path` is the dotted path to the array; the first 500 entries are considered.
+Every `where` condition must hold (up to eight). Its `path` is relative to the
+entry and its `operator` is `exists`, `equals`, `notEquals`, `atLeast`, or
+`atMost`. `exists` takes no `value`; the two comparisons need a number. A
+missing or `null` field fails `exists`, `equals`, and the comparisons and
+passes `notEquals`. `sortBy` orders by a numeric field, ascending unless
+`"descending": true`; entries without that field come last and equal entries
+keep the source order. `limit` is 1 to 8.
+
+Bindings and attention rules read the result through reserved paths:
+`lists.<name>.count` is the number of matching entries before the limit, and
+`lists.<name>.items.<index>.<field>` reads a field of one of the first `limit`
+entries. An index at or beyond the limit, or an undeclared list, is rejected
+at installation. An entry that does not exist at run time uses the binding's
+fallback, so give optional rows an empty fallback and hide them with
+`visibleWhen`. In a plugin that declares lists, a source field named `lists`
+is not readable.
+
+## Display location
+
+Each display has one location, set by the user under **Display** in the
+companion and stored in that display's profile. A format version 3 plugin asks
+for it with:
+
+```json
+"requires": ["location"]
+```
+
+The source URL may then contain `{location.latitude}` and
+`{location.longitude}`. The companion inserts the coordinates with three
+decimals (roughly 100 m); the HTTPS origin must still remain fixed. Bindings
+can read `location.name`, `location.latitude`, and `location.longitude`. The
+name keeps German umlauts; other accents are written without them (`Łódź`
+becomes `Lodz`). It is missing when the user entered coordinates only, so give that
+binding a sensible fallback. In such a plugin a source field named `location`
+is not readable through these three paths.
+
+Do not add your own latitude, longitude, or city settings: a computer can
+drive several displays in different places, and plugin settings are shared by
+all of them. Without a stored location the window shows a hint instead of
+requesting data, and the companion fetches again when the user changes the
+location or connects another display. The install preview tells the user that
+the plugin sends the display location to your source origin. Test with:
+
+```sh
+cargo run --quiet --manifest-path companion-windows/Cargo.toml \
+  -p aimonitor-plugin-host -- render path/to/my-plugin.aimplugin - all \
+  '--location={"name":"Berlin","latitude":52.52,"longitude":13.41}'
+```
+
+Companions released before this extension report that the package needs a
+newer AI Monitor app.
 
 ## Optional intelligent-switch triggers
 
@@ -120,6 +207,66 @@ highest priority, oldest event, then lowest window index. Plugins without
 `attentionRules` remain fully compatible and do not request switches. The
 firmware and scene protocol are unchanged.
 
+## Configurable data URLs (format 4)
+
+Format 4 adds a `url` setting type. Choose **exactly one** source field:
+`url` for a fixed URL, or `urlSetting` referencing the key of a URL setting.
+The latter lets the user choose the HTTPS endpoint in the companion settings:
+
+```json
+"formatVersion": 4,
+"source": { "urlSetting": "endpoint", "intervalSeconds": 300 },
+"settings": [
+  {
+    "key": "endpoint", "label": "Data URL", "kind": "url",
+    "default": "https://status.claude.com/api/v2/status.json"
+  }
+]
+```
+
+A URL setting may contain numeric `{key}` placeholders from the same settings
+list, for example `https://api.example.org/metrics?scale={scale}`. Text and
+URL settings cannot be placeholders. Numeric replacements cannot change the
+origin. A user-selected URL may change the origin; the installed plugin's
+source-origin label updates after saving and after restart. The endpoint must
+return the JSON structure expected by the plugin's existing bindings.
+
+The URL setting must have a valid HTTPS `default`; an empty "bring your own
+endpoint" default is not supported. Enter internationalized domain names as
+Punycode (for example, `xn--bcher-kva.example` for `bücher.example`).
+URLs are limited to 2048 printable ASCII bytes without whitespace or
+backslashes. The settings UI trims surrounding whitespace before saving.
+Only HTTPS is accepted, without embedded credentials or a fragment. Unknown placeholders, non-URL source settings, multiple sources,
+and numeric bounds on URL settings are rejected. URL settings cannot be used
+as display bindings. Settings are validated before saving and before each
+request. Configuring a new URL clears cached data and attention baselines;
+responses started with earlier settings are discarded.
+
+All data-source requests, including those for formats 1–3, use the operating
+system's certificate trust store. Plugin package downloads and location searches
+continue to use the bundled certificate roots.
+A private HTTPS endpoint can use a local CA trusted by that operating system;
+an untrusted self-signed certificate is rejected. Certificate verification is
+always enabled. Redirects, custom authentication headers, secret storage,
+multiple requests, and executable plugin code remain unsupported. The minimum
+refresh interval is 20 seconds in formats 3 and 4, and 60 in formats 1 and 2.
+
+Formats 1, 2, and 3 continue to load with their existing contracts. Older apps
+reject format 4 with an upgrade message.
+A format-4 URL template may use `{location.latitude}` and
+`{location.longitude}` only when the plugin declares `requires: ["location"]`.
+No firmware update is required for configurable URLs: scenes still work with
+protocol 1 through the inherited text adaptation, and with protocol 2.
+
+Unchanged URL settings follow the plugin's default after an update. Custom
+URLs are retained when valid for the new manifest. An existing saved URL equal
+to the currently installed package's default is treated as inherited before
+updating, including full settings files written by older companion versions.
+If an older app already updated the package and retained an even earlier default,
+that historical URL cannot be distinguished from a custom value; reset it to the
+current default manually. Numeric and text preferences remain saved.
+On load and update, an invalid setting falls back independently to its default.
+
 ## Layouts
 
 `scenes.portrait` and `scenes.landscape` are required. `scenes.square` is
@@ -143,7 +290,9 @@ Every node has `type`, geometry, and decimal RGB `color`. Supported types are
 (`12`, `14`, `16`, `20`, `24`, `36`, or `48`), and optional `align` (`left`,
 `center`, `right`). Insert a formatted binding with `{{binding_name}}`.
 A `visibleWhen` object can show a node only when a binding's formatted value
-equals a specified string. Text is clipped to its box on the device.
+equals a specified string. From format version 3 it may use `notEquals`
+instead of `equals`, for example `{"binding": "count", "notEquals": "0"}` or,
+with an empty fallback, `{"binding": "second", "notEquals": ""}`. Text is clipped to its box on the device.
 
 A bar has `trackColor` and either a fixed integer `value` from 0 to 100 or a
 `valueBinding`. A dynamic bar's binding must use `integer`, have an empty

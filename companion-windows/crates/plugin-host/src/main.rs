@@ -2,10 +2,12 @@
 //! executed: the package is a validated declarative manifest.
 
 use aimonitor_core::claude_code;
-use aimonitor_core::plugin::{Manifest, SceneLayout};
+use aimonitor_core::device::Location;
+use aimonitor_core::plugin::{scene_for_protocol, Manifest, SceneLayout};
 use aimonitor_core::protocol::Theme;
 use aimonitor_core::plugin_package::{parse_package, MAX_PACKAGE_BYTES};
 use serde_json::{json, Map, Value};
+use aimonitor_plugin_store::{merge_valid_settings, persisted_settings};
 use std::env;
 use std::fs;
 use std::io::Read;
@@ -48,15 +50,22 @@ fn inspect(manifest: &Manifest, sha256: &str) -> Result<Value, String> {
         "intervalSeconds": manifest.source.interval_seconds,
         "sha256": sha256,
         "signed": false,
+        "requiresLocation": manifest.requires_location(),
         "settingsSpec": manifest.settings,
         "localizations": manifest.localizations,
         "settings": manifest.default_settings(),
     }))
 }
 
-fn fetch(manifest: &Manifest, settings: &Map<String, Value>) -> Result<Value, String> {
-    let url = manifest.source_url(settings)?;
+fn fetch(
+    manifest: &Manifest,
+    settings: &Map<String, Value>,
+    location: Option<&Location>,
+) -> Result<Value, String> {
+    let url = manifest.request_url(settings, location)?;
     let config = ureq::Agent::config_builder()
+        .tls_config(ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
         .timeout_global(Some(Duration::from_secs(12)))
         .max_redirects(0)
         .http_status_as_error(true)
@@ -117,10 +126,23 @@ fn download_package(source: &str) -> Result<Vec<u8>, String> {
     Err("too many plugin redirects".into())
 }
 
-fn parse_arguments(raw_args: Vec<String>) -> Result<(Vec<String>, Theme, String), String> {
+struct Options {
+    args: Vec<String>,
+    theme: Theme,
+    locale: String,
+    /// `--location={"name":…,"latitude":…,"longitude":…}` of the connected display.
+    location: Option<Location>,
+    /// `--scene-protocol=N` as reported by the firmware. Defaults to 1, where
+    /// umlauts are transliterated to ASCII.
+    scene_protocol: u32,
+}
+
+fn parse_arguments(raw_args: Vec<String>) -> Result<Options, String> {
     let mut args = Vec::with_capacity(raw_args.len());
     let mut theme = None;
     let mut locale = None;
+    let mut location = None;
+    let mut scene_protocol = None;
     for (index, arg) in raw_args.into_iter().enumerate() {
         if index != 0 {
             if let Some(value) = arg.strip_prefix("--theme=") {
@@ -142,19 +164,60 @@ fn parse_arguments(raw_args: Vec<String>) -> Result<(Vec<String>, Theme, String)
                 locale = Some(value.to_owned());
                 continue;
             }
+            if let Some(value) = arg.strip_prefix("--scene-protocol=") {
+                if scene_protocol.is_some() {
+                    return Err("duplicate scene protocol".into());
+                }
+                scene_protocol =
+                    Some(value.parse::<u32>().map_err(|_| "invalid scene protocol")?);
+                continue;
+            }
+            if let Some(value) = arg.strip_prefix("--location=") {
+                if location.is_some() {
+                    return Err("duplicate plugin location".into());
+                }
+                let place: Location =
+                    serde_json::from_str(value).map_err(|_| "invalid plugin location")?;
+                if !place.is_valid() {
+                    return Err("invalid plugin location".into());
+                }
+                location = Some(place);
+                continue;
+            }
         }
         args.push(arg);
     }
-    Ok((args, theme.unwrap_or(Theme::Dark), locale.unwrap_or_else(|| "en".into())))
+    Ok(Options {
+        args,
+        theme: theme.unwrap_or(Theme::Dark),
+        locale: locale.unwrap_or_else(|| "en".into()),
+        location,
+        scene_protocol: scene_protocol.unwrap_or(1),
+    })
+}
+
+fn settings_response(manifest: &Manifest, settings: &Map<String, Value>) -> Result<Value, String> {
+    let url = manifest.source_url(settings)?;
+    let origin = Url::parse(&url).map_err(|_| "invalid source URL")?.origin().ascii_serialization();
+    Ok(json!({
+        "valid": true, "sourceOrigin": origin, "settings": settings,
+        "savedSettings": persisted_settings(manifest, settings),
+    }))
 }
 
 fn run() -> Result<Value, String> {
-    let (args, theme, locale) = parse_arguments(env::args().collect())?;
+    let Options { args, theme, locale, location, scene_protocol } = parse_arguments(env::args().collect())?;
+    let location = location.as_ref();
     if args.get(1).map(String::as_str) == Some("claude-hooks") {
         return claude_hooks(&args);
     }
     if args.len() < 3 {
         return Err("usage: aimonitor-plugin-host inspect|render PACKAGE [SETTINGS] [portrait|landscape|square|all] [FIXTURE]".into());
+    }
+    // `places QUERY`: Ortssuche für den Standort eines Displays.
+    if args[1] == "places" && args.len() == 3 {
+        let places = aimonitor_plugin_store::search_places(&args[2], &locale)?;
+        return Ok(json!({"places": places}));
     }
     if args[1] == "download" && args.len() == 4 {
         let bytes = download_package(&args[2])?;
@@ -166,6 +229,22 @@ fn run() -> Result<Value, String> {
     let package = parse_package(&bytes)?;
     match args[1].as_str() {
         "inspect" if args.len() == 3 => inspect(&package.manifest, &package.sha256),
+        "restore-settings" if args.len() == 4 || args.len() == 5 => {
+            let saved = read_bounded(Path::new(&args[3]), 16 * 1024)
+                .ok().and_then(|bytes| serde_json::from_slice::<Map<String, Value>>(&bytes).ok())
+                .unwrap_or_default();
+            // During an update the old package still exists at its installed path.
+            let saved = if let Some(previous) = args.get(4) {
+                let previous = read_bounded(Path::new(previous), MAX_PACKAGE_BYTES)
+                    .ok().and_then(|bytes| parse_package(&bytes).ok())
+                    .filter(|old| old.manifest.id == package.manifest.id);
+                previous.map(|old| persisted_settings(&old.manifest, &saved)).unwrap_or(saved)
+            } else {
+                saved
+            };
+            let settings = merge_valid_settings(&package.manifest, &saved);
+            settings_response(&package.manifest, &settings)
+        }
         "validate-settings" if args.len() == 4 => {
             let bytes = read_bounded(Path::new(&args[3]), 16 * 1024)?;
             let settings: Map<String, Value> =
@@ -182,15 +261,18 @@ fn run() -> Result<Value, String> {
             {
                 return Err("settings do not match manifest".into());
             }
-            Ok(json!({"valid": true}))
+            settings_response(&package.manifest, &settings)
         }
         "render" if args.len() == 5 || args.len() == 6 => {
             let settings = if args[3] == "-" {
                 package.manifest.default_settings()
             } else {
                 let bytes = read_bounded(Path::new(&args[3]), 16 * 1024)?;
-                serde_json::from_slice::<Map<String, Value>>(&bytes)
-                    .map_err(|_| "invalid settings JSON")?
+                let saved = serde_json::from_slice::<Map<String, Value>>(&bytes)
+                    .map_err(|_| "invalid settings JSON")?;
+                let mut settings = package.manifest.default_settings();
+                settings.extend(saved);
+                settings
             };
             let orientation = args[4].as_str();
             if !matches!(orientation, "portrait" | "landscape" | "square" | "all") {
@@ -200,20 +282,21 @@ fn run() -> Result<Value, String> {
                 let bytes = read_bounded(Path::new(&args[5]), MAX_SOURCE_BYTES)?;
                 serde_json::from_slice(&bytes).map_err(|_| "invalid fixture JSON")?
             } else {
-                fetch(&package.manifest, &settings)?
+                fetch(&package.manifest, &settings, location)?
             };
             if orientation == "all" {
-                let portrait = package.manifest.scene_with_theme_and_locale(
-                    SceneLayout::Portrait, &data, &settings, theme, &locale,
+                let portrait = package.manifest.scene_at(
+                    SceneLayout::Portrait, &data, &settings, theme, &locale, location,
                 )?;
-                let landscape = package.manifest.scene_with_theme_and_locale(
-                    SceneLayout::Landscape, &data, &settings, theme, &locale,
+                let landscape = package.manifest.scene_at(
+                    SceneLayout::Landscape, &data, &settings, theme, &locale, location,
                 )?;
-                let square = package.manifest.scene_with_theme_and_locale(
-                    SceneLayout::Square, &data, &settings, theme, &locale,
+                let square = package.manifest.scene_at(
+                    SceneLayout::Square, &data, &settings, theme, &locale, location,
                 )?;
+                let adapt = |scene| scene_for_protocol(scene, scene_protocol);
                 Ok(json!({
-                    "scenes": {"portrait": portrait, "landscape": landscape, "square": square},
+                    "scenes": {"portrait": adapt(portrait), "landscape": adapt(landscape), "square": adapt(square)},
                     "attention": package.manifest.attention_states(&data),
                 }))
             } else {
@@ -222,10 +305,10 @@ fn run() -> Result<Value, String> {
                     "square" => SceneLayout::Square,
                     _ => SceneLayout::Portrait,
                 };
-                let scene = package.manifest.scene_with_theme_and_locale(
-                    layout, &data, &settings, theme, &locale,
+                let scene = package.manifest.scene_at(
+                    layout, &data, &settings, theme, &locale, location,
                 )?;
-                Ok(json!({"scene": scene}))
+                Ok(json!({"scene": scene_for_protocol(scene, scene_protocol)}))
             }
         }
         _ => Err("invalid command or arguments".into()),
@@ -275,25 +358,38 @@ mod tests {
                 let mut input = expected.clone();
                 input.insert(first, "--theme=light");
                 input.insert(second, "--locale=de");
-                let (args, theme, locale) =
+                let options =
                     parse_arguments(input.into_iter().map(str::to_owned).collect()).unwrap();
-                assert_eq!(args, expected);
-                assert_eq!(theme, Theme::Light);
-                assert_eq!(locale, "de");
+                assert_eq!(options.args, expected);
+                assert_eq!(options.theme, Theme::Light);
+                assert_eq!(options.locale, "de");
+                assert!(options.location.is_none());
+                assert_eq!(options.scene_protocol, 1);
             }
         }
         let default = parse_arguments(expected.iter().map(|s| s.to_string()).collect()).unwrap();
-        assert_eq!(default.1, Theme::Dark);
-        assert_eq!(default.2, "en");
+        assert_eq!(default.theme, Theme::Dark);
+        assert_eq!(default.locale, "en");
+        let place = parse_arguments(vec![
+            "host".into(),
+            "--location={\"name\":\"Köln\",\"latitude\":50.94,\"longitude\":6.96}".into(),
+        ])
+        .unwrap()
+        .location
+        .unwrap();
+        assert_eq!((place.name.as_str(), place.latitude), ("Köln", 50.94));
         for locale in ["pt_br", "pt.br"] {
             let input = vec!["host".to_owned(), format!("--locale={locale}")];
-            assert_eq!(parse_arguments(input).unwrap().2, locale);
+            assert_eq!(parse_arguments(input).unwrap().locale, locale);
         }
         for options in [
             vec!["--theme=light", "--theme=dark"],
             vec!["--locale=de", "--locale=en"],
             vec!["--theme=unknown"],
             vec!["--locale=DE"],
+            vec!["--location={\"latitude\":91,\"longitude\":0}"],
+            vec!["--location=50,7"],
+            vec!["--scene-protocol=two"],
         ] {
             let input = std::iter::once("host").chain(options).map(str::to_owned).collect();
             assert!(parse_arguments(input).is_err());

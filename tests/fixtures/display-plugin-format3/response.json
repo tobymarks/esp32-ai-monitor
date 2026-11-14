@@ -1,0 +1,53 @@
+{
+  "location": {
+    "name": "SOURCE MUST NOT WIN"
+  },
+  "temperature": 12.5,
+  "lists": {
+    "flights": {
+      "count": 99
+    }
+  },
+  "ac": [
+    {
+      "flight": " DLH4WF ",
+      "alt_baro": 11425,
+      "dst": 13.3,
+      "gs": 250
+    },
+    {
+      "flight": "GROUND",
+      "alt_baro": "ground",
+      "dst": 0.1,
+      "gs": 80
+    },
+    {
+      "alt_baro": 2000,
+      "dst": 0.2,
+      "gs": 250
+    },
+    {
+      "flight": "SLOW",
+      "alt_baro": 2000,
+      "dst": 0.3,
+      "gs": 30
+    },
+    {
+      "flight": " SWR2CY  ",
+      "alt_baro": 475,
+      "dst": 1.9,
+      "gs": 190
+    },
+    {
+      "flight": "NODIST",
+      "alt_baro": 3000,
+      "gs": 200
+    },
+    {
+      "flight": " UAL932 ",
+      "alt_baro": 975,
+      "dst": 2.2,
+      "gs": 200
+    }
+  ]
+}

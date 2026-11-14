@@ -441,7 +441,7 @@ static void handle_get_info() {
                   "\"display\":\"%s\",\"panel\":\"%s\",\"panelId\":\"%s\","
                   "\"orientation\":\"%s\","
                   "\"theme\":\"%s\",\"language\":\"%s\",\"brightness\":%u,"
-                  "\"serialTransport\":\"%s\",\"maxFrameBytes\":%u,\"sceneProtocol\":1,"
+                  "\"serialTransport\":\"%s\",\"maxFrameBytes\":%u,\"sceneProtocol\":2,"
                   "\"wifiConfigured\":%s,\"wifiConnected\":%s,\"timeSynced\":%s,"
                   "\"uptime\":%lu,\"heap\":%u,\"frameGlitches\":%lu}\n",
                   APP_VERSION, mac_str, DISPLAY_ID, board_panel_id(), board_panel_raw(),

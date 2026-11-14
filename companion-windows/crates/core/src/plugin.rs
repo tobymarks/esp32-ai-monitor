@@ -3,15 +3,25 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Number, Value};
+use crate::device::Location;
 use crate::protocol::Theme;
 use std::collections::{BTreeMap, HashSet};
 use url::Url;
 
-pub const FORMAT_VERSION: u32 = 2;
-pub const SCENE_PROTOCOL: u32 = 1;
+pub const FORMAT_VERSION: u32 = 4;
+/// 2 adds the German umlauts and the degree sign to scene text. Firmware
+/// reporting 1 gets the same scenes transliterated, see [`scene_for_protocol`].
+pub const SCENE_PROTOCOL: u32 = 2;
 pub const MAX_SCENE_NODES: usize = 24;
 pub const MAX_SCENE_BYTES: usize = 1536;
 pub const MAX_PACKAGE_MANIFEST_BYTES: usize = 64 * 1024;
+/// Shortest refresh interval: 60 s up to format 2, 20 s from format 3.
+pub const MIN_INTERVAL_SECONDS: u32 = 60;
+pub const MIN_INTERVAL_SECONDS_V3: u32 = 20;
+const MAX_LISTS: usize = 4;
+const MAX_LIST_ITEMS: usize = 8;
+/// Entries of a source array considered for a list; later ones are ignored.
+const MAX_LIST_SOURCE_ITEMS: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneLayout {
@@ -55,12 +65,14 @@ pub fn status_text(key: &str, language: crate::protocol::Language) -> &'static s
         (Language::De, "loading") => "Lade Daten ...",
         (Language::De, "stale") => "Daten veraltet - warte auf Update",
         (Language::De, "render") => "Plugin-Daten nicht darstellbar",
+        (Language::De, "location") => "Standort fehlt - in der App am Display festlegen",
         (Language::En, "missing") => "Plugin missing",
         (Language::En, "missing.hint") => "Install this plugin in Settings",
         (Language::En, "unavailable") => "Data unavailable",
         (Language::En, "loading") => "Loading data...",
         (Language::En, "stale") => "Data stale - waiting for update",
         (Language::En, "render") => "Cannot render plugin data",
+        (Language::En, "location") => "No location - set one for this display in the app",
         _ => "",
     }
 }
@@ -111,6 +123,12 @@ pub struct Manifest {
     pub bindings: Vec<Binding>,
     #[serde(default)]
     pub attention_rules: Vec<AttentionRule>,
+    /// Host data the plugin needs beyond its own settings (format version 3).
+    #[serde(default)]
+    pub requires: Vec<Requirement>,
+    /// Filtered, sorted selections from arrays in the source (format version 3).
+    #[serde(default)]
+    pub lists: Vec<ListSpec>,
     pub scenes: SceneVariants,
     /// Optional exact-text translations of author-supplied display strings.
     /// Missing locales and entries use the manifest's original text.
@@ -123,7 +141,10 @@ pub struct Manifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HttpSource {
-    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_setting: Option<String>,
     pub interval_seconds: u32,
 }
 
@@ -138,11 +159,82 @@ pub struct Setting {
     pub max: Option<f64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Requirement {
+    /// The location stored for the connected display. Enables the URL
+    /// placeholders `{location.latitude}` and `{location.longitude}` and the
+    /// binding paths `location.name`, `location.latitude`, `location.longitude`.
+    Location,
+}
+
+/// Picks entries from an array in the source JSON. Bindings and attention
+/// rules read the result as `lists.<name>.count` (all matches) and
+/// `lists.<name>.items.<index>.<field>` (the first `limit` matches).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListSpec {
+    pub name: String,
+    /// Dotted path to the source array, such as `ac`.
+    pub path: String,
+    /// Conditions an entry must all meet; paths are relative to the entry.
+    #[serde(default, rename = "where")]
+    pub filters: Vec<ListFilter>,
+    /// Numeric field to order by. Entries without it come last.
+    #[serde(default)]
+    pub sort_by: Option<String>,
+    #[serde(default)]
+    pub descending: bool,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListFilter {
+    pub path: String,
+    pub operator: FilterOperator,
+    #[serde(default)]
+    pub value: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FilterOperator {
+    Equals,
+    NotEquals,
+    AtLeast,
+    AtMost,
+    Exists,
+}
+
+impl ListFilter {
+    fn matches(&self, item: &Value) -> bool {
+        let actual = lookup(item, &self.path).filter(|value| !value.is_null());
+        let expected = self.value.as_ref();
+        let compare = |at_least: bool| {
+            actual
+                .and_then(Value::as_f64)
+                .zip(expected.and_then(Value::as_f64))
+                .is_some_and(|(a, b)| if at_least { a >= b } else { a <= b })
+        };
+        match self.operator {
+            FilterOperator::Exists => actual.is_some(),
+            FilterOperator::Equals => expected.is_some_and(|value| equal_value(actual, value)),
+            FilterOperator::NotEquals => expected.is_some_and(|value| !equal_value(actual, value)),
+            FilterOperator::AtLeast => compare(true),
+            FilterOperator::AtMost => compare(false),
+        }
+    }
+}
+
+const LOCATION_TOKENS: [&str; 2] = ["{location.latitude}", "{location.longitude}"];
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SettingKind {
     Number,
     Text,
+    Url,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +249,14 @@ pub struct Binding {
     #[serde(default)]
     pub map: BTreeMap<String, String>,
     pub fallback: String,
+    /// Factor applied to a number before formatting, such as 0.3048 for
+    /// feet to metres (format version 3, `integer` and `decimal1` only).
+    #[serde(default)]
+    pub scale: Option<f64>,
+    /// Strip surrounding whitespace from text; an empty result uses the
+    /// fallback (format version 3, `text` and `map` only).
+    #[serde(default)]
+    pub trim: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,6 +325,21 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     if header.format_version == 1 && header.fields.contains_key("attentionRules") {
         return Err("attentionRules require formatVersion 2".into());
     }
+    if header.format_version < 3 && header.fields.contains_key("requires") {
+        return Err("requires needs formatVersion 3".into());
+    }
+    if header.format_version < 3 && header.fields.contains_key("lists") {
+        return Err("lists need formatVersion 3".into());
+    }
+    // Companions before format 3 accept only ASCII text in a manifest.
+    if header.format_version < 3 && !bytes.is_ascii() {
+        return Err("umlauts need formatVersion 3".into());
+    }
+    if header.format_version < 4 && header.fields.get("source")
+        .and_then(Value::as_object).is_some_and(|source| source.contains_key("urlSetting"))
+    {
+        return Err("source.urlSetting requires formatVersion 4".into());
+    }
     let manifest: Manifest =
         serde_json::from_slice(bytes).map_err(|e| format!("invalid manifest: {e}"))?;
     manifest.validate()?;
@@ -239,8 +354,60 @@ fn valid_key(s: &str, max: usize) -> bool {
         })
 }
 
+/// Characters the device fonts carry beyond printable ASCII.
+const DISPLAY_EXTRA: [char; 8] = ['°', 'Ä', 'Ö', 'Ü', 'ß', 'ä', 'ö', 'ü'];
+
+/// Text the display can show. `max` counts UTF-8 bytes like the firmware
+/// does, so an umlaut uses two.
 fn printable(s: &str, max: usize) -> bool {
-    s.len() <= max && s.bytes().all(|c| (0x20..=0x7e).contains(&c))
+    s.len() <= max && s.chars().all(|c| (' '..='~').contains(&c) || DISPLAY_EXTRA.contains(&c))
+}
+
+/// ASCII spelling for firmware with scene protocol 1. Never longer in bytes
+/// than the UTF-8 original, so validated scenes stay within their limits.
+pub fn ascii_text(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let upper = |c: Option<&char>| c.is_some_and(|c| c.is_uppercase());
+    let lower = |c: Option<&char>| c.is_some_and(|c| c.is_lowercase());
+    let mut out = String::with_capacity(text.len());
+    for (i, &c) in chars.iter().enumerate() {
+        // In capitals the second letter is a capital too: `FLÜGE` becomes
+        // `FLUEGE`, while `Über` becomes `Ueber`.
+        let previous = i.checked_sub(1).and_then(|p| chars.get(p));
+        let next = chars.get(i + 1);
+        let capitals = upper(next) || (upper(previous) && !lower(next));
+        match c {
+            'Ä' => out.push_str(if capitals { "AE" } else { "Ae" }),
+            'Ö' => out.push_str(if capitals { "OE" } else { "Oe" }),
+            'Ü' => out.push_str(if capitals { "UE" } else { "Ue" }),
+            'ä' => out.push_str("ae"),
+            'ö' => out.push_str("oe"),
+            'ü' => out.push_str("ue"),
+            'ß' => out.push_str(if capitals { "SS" } else { "ss" }),
+            '°' => {}
+            c if (' '..='~').contains(&c) => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Adapt a finished scene to the connected firmware: scene protocol 2 shows
+/// umlauts, older firmware accepts only ASCII text.
+pub fn scene_for_protocol(mut scene: Value, scene_protocol: u32) -> Value {
+    if scene_protocol >= 2 {
+        return scene;
+    }
+    if let Some(nodes) = scene.get_mut("nodes").and_then(Value::as_array_mut) {
+        for node in nodes {
+            if let Some(text) = node.get_mut("text") {
+                if let Some(ascii) = text.as_str().filter(|t| !t.is_ascii()).map(ascii_text) {
+                    *text = Value::String(ascii);
+                }
+            }
+        }
+    }
+    scene
 }
 
 fn valid_dotted_path(path: &str) -> bool {
@@ -266,8 +433,14 @@ impl Manifest {
         if self.format_version == 1 && !self.attention_rules.is_empty() {
             return Err("attentionRules require formatVersion 2".into());
         }
+        if self.format_version < 3 && !self.requires.is_empty() {
+            return Err("requires needs formatVersion 3".into());
+        }
         if !(1..=FORMAT_VERSION).contains(&self.format_version) {
             return Err("unsupported plugin format".into());
+        }
+        if self.requires.len() > 1 {
+            return Err("duplicate requirement".into());
         }
         if self.min_scene_protocol == 0 || self.min_scene_protocol > SCENE_PROTOCOL {
             return Err("unsupported scene protocol".into());
@@ -296,12 +469,49 @@ impl Manifest {
         if self.version.len() > 32 || semver_parts(&self.version).is_none() {
             return Err("invalid plugin version".into());
         }
-        if !(60..=86_400).contains(&self.source.interval_seconds) {
+        let shortest = if self.format_version >= 3 {
+            MIN_INTERVAL_SECONDS_V3
+        } else {
+            MIN_INTERVAL_SECONDS
+        };
+        if !(shortest..=86_400).contains(&self.source.interval_seconds) {
             return Err("invalid refresh interval".into());
         }
-        // URL templates may contain only numeric settings. Replace them with
-        // zero here, then parse the URL before a network request is possible.
-        let mut sample_url = self.source.url.clone();
+        if self.format_version < 3 && !self.lists.is_empty() {
+            return Err("lists need formatVersion 3".into());
+        }
+        if self.lists.len() > MAX_LISTS {
+            return Err("too many lists".into());
+        }
+        let mut list_names = HashSet::new();
+        for list in &self.lists {
+            if !valid_key(&list.name, 30)
+                || !list_names.insert(list.name.as_str())
+                || !valid_dotted_path(&list.path)
+                || !(1..=MAX_LIST_ITEMS).contains(&list.limit)
+                || list.filters.len() > 8
+                || list.sort_by.as_ref().is_some_and(|path| !valid_dotted_path(path))
+            {
+                return Err("invalid list".into());
+            }
+            for filter in &list.filters {
+                let value_ok = match (filter.operator, &filter.value) {
+                    (FilterOperator::Exists, None) => true,
+                    (FilterOperator::Exists, Some(_)) | (_, None) => false,
+                    (FilterOperator::AtLeast | FilterOperator::AtMost, Some(value)) => {
+                        value.as_f64().is_some()
+                    }
+                    (_, Some(value)) => {
+                        value.is_boolean()
+                            || value.is_number()
+                            || value.as_str().is_some_and(|text| printable(text, 64))
+                    }
+                };
+                if !valid_dotted_path(&filter.path) || !value_ok {
+                    return Err("invalid list filter".into());
+                }
+            }
+        }
         let mut setting_names = HashSet::new();
         if self.settings.len() > 16 || self.bindings.len() > 32 {
             return Err("too many settings or bindings".into());
@@ -314,27 +524,17 @@ impl Manifest {
             {
                 return Err("invalid setting".into());
             }
-            validate_setting(setting, &setting.default)?;
-            let token = format!("{{{}}}", setting.key);
-            if sample_url.contains(&token) {
-                if !matches!(setting.kind, SettingKind::Number) {
-                    return Err("URL placeholders must be numeric".into());
+            if matches!(setting.kind, SettingKind::Url) {
+                if self.format_version < 4 {
+                    return Err("URL settings require formatVersion 4".into());
                 }
-                sample_url = sample_url.replace(&token, "0");
+                if self.source.url_setting.as_deref() != Some(&setting.key) {
+                    return Err("URL setting must be the data source".into());
+                }
             }
+            validate_setting(setting, &setting.default)?;
         }
-        if sample_url.contains('{') || sample_url.contains('}') {
-            return Err("unknown URL placeholder".into());
-        }
-        let url = Url::parse(&sample_url).map_err(|_| "invalid source URL")?;
-        if url.scheme() != "https"
-            || url.host_str().is_none()
-            || url.username() != ""
-            || url.password().is_some()
-            || url.fragment().is_some()
-        {
-            return Err("source must be an HTTPS URL without credentials".into());
-        }
+        self.source_url(&self.default_settings())?;
         if self.attention_rules.len() > 16 {
             return Err("too many attention rules".into());
         }
@@ -342,6 +542,7 @@ impl Manifest {
         for rule in &self.attention_rules {
             if !valid_key(&rule.id, 30) || !rule_ids.insert(rule.id.as_str())
                 || !valid_dotted_path(&rule.path)
+                || !self.valid_list_path(&rule.path)
                 || !(rule.value.is_boolean() || rule.value.is_string() || rule.value.is_number())
                 || matches!(rule.operator, AttentionOperator::AtLeast | AttentionOperator::AtMost)
                     && rule.value.as_f64().is_none()
@@ -370,9 +571,31 @@ impl Manifest {
                 return Err("invalid binding".into());
             }
             if let Some(key) = binding.path.strip_prefix("settings.") {
+                if self.settings.iter().any(|s| s.key == key && matches!(s.kind, SettingKind::Url)) {
+                    return Err("URL settings cannot be display bindings".into());
+                }
                 if !setting_names.contains(key) {
                     return Err("binding references unknown setting".into());
                 }
+            }
+            if self.requires_location() {
+                if let Some(key) = binding.path.strip_prefix("location.") {
+                    if !["name", "latitude", "longitude"].contains(&key) {
+                        return Err("binding references unknown location field".into());
+                    }
+                }
+            }
+            if !self.valid_list_path(&binding.path) {
+                return Err("binding references unknown list entry".into());
+            }
+            let numeric = matches!(binding.format, BindingFormat::Integer | BindingFormat::Decimal1);
+            if self.format_version < 3 && (binding.scale.is_some() || binding.trim) {
+                return Err("scale and trim need formatVersion 3".into());
+            }
+            if binding.scale.is_some_and(|scale| !numeric || !scale.is_finite() || scale == 0.0)
+                || (binding.trim && numeric)
+            {
+                return Err("invalid binding".into());
             }
         }
         for variants in std::iter::once(&self.scenes).chain(self.light_scenes.as_ref()) {
@@ -384,6 +607,11 @@ impl Manifest {
                     return Err("invalid scene bounds".into());
                 }
                 for node in &scene.nodes {
+                    if self.format_version < 3
+                        && node.get("visibleWhen").is_some_and(|when| when.get("notEquals").is_some())
+                    {
+                        return Err("notEquals needs formatVersion 3".into());
+                    }
                     validate_template_node(node, &names, &self.bindings)?;
                 }
             }
@@ -465,27 +693,144 @@ impl Manifest {
             .collect()
     }
 
+    /// `lists.*` is reserved in plugins that declare lists: a path there must
+    /// name a declared list and stay within its limit.
+    fn valid_list_path(&self, path: &str) -> bool {
+        if self.lists.is_empty() {
+            return true;
+        }
+        let Some(rest) = path.strip_prefix("lists.") else {
+            return path != "lists";
+        };
+        let mut parts = rest.split('.');
+        let Some(list) = parts.next().and_then(|name| self.lists.iter().find(|l| l.name == name))
+        else {
+            return false;
+        };
+        match (parts.next(), parts.next()) {
+            (Some("count"), None) => true,
+            (Some("items"), Some(index)) => {
+                index.parse::<usize>().is_ok_and(|i| i < list.limit) && parts.next().is_some()
+            }
+            _ => false,
+        }
+    }
+
+    /// The declared lists applied to one source response, shaped so that
+    /// `lists.<name>.count` and `lists.<name>.items.<index>` resolve.
+    fn selected_lists(&self, data: &Value) -> Option<Value> {
+        if self.lists.is_empty() {
+            return None;
+        }
+        let mut lists = Map::new();
+        for spec in &self.lists {
+            let mut items: Vec<&Value> = lookup(data, &spec.path)
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .take(MAX_LIST_SOURCE_ITEMS)
+                        .filter(|item| spec.filters.iter().all(|filter| filter.matches(item)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(key) = &spec.sort_by {
+                let rank = |item: &Value| lookup(item, key).and_then(Value::as_f64);
+                // A stable sort keeps the source order among equal entries.
+                items.sort_by(|a, b| match (rank(a), rank(b)) {
+                    (Some(x), Some(y)) if spec.descending => y.total_cmp(&x),
+                    (Some(x), Some(y)) => x.total_cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                });
+            }
+            let count = items.len();
+            items.truncate(spec.limit);
+            lists.insert(spec.name.clone(), json!({"count": count, "items": items}));
+        }
+        Some(json!({ "lists": lists }))
+    }
+
+    pub fn requires_location(&self) -> bool {
+        self.requires.contains(&Requirement::Location)
+    }
+
+    /// URL for checking settings and showing the origin. Location placeholders
+    /// are replaced with zero; use [`Manifest::request_url`] for a real fetch.
     pub fn source_url(&self, settings: &Map<String, Value>) -> Result<String, String> {
-        let mut url = self.source.url.clone();
+        self.resolved_url(settings, Some((0.0, 0.0)))
+    }
+
+    /// URL for the actual request. A plugin that requires a location cannot
+    /// be fetched without one; coordinates are sent with three decimals.
+    pub fn request_url(
+        &self,
+        settings: &Map<String, Value>,
+        location: Option<&Location>,
+    ) -> Result<String, String> {
+        let place = if self.requires_location() {
+            let place = location.filter(|l| l.is_valid()).ok_or("location required")?;
+            Some((place.latitude, place.longitude))
+        } else {
+            None
+        };
+        self.resolved_url(settings, place)
+    }
+
+    fn resolved_url(
+        &self,
+        settings: &Map<String, Value>,
+        place: Option<(f64, f64)>,
+    ) -> Result<String, String> {
         for setting in &self.settings {
-            let value = settings.get(&setting.key).unwrap_or(&setting.default);
-            validate_setting(setting, value)?;
+            validate_setting(setting, settings.get(&setting.key).unwrap_or(&setting.default))?;
+        }
+        let template = match (&self.source.url, &self.source.url_setting) {
+            (Some(url), None) => url.as_str(),
+            (None, Some(key)) => {
+                if self.format_version < 4 {
+                    return Err("source.urlSetting requires formatVersion 4".into());
+                }
+                let spec = self.settings.iter().find(|s| s.key == *key)
+                    .ok_or("unknown source URL setting")?;
+                if !matches!(spec.kind, SettingKind::Url) {
+                    return Err("source.urlSetting must reference a URL setting".into());
+                }
+                settings.get(key).unwrap_or(&spec.default).as_str()
+                    .ok_or("setting must be a URL")?
+            }
+            _ => return Err("source requires exactly one of url or urlSetting".into()),
+        };
+        let mut url = template.to_owned();
+        let mut baseline = template.to_owned();
+        if self.requires_location() {
+            let (latitude, longitude) = place.ok_or("location required")?;
+            url = url
+                .replace(LOCATION_TOKENS[0], &format!("{latitude:.3}"))
+                .replace(LOCATION_TOKENS[1], &format!("{longitude:.3}"));
+            for token in LOCATION_TOKENS {
+                baseline = baseline.replace(token, "0");
+            }
+        }
+        for setting in &self.settings {
             let token = format!("{{{}}}", setting.key);
             if url.contains(&token) {
+                if !matches!(setting.kind, SettingKind::Number) {
+                    return Err("URL placeholders must be numeric".into());
+                }
+                let value = settings.get(&setting.key).unwrap_or(&setting.default);
                 url = url.replace(&token, &value.to_string());
+                baseline = baseline.replace(&token, "0");
             }
         }
         if url.contains('{') || url.contains('}') {
-            return Err("unresolved URL placeholder".into());
+            return Err("unknown URL placeholder".into());
         }
-        // The resulting URL must retain the validated origin.
-        let parsed = Url::parse(&url).map_err(|_| "invalid source URL")?;
-        let template = self.source.url.clone();
-        let mut baseline = template;
-        for s in &self.settings {
-            baseline = baseline.replace(&format!("{{{}}}", s.key), "0");
-        }
-        let base = Url::parse(&baseline).map_err(|_| "invalid source URL")?;
+        let parsed = validate_source_url(&url)?;
+        let base = validate_source_url(&baseline)?;
+        // Numeric placeholders cannot change the origin. A different origin is
+        // permitted only through an explicitly configured format-4 URL setting.
         if parsed.origin() != base.origin() {
             return Err("source origin changed".into());
         }
@@ -495,8 +840,12 @@ impl Manifest {
     /// Declarative conditions evaluated against the source JSON, never the rendered scene.
     /// The host triggers only on false-to-true transitions after a baseline fetch.
     pub fn attention_states(&self, data: &Value) -> BTreeMap<String, bool> {
+        let lists = self.selected_lists(data);
         self.attention_rules.iter().map(|rule| {
-            let actual = lookup(data, &rule.path);
+            let actual = match &lists {
+                Some(lists) if rule.path.starts_with("lists.") => lookup(lists, &rule.path),
+                _ => lookup(data, &rule.path),
+            };
             let active = match rule.operator {
                 AttentionOperator::Equals => equal_value(actual, &rule.value),
                 AttentionOperator::AtLeast => actual.and_then(Value::as_f64)
@@ -545,17 +894,49 @@ impl Manifest {
         theme: Theme,
         locale: &str,
     ) -> Result<Value, String> {
+        self.scene_at(layout, data, settings, theme, locale, None)
+    }
+
+    /// Like [`Manifest::scene_with_theme_and_locale`], with the display's
+    /// location for plugins that require it. Without a location those
+    /// bindings use their fallback.
+    pub fn scene_at(
+        &self,
+        layout: SceneLayout,
+        data: &Value,
+        settings: &Map<String, Value>,
+        theme: Theme,
+        locale: &str,
+        location: Option<&Location>,
+    ) -> Result<Value, String> {
+        let place = location
+            .filter(|l| self.requires_location() && l.is_valid())
+            .map(|l| {
+                let name = l.display_name();
+                json!({
+                    "name": if name.is_empty() { Value::Null } else { json!(name) },
+                    "latitude": l.latitude,
+                    "longitude": l.longitude,
+                })
+            });
         for setting in &self.settings {
             validate_setting(
                 setting,
                 settings.get(&setting.key).unwrap_or(&setting.default),
             )?;
         }
+        let lists = self.selected_lists(data);
         let mut values = BTreeMap::new();
         let mut condition_values = BTreeMap::new();
         for binding in &self.bindings {
             let source = if binding.path.starts_with("settings.") {
                 settings.get(&binding.path[9..])
+            } else if self.requires_location() && binding.path.starts_with("location.") {
+                // Reserved for the host; a source field named `location` is
+                // only shadowed in plugins that ask for the display location.
+                place.as_ref().and_then(|p| p.get(&binding.path[9..]))
+            } else if let (Some(lists), true) = (&lists, binding.path.starts_with("lists.")) {
+                lookup(lists, &binding.path)
             } else {
                 lookup(data, &binding.path)
             };
@@ -603,11 +984,14 @@ impl Manifest {
                     .get("binding")
                     .and_then(Value::as_str)
                     .ok_or("invalid condition")?;
-                let expected = when
-                    .get("equals")
-                    .and_then(Value::as_str)
-                    .ok_or("invalid condition")?;
-                if condition_values.get(binding).is_none_or(|value| value != expected) {
+                let actual = condition_values.get(binding);
+                let text = |key: &str| when.get(key).and_then(Value::as_str);
+                let visible = match (text("equals"), text("notEquals")) {
+                    (Some(expected), None) => actual.is_some_and(|value| value == expected),
+                    (None, Some(unwanted)) => actual.is_some_and(|value| value != unwanted),
+                    _ => return Err("invalid condition".into()),
+                };
+                if !visible {
                     continue;
                 }
             }
@@ -657,6 +1041,24 @@ fn semver_parts(value: &str) -> Option<[u32; 3]> {
     ])
 }
 
+/// Validate both templates and resolved requests. Template placeholders are
+/// checked separately against numeric settings before a request is sent.
+fn validate_source_url(text: &str) -> Result<Url, String> {
+    if text.is_empty() || text.len() > 2048 || !text.bytes().all(|c| (0x21..=0x7e).contains(&c))
+        || text.contains('\\')
+    {
+        return Err("source URL must be printable ASCII without whitespace (max 2048 bytes)".into());
+    }
+    let url = Url::parse(text).map_err(|_| "invalid source URL")?;
+    if url.scheme() != "https" || url.host_str().is_none()
+        || !url.username().is_empty() || url.password().is_some() || url.fragment().is_some()
+        || url.host_str().is_some_and(|host| host.contains('{') || host.contains('}'))
+    {
+        return Err("source must be an HTTPS URL without credentials or fragment".into());
+    }
+    Ok(url)
+}
+
 fn validate_setting(spec: &Setting, value: &Value) -> Result<(), String> {
     match spec.kind {
         SettingKind::Number => {
@@ -668,6 +1070,13 @@ fn validate_setting(spec: &Setting, value: &Value) -> Result<(), String> {
             {
                 return Err("setting out of range".into());
             }
+        }
+        SettingKind::Url => {
+            if spec.min.is_some() || spec.max.is_some() {
+                return Err("URL settings cannot have numeric bounds".into());
+            }
+            let text = value.as_str().ok_or("setting must be a URL")?;
+            validate_source_url(text)?;
         }
         SettingKind::Text => {
             let text = value.as_str().ok_or("setting must be text")?;
@@ -691,16 +1100,20 @@ fn lookup<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
 
 fn binding_value(binding: &Binding, value: Option<&Value>) -> Option<String> {
     let value = value?;
+    let scale = binding.scale.unwrap_or(1.0);
     match binding.format {
         BindingFormat::Text => value
             .as_str()
+            .map(|text| if binding.trim { text.trim() } else { text })
+            .filter(|text| !(binding.trim && text.is_empty()))
             .map(str::to_owned)
             .or_else(|| value.as_i64().map(|v| v.to_string())),
-        BindingFormat::Integer => value.as_f64().map(|v| format!("{:.0}", v)),
-        BindingFormat::Decimal1 => value.as_f64().map(|v| format!("{:.1}", v)),
+        BindingFormat::Integer => value.as_f64().map(|v| format!("{:.0}", v * scale)),
+        BindingFormat::Decimal1 => value.as_f64().map(|v| format!("{:.1}", v * scale)),
         BindingFormat::Map => {
             let key = value
                 .as_str()
+                .map(|text| if binding.trim { text.trim() } else { text })
                 .map(str::to_owned)
                 .unwrap_or_else(|| value.to_string());
             binding.map.get(&key).cloned()
@@ -724,11 +1137,12 @@ fn validate_template_node(
             .get("binding")
             .and_then(Value::as_str)
             .ok_or("invalid condition")?;
-        let equals = when
-            .get("equals")
-            .and_then(Value::as_str)
-            .ok_or("invalid condition")?;
-        if !bindings.contains(binding) || !printable(equals, 64) {
+        let text = |key: &str| when.get(key).and_then(Value::as_str);
+        let expected = match (text("equals"), text("notEquals")) {
+            (Some(value), None) | (None, Some(value)) => value,
+            _ => return Err("invalid condition".into()),
+        };
+        if !bindings.contains(binding) || !printable(expected, 64) {
             return Err("invalid condition".into());
         }
     }
@@ -958,6 +1372,8 @@ mod tests {
             suffix: String::new(),
             map: BTreeMap::new(),
             fallback: "Unknown".into(),
+            scale: None,
+            trim: false,
         });
         for expected in ["Unknown", "Clear"] {
             plugin.scenes.portrait.nodes.push(json!({
@@ -1133,18 +1549,376 @@ mod tests {
         assert_ne!(dark["nodes"][0]["color"], light["nodes"][0]["color"]);
     }
 
+    fn url_fixture() -> Manifest {
+        let mut plugin = fixture();
+        plugin.format_version = 4;
+        let template = plugin.source.url.take().unwrap();
+        plugin.source.url_setting = Some("endpoint".into());
+        plugin.settings.push(Setting {
+            key: "endpoint".into(), label: "Data URL".into(), kind: SettingKind::Url,
+            default: json!(template), min: None, max: None,
+        });
+        plugin
+    }
+
+    #[test]
+    fn configured_url_changes_origin_and_keeps_numeric_settings() {
+        let plugin = url_fixture();
+        plugin.validate().unwrap();
+        let mut settings = plugin.default_settings();
+        settings.insert("endpoint".into(), json!("https://other.example:8443/metrics?scale={scale}"));
+        settings.insert("scale".into(), json!(2));
+        assert_eq!(plugin.source_url(&settings).unwrap(), "https://other.example:8443/metrics?scale=2");
+        let response = json!({});
+        assert!(plugin.scene(SceneLayout::Portrait, &response, &settings).is_ok());
+    }
+
+    #[test]
+    fn configured_url_retains_location_requirements_and_format_three_features() {
+        let mut plugin = url_fixture();
+        plugin.requires = vec![Requirement::Location];
+        plugin.source.interval_seconds = 20;
+        let mut settings = plugin.default_settings();
+        settings.insert("endpoint".into(), json!("https://local.example/data?lat={location.latitude}&lon={location.longitude}&n={scale}"));
+        assert!(plugin.request_url(&settings, None).unwrap_err().contains("location required"));
+        let location = Location { name: "Köln".into(), latitude: 50.93751, longitude: 6.96028 };
+        assert_eq!(plugin.request_url(&settings, Some(&location)).unwrap(),
+            "https://local.example/data?lat=50.938&lon=6.960&n=1");
+        assert_eq!(plugin.source_url(&settings).unwrap(), "https://local.example/data?lat=0.000&lon=0.000&n=1");
+        plugin.requires.clear();
+        assert!(plugin.source_url(&settings).is_err());
+        // Explicitly verify a format-3 manifest still parses in the new host.
+        let manifest = location_fixture();
+        assert!(parse_manifest(&serde_json::to_vec(&manifest).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn configured_url_rejects_invalid_input_before_fetch() {
+        let plugin = url_fixture();
+        let mut settings = plugin.default_settings();
+        for url in ["", "http://example.org/", "https://user:pass@example.org/",
+            "https://example.org/#fragment", "https://example.org/ space",
+            "https://example.org/\\evil", "https://example.org/?x={unknown}",
+            "https://example.org/?x={label}", "https://{scale}.example.org/",
+            "https://example.org/?x={endpoint}"] {
+            settings.insert("endpoint".into(), json!(url));
+            assert!(plugin.source_url(&settings).is_err(), "accepted {url}");
+        }
+        settings.insert("endpoint".into(), json!(format!("https://example.org/{}", "x".repeat(2048))));
+        assert!(plugin.source_url(&settings).is_err());
+        settings.insert("endpoint".into(), json!(42));
+        assert!(plugin.source_url(&settings).is_err());
+    }
+
+    #[test]
+    fn url_sources_require_format_four_and_exclusive_source() {
+        let mut plugin = url_fixture();
+        for version in [1, 2] {
+            plugin.format_version = version;
+            assert!(plugin.validate().unwrap_err().contains("formatVersion 4"));
+        }
+        plugin.format_version = 4;
+        plugin.source.url = Some("https://example.org/".into());
+        assert!(plugin.validate().is_err());
+        plugin.source.url = None;
+        plugin.source.url_setting = Some("missing".into());
+        assert!(plugin.validate().is_err());
+        plugin.source.url_setting = Some("label".into());
+        assert!(plugin.validate().is_err());
+        plugin.source.url_setting = Some("endpoint".into());
+        plugin.settings.last_mut().unwrap().min = Some(1.0);
+        assert!(plugin.validate().is_err());
+    }
+
+    #[test]
+    fn url_settings_are_not_display_bindings() {
+        let mut plugin = url_fixture();
+        plugin.bindings[0].path = "settings.endpoint".into();
+        assert!(plugin.validate().unwrap_err().contains("display bindings"));
+    }
+
+    #[test]
+    fn serialized_url_packages_obey_version_gates() {
+        let mut package = serde_json::to_value(url_fixture()).unwrap();
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).is_ok());
+        package.as_object_mut().unwrap().remove("requires");
+        package.as_object_mut().unwrap().remove("lists");
+        package["formatVersion"] = json!(2);
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err().contains("formatVersion 4"));
+        package["source"]["urlSetting"] = Value::Null;
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err().contains("formatVersion 4"));
+        package["formatVersion"] = json!(3);
+        assert!(parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err().contains("formatVersion 4"));
+    }
+
     #[test]
     fn future_format_reports_upgrade_before_unknown_fields() {
         let mut package: Value = serde_json::from_slice(include_bytes!(
             "../../../../tests/fixtures/display-plugin/plugin.json"
         )).unwrap();
-        package["formatVersion"] = json!(3);
+        package["formatVersion"] = json!(FORMAT_VERSION + 1);
         package["futureFeature"] = json!({"enabled": true});
         let err = parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err();
         assert!(err.contains("newer version of AI Monitor"), "{err}");
         package["formatVersion"] = json!(2);
         let err = parse_manifest(&serde_json::to_vec(&package).unwrap()).unwrap_err();
         assert!(err.contains("unknown field"), "{err}");
+    }
+
+    fn location_fixture() -> Value {
+        let mut manifest: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        ))
+        .unwrap();
+        manifest["formatVersion"] = json!(3);
+        manifest["requires"] = json!(["location"]);
+        manifest["source"]["url"] = json!(
+            "https://example.org/api?lat={location.latitude}&lon={location.longitude}&scale={scale}"
+        );
+        manifest["bindings"][0] = json!({
+            "name": "label", "path": "location.name", "format": "text",
+            "suffix": "", "map": {}, "fallback": "Here"
+        });
+        manifest
+    }
+
+    #[test]
+    fn location_requirement_fills_url_and_bindings() {
+        let manifest = parse_manifest(location_fixture().to_string().as_bytes()).unwrap();
+        assert!(manifest.requires_location());
+        let settings = manifest.default_settings();
+        let place = Location { name: "Köln".into(), latitude: 50.93751, longitude: 6.96028 };
+        assert_eq!(
+            manifest.request_url(&settings, Some(&place)).unwrap(),
+            "https://example.org/api?lat=50.938&lon=6.960&scale=1"
+        );
+        assert_eq!(manifest.request_url(&settings, None).unwrap_err(), "location required");
+        let outside = Location { latitude: 120.0, ..place.clone() };
+        assert!(manifest.request_url(&settings, Some(&outside)).is_err());
+        // The origin shown before installation needs no location.
+        assert!(manifest.source_url(&settings).unwrap().starts_with("https://example.org/api?lat=0.000"));
+
+        let data = json!({"location": {"name": "From source"}, "metric": {"value": 1}});
+        let text = |location: Option<&Location>| {
+            manifest
+                .scene_at(SceneLayout::Portrait, &data, &settings, Theme::Dark, "en", location)
+                .unwrap()["nodes"][0]["text"]
+                .clone()
+        };
+        assert_eq!(text(Some(&place)), "Köln");
+        assert_eq!(text(None), "Here");
+        let unnamed = Location { name: String::new(), ..place };
+        assert_eq!(text(Some(&unnamed)), "Here");
+    }
+
+    #[test]
+    fn location_is_gated_by_format_and_requirement() {
+        let mut old = location_fixture();
+        old["formatVersion"] = json!(2);
+        assert_eq!(
+            parse_manifest(old.to_string().as_bytes()).unwrap_err(),
+            "requires needs formatVersion 3"
+        );
+        let mut undeclared = location_fixture();
+        undeclared.as_object_mut().unwrap().remove("requires");
+        assert_eq!(
+            parse_manifest(undeclared.to_string().as_bytes()).unwrap_err(),
+            "unknown URL placeholder"
+        );
+        let mut unknown_field = location_fixture();
+        unknown_field["bindings"][0]["path"] = json!("location.street");
+        assert!(parse_manifest(unknown_field.to_string().as_bytes()).is_err());
+        let mut unknown = location_fixture();
+        unknown["requires"] = json!(["camera"]);
+        assert!(parse_manifest(unknown.to_string().as_bytes()).is_err());
+
+        // Without the requirement a source field named `location` stays readable.
+        let mut plain: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        ))
+        .unwrap();
+        plain["bindings"][0]["path"] = json!("location.name");
+        let manifest = parse_manifest(plain.to_string().as_bytes()).unwrap();
+        let scene = manifest
+            .scene(SceneLayout::Portrait, &json!({"location": {"name": "From source"}}),
+                   &manifest.default_settings())
+            .unwrap();
+        assert_eq!(scene["nodes"][0]["text"], "From source");
+    }
+
+    fn list_fixture() -> Value {
+        let mut manifest: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        ))
+        .unwrap();
+        manifest["formatVersion"] = json!(3);
+        manifest["source"]["intervalSeconds"] = json!(20);
+        manifest["lists"] = json!([{
+            "name": "flights", "path": "ac", "limit": 2, "sortBy": "dst",
+            "where": [
+                {"path": "alt_baro", "operator": "notEquals", "value": "ground"},
+                {"path": "flight", "operator": "exists"}
+            ]
+        }]);
+        manifest["bindings"] = json!([
+            {"name": "label", "path": "lists.flights.items.0.flight", "format": "text",
+             "trim": true, "fallback": "No flight"},
+            {"name": "value", "path": "lists.flights.items.0.alt_baro", "format": "integer",
+             "scale": 0.3048, "suffix": " m", "fallback": "-"},
+            {"name": "level", "path": "lists.flights.count", "format": "integer", "fallback": "0"},
+            {"name": "state", "path": "lists.flights.items.1.flight", "format": "text",
+             "trim": true, "fallback": ""}
+        ]);
+        manifest["attentionRules"] = json!([
+            {"id": "overhead", "path": "lists.flights.count", "operator": "atLeast", "value": 1}
+        ]);
+        for layout in ["portrait", "landscape", "square"] {
+            manifest["scenes"][layout]["nodes"][2]["visibleWhen"] =
+                json!({"binding": "state", "notEquals": ""});
+        }
+        manifest
+    }
+
+    fn texts(scene: &Value) -> Vec<String> {
+        scene["nodes"].as_array().unwrap().iter()
+            .filter_map(|node| node["text"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn lists_filter_sort_and_limit_source_arrays() {
+        let manifest = parse_manifest(list_fixture().to_string().as_bytes()).unwrap();
+        let settings = manifest.default_settings();
+        // Unsortiert, mit Bodenverkehr, aufgefüllten Callsigns und Lücken, wie von adsb.lol.
+        let data = json!({"ac": [
+            {"flight": "DLH4WF  ", "alt_baro": 11425, "dst": 13.3},
+            {"flight": "DLH695  ", "alt_baro": "ground", "dst": 2.3},
+            {"alt_baro": 26275, "dst": 0.8},
+            {"flight": "SWR2CY  ", "alt_baro": 475, "dst": 1.9},
+            {"flight": "NODIST  ", "alt_baro": 3000},
+            {"flight": "UAL932  ", "alt_baro": 975, "dst": 2.2}
+        ]});
+        let scene = manifest.scene(SceneLayout::Portrait, &data, &settings).unwrap();
+        let shown = texts(&scene);
+        assert_eq!(shown[0], "SWR2CY");
+        assert!(shown.contains(&"145 m".to_string()), "{shown:?}");
+        // Vier Treffer insgesamt, auch wenn nur zwei Einträge bindbar sind.
+        assert!(shown.contains(&"Level 4%".to_string()), "{shown:?}");
+        assert_eq!(scene["nodes"].as_array().unwrap().len(), 8);
+        assert_eq!(manifest.attention_states(&data)["overhead"], true);
+
+        // Ein Treffer: der zweite Eintrag fehlt, sein Knoten verschwindet.
+        let one = json!({"ac": [{"flight": "SWR2CY  ", "alt_baro": 475, "dst": 1.9}]});
+        let scene = manifest.scene(SceneLayout::Portrait, &one, &settings).unwrap();
+        assert_eq!(scene["nodes"].as_array().unwrap().len(), 7);
+
+        // Leerer Himmel, fehlendes Feld oder kein Array: Ersatztexte, keine Regel.
+        for empty in [json!({"ac": []}), json!({}), json!({"ac": "none"})] {
+            let scene = manifest.scene(SceneLayout::Portrait, &empty, &settings).unwrap();
+            assert_eq!(texts(&scene)[0], "No flight");
+            assert_eq!(manifest.attention_states(&empty)["overhead"], false);
+        }
+
+        let mut descending = list_fixture();
+        descending["lists"][0]["descending"] = json!(true);
+        let manifest = parse_manifest(descending.to_string().as_bytes()).unwrap();
+        let scene = manifest.scene(SceneLayout::Portrait, &data, &settings).unwrap();
+        assert_eq!(texts(&scene)[0], "DLH4WF");
+    }
+
+    #[test]
+    fn list_features_are_gated_and_validated() {
+        let rejected = |edit: &dyn Fn(&mut Value)| {
+            let mut manifest = list_fixture();
+            edit(&mut manifest);
+            parse_manifest(manifest.to_string().as_bytes()).unwrap_err()
+        };
+        assert_eq!(rejected(&|m| m["formatVersion"] = json!(2)), "lists need formatVersion 3");
+        assert_eq!(rejected(&|m| m["source"]["intervalSeconds"] = json!(19)), "invalid refresh interval");
+        assert_eq!(rejected(&|m| m["lists"][0]["limit"] = json!(9)), "invalid list");
+        assert_eq!(rejected(&|m| m["lists"][0]["where"][1]["value"] = json!(1)), "invalid list filter");
+        assert_eq!(rejected(&|m| m["lists"][0]["where"][0]["value"] = Value::Null), "invalid list filter");
+        // Index außerhalb des Limits, unbekannte Liste, Liste ohne Feld.
+        for path in ["lists.flights.items.2.flight", "lists.other.count", "lists.flights.items.0", "lists.flights"] {
+            assert_eq!(
+                rejected(&|m| m["bindings"][0]["path"] = json!(path)),
+                "binding references unknown list entry"
+            );
+        }
+        assert_eq!(rejected(&|m| m["attentionRules"][0]["path"] = json!("lists.nope.count")), "invalid attention rule");
+        assert_eq!(rejected(&|m| m["bindings"][0]["scale"] = json!(2)), "invalid binding");
+        assert_eq!(rejected(&|m| m["bindings"][1]["trim"] = json!(true)), "invalid binding");
+        assert_eq!(rejected(&|m| m["bindings"][1]["scale"] = json!(0)), "invalid binding");
+
+        // Format 2 kennt weder das kurze Intervall noch die neuen Felder.
+        let old = |edit: &dyn Fn(&mut Value)| {
+            let mut manifest: Value = serde_json::from_str(include_str!(
+                "../../../../tests/fixtures/display-plugin/plugin.json"
+            ))
+            .unwrap();
+            manifest["formatVersion"] = json!(2);
+            edit(&mut manifest);
+            parse_manifest(manifest.to_string().as_bytes()).unwrap_err()
+        };
+        assert_eq!(old(&|m| m["source"]["intervalSeconds"] = json!(20)), "invalid refresh interval");
+        assert_eq!(old(&|m| m["bindings"][0]["trim"] = json!(true)), "scale and trim need formatVersion 3");
+        assert_eq!(
+            old(&|m| m["scenes"]["portrait"]["nodes"][2]["visibleWhen"] = json!({"binding": "state", "notEquals": "x"})),
+            "notEquals needs formatVersion 3"
+        );
+        assert_eq!(
+            rejected(&|m| m["scenes"]["portrait"]["nodes"][2]["visibleWhen"] =
+                json!({"binding": "state", "equals": "a", "notEquals": "b"})),
+            "invalid condition"
+        );
+    }
+
+    #[test]
+    fn umlauts_reach_new_firmware_and_are_transliterated_for_old() {
+        let mut manifest = location_fixture();
+        manifest["viewLabel"] = json!("Flüge");
+        manifest["scenes"]["portrait"]["nodes"][6]["text"] = json!("Höhe {{level}} m, 12 °C, groß");
+        manifest["localizations"] = json!({"de": {"Flüge": "Flüge"}});
+        let parsed = parse_manifest(manifest.to_string().as_bytes()).unwrap();
+        let place = Location { name: "Zürich".into(), latitude: 47.37, longitude: 8.54 };
+        let scene = parsed
+            .scene_at(SceneLayout::Portrait, &json!({}), &parsed.default_settings(),
+                      Theme::Dark, "de", Some(&place))
+            .unwrap();
+        assert_eq!(texts(&scene)[0], "Zürich");
+        assert!(texts(&scene).contains(&"Höhe 0 m, 12 °C, groß".to_string()));
+        let old = scene_for_protocol(scene.clone(), 1);
+        assert_eq!(texts(&old)[0], "Zuerich");
+        assert!(texts(&old).contains(&"Hoehe 0 m, 12 C, gross".to_string()));
+        validate_scene_for_tests(&old).unwrap();
+        assert_eq!(scene_for_protocol(scene.clone(), 2), scene);
+        // Die Umschrift ist in Bytes nie länger als das Original.
+        assert_eq!(ascii_text("FLÜGE Über STRAßE Öl Ä"), "FLUEGE Ueber STRASSE Oel Ae");
+        for text in ["ÄÖÜäöüß°", "Größe", "Fuß"] {
+            assert!(ascii_text(text).len() <= text.len());
+            assert!(ascii_text(text).is_ascii());
+        }
+
+        // 64 zählt Bytes wie in der Firmware: 32 Umlaute passen, 33 nicht.
+        let mut long = location_fixture();
+        long["scenes"]["portrait"]["nodes"][6]["text"] = json!("ü".repeat(32));
+        assert!(parse_manifest(long.to_string().as_bytes()).is_ok());
+        long["scenes"]["portrait"]["nodes"][6]["text"] = json!("ü".repeat(33));
+        assert!(parse_manifest(long.to_string().as_bytes()).is_err());
+
+        // Andere Zeichen kennt die Schrift nicht, und ältere Formate bleiben ASCII.
+        let mut accent = location_fixture();
+        accent["viewLabel"] = json!("Café");
+        assert!(parse_manifest(accent.to_string().as_bytes()).is_err());
+        let mut old_format: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/display-plugin/plugin.json"
+        ))
+        .unwrap();
+        old_format["viewLabel"] = json!("Flüge");
+        assert_eq!(
+            parse_manifest(serde_json::to_string(&old_format).unwrap().as_bytes()).unwrap_err(),
+            "umlauts need formatVersion 3"
+        );
     }
 
     #[test]
@@ -1296,7 +2070,7 @@ mod tests {
     #[test]
     fn malformed_origin_and_scene_are_rejected() {
         let mut plugin = fixture();
-        plugin.source.url = "http://localhost/metric".into();
+        plugin.source.url = Some("http://localhost/metric".into());
         assert!(plugin.validate().is_err());
         let mut plugin = fixture();
         plugin.min_scene_protocol = 0;

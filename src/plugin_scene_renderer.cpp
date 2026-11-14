@@ -4,13 +4,13 @@
 
 static const lv_font_t *plugin_font(int size) {
     switch (size) {
-        case 12: return &lv_font_montserrat_12;
-        case 16: return &lv_font_montserrat_16;
-        case 20: return &lv_font_montserrat_20;
-        case 24: return &lv_font_montserrat_24;
-        case 36: return &lv_font_montserrat_36;
-        case 48: return &lv_font_montserrat_48;
-        default: return &lv_font_montserrat_14;
+        case 12: return &font_ui_12;
+        case 16: return &font_ui_16;
+        case 20: return &font_ui_20;
+        case 24: return &font_ui_24;
+        case 36: return &font_ui_36;
+        case 48: return &font_ui_48;
+        default: return &font_ui_14;
     }
 }
 
