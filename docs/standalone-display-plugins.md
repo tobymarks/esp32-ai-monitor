@@ -216,6 +216,9 @@ redirect-source responses. The wrong-host endpoint only timed out, so hostname
 rejection remains unproven. The smallest sampled free heap in these manual
 tests before the 24-hour observation was 103,432 bytes, not an internal-heap
 minimum; sampled frame glitches remained zero.
+The user also confirmed the S3 touch interaction: a long press opens device
+settings, and Back returns to the plugin display. This confirms that interaction,
+not repeated touch operation throughout the endurance run.
 A 24-hour diagnostic observation started on 14 November at 09:44:52 CET,
 with 30-second read-only samples and USB power. It has not yet completed and
 does not replace wall-power or continuous visual/touch qualification.
@@ -227,7 +230,8 @@ service status; absent Wi-Fi/NTP; expired/wrong-host certificates; slow, chunked
 oversized and malformed responses; USB takeover during fetch; interrupted saves;
 and a 24-hour refresh/touch run. S3 tests above cover only part of this matrix;
 network-loss/stale-data recovery, absent-NTP gating, wall-power/cold starts,
-interrupted writes, touch and sustained operation remain hardware gates.
+interrupted writes, CYD touch and sustained operation with repeated touch
+remain hardware gates.
 Measure minimum internal heap, largest free block, worker stack margin, resets
 and S3 frame glitches under simultaneous
 HTTPS and explicit filesystem saves. Full physical acceptance is not claimed.

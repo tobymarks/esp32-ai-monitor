@@ -82,6 +82,7 @@ eine tatsächliche Sichtprüfung auf diesem S3.
 | Komprimierte Antwort | `https://httpbin.org/gzip` wird mit `http_encoding` abgelehnt; separate Host-Abfrage bestätigt gzip |
 | Umleitungsquelle | `https://httpbin.org/redirect/1` wird mit `http_status` abgelehnt; separate Host-Abfrage liefert 302, der konkrete Gerätestatus wurde nicht aufgezeichnet |
 | Display-Zähler | Weiterhin `frameGlitches: 0` an allen abgefragten Messpunkten |
+| S3-Touch: Einstellungen und Rückkehr | Nutzer bestätigt: Langes Drücken öffnet die Geräteeinstellungen; „Zurück“ führt wieder zur Plugin-Anzeige |
 
 Die Refresh-Messreihe enthält die Paare Geräte-Laufzeit/Erfolgsalter
 `305/15`, `334/44`, `364/13`, `393/42`, `422/11` Sekunden. Abfragen erfolgen
@@ -133,7 +134,9 @@ Weiterhin offen sind:
 - Interne Speicher- und Stackreserven unter gleichzeitiger HTTPS-,
   Dateisystem- und Display-Last.
 - Stromunterbrechung während eines Speichervorgangs, Kaltstart am separaten
-  Netzteil, Touch-Abnahme auf S3 und CYD sowie der 24-Stunden-Dauerlauf.
+  Netzteil, Touch-Abnahme auf CYD sowie der 24-Stunden-Dauerlauf einschließlich
+  wiederholter Touch-Bedienung. Die einzelne S3-Prüfung für Öffnen/Zurück ist
+  bestätigt; sie ersetzt keine Touch-Dauerprüfung.
 - Sichtbare Umlaute, Zeilenhöhen und Clipping auf den CYD-Panels.
 
 Die drei CYD-/S3-Firmwarebuilds und nativen Regressionen ersetzen diese offenen
