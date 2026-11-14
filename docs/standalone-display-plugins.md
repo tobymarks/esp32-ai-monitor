@@ -220,10 +220,23 @@ The user also confirmed the S3 touch interaction: a long press opens device
 settings, and Back returns to the plugin display. This confirms that interaction,
 not repeated touch operation throughout the endurance run.
 A 24-hour diagnostic observation started on 14 November at 09:44:52 CET,
-with 30-second read-only samples and USB power. It has not yet completed and
-does not replace wall-power or continuous visual/touch qualification.
-Its first four samples already include a lower free heap of 55,668 bytes;
-the final range and trend require evaluation after the observation.
+with 30-second read-only samples and USB power. The recorder failed with
+`SerialException` at 16:50:22 CET. Its 851 complete samples cover 7 hours and
+5 minutes, ending at 16:49:52, with fresh data and no recorded resets,
+standalone errors or frame glitches. Sampled free heap was 51,560–105,100 bytes;
+these are not internal minimum/fragmentation/stack measurements. The failed
+next query was not appended, and the exception class does not establish a
+firmware or host-side cause. This is **not a 24-hour pass** and does not
+qualify wall-power or continuous visual/touch operation. Readiness samples
+also captured the normal `waiting_time` transition; sustained absent-NTP
+behavior remains untested.
+
+At the user's request, the weather test profile was removed, the original
+Codex view restored, and the installed Mac companion restarted and reconnected
+to the S3. The scheduled follow-up was disabled. The installed app remains
+the original 1.32.0; the separate standalone candidate (also version 1.32.0)
+was not installed. The tested development firmware and configured Wi-Fi remain
+on the S3.
 
 Before release, test all three boards from wall power with current weather and
 service status; absent Wi-Fi/NTP; expired/wrong-host certificates; slow, chunked,

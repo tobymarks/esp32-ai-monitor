@@ -98,33 +98,61 @@ am Host geprüft, nicht aus dem verschlüsselten Geräteverkehr mitgeschnitten.
 
 Die Negativtests ersetzen jeweils das Profil und löschen damit die vorherige
 Szene. Sie belegen keine Erhaltung alter Daten bei einem Ausfall derselben
-Quelle. Der anfängliche Zustand `waiting_time` wurde nicht beobachtet und die
-NTP-Sperre ohne erreichbaren Zeitserver somit nicht physisch geprüft.
+Quelle. Im manuellen Test wurde `waiting_time` nicht beobachtet. Der spätere
+Recorder erfasste beim Start `waiting_wifi → waiting_time → loading → fresh`,
+darunter zwei Abfragen mit verbundenem WLAN und `timeSynced: false`. Das belegt
+den normalen Startübergang, keine anhaltende NTP-Sperre bei unerreichbarem
+Zeitserver.
 
-## Fortgesetzter Test und offene Abnahme
+## Abgebrochene Dauerbeobachtung
 
-Die Entwicklungsfirmware und die neu eingerichtete WLAN-Verbindung bleiben
-auf dem S3. Für die fortgesetzten Standalone-Tests ist die installierte
-Companion-App vorübergehend geschlossen. Die vollständige Rücksicherung ist
-verfügbar; sie stammt von vor der WLAN-Einrichtung.
+Nach den Negativtests wurde das Wetterprofil wieder erfolgreich geladen.
+Ein auf 24 Stunden angelegter Recorder startete am **14.11.2026 um 09:44:52
+MEZ** nach bestätigter WLAN-/NTP-/Profilbereitschaft. Er endete bereits um
+**16:50:22 MEZ mit `SerialException`**. Die letzte vollständige Abfrage stammt
+von 16:49:52 MEZ. Die Fehlerklasse allein unterscheidet weder Kabel-/USB-/Host-
+Probleme noch einen möglichen Firmwarefehler. **Keine bestandene
+24-Stunden-Abnahme.**
 
-Nach den Negativtests wurde das Wetterprofil wieder erfolgreich geladen. Die
-ursprüngliche Fensterkonfiguration ist bereits wiederhergestellt; `standby`
-überlässt dem Standalone-Profil die Anzeige. Ein separater 24-Stunden-Dauerlauf
-startete nach erneut bestätigter WLAN-/NTP-/Profilbereitschaft am **14.11.2026
-um 09:44:52 MEZ**, vorgesehenes Ende **15.11.2026 um 09:44:52 MEZ**. Er ist zum
-Zeitpunkt dieses Berichts **gestartet, nicht bestanden**.
+Gespeichert sind **851 vollständige Stichproben über 7 Stunden und 5 Minuten**:
 
-Ein separater Recorder fragt alle 30 Sekunden ausschließlich `get_info` und
-`standalone_status` ab. Er zeichnet Zeitstempel, Laufzeit, freien Heap,
-Bildfehlerzähler, Verbindungszustand und Erfolgsalter auf. Er verändert keine
-Profile, setzt keine Host-Zeit, übernimmt USB nicht und öffnet bei einem
-Verbindungsfehler den Port nicht erneut. Der Mac wird für die Messung wach
-gehalten; die Stromversorgung erfolgt weiterhin über USB. Diese Messung ist
-kein separater Netzteiltest und keine durchgehende Sicht- oder Touchprüfung.
-Bereits die ersten vier Dauerlauf-Stichproben enthalten einen niedrigeren
-freien Heap von 55.668 Bytes; der endgültige Messbereich und Verlauf werden
-erst nach Ende der Beobachtung bewertet.
+- Sämtliche gespeicherten Statuswerte `fresh`, WLAN verbunden, Uhrzeit
+  synchronisiert; keine gemeldeten Standalone-Fehler, Laufzeitrücksprünge,
+  Profilwechsel oder Bildfehler.
+- Abstände der gespeicherten Stichproben 29,941–30,093 Sekunden. Innerhalb
+  dieses Abschnitts keine fehlenden Antworten oder übersprungenen Intervalle.
+  Die nächste, fehlgeschlagene Abfrage wurde nicht mehr gespeichert; der
+  Nullzähler ist kein Nachweis einer danach weiter verfügbaren Verbindung.
+- 409 beobachtete Fortschritte des letzten erfolgreichen Wetterabrufs;
+  geschätzte Erfolgsabstände 62–63 Sekunden, größtes abgefragtes Datenalter
+  62 Sekunden.
+- Abgefragter freier Heap 51.560–105.100 Bytes. Dies sind Gesamt-Heap-
+  Stichproben, keine instrumentierten internen Mindestwerte, Fragmentierungs-
+  oder Stackmessungen.
+
+Der Recorder fragte alle 30 Sekunden ausschließlich `get_info` und
+`standalone_status` ab, setzte keine Host-Zeit und übernahm USB nicht. Er
+öffnete den Port nach dem Fehler nicht erneut. Die Versorgung erfolgte über
+USB; das ist kein separater Netzteiltest. Die Messwerte belegen weder das
+Verhalten nach dem Verbindungsfehler noch durchgehende sichtbare Bildstabilität
+oder wiederholte Touch-Bedienung.
+
+## Wiederhergestellter Normalbetrieb und offene Abnahme
+
+Am Abend bat der Nutzer um die normale Anzeige. Das anhand von Profil-ID und
+Digest identifizierte Wetter-Testprofil wurde entfernt; das S3 bestätigte
+`enabled: false` und eine leere Profil-ID. Die ursprüngliche Ansicht `codex`
+mit manueller Auswahl wurde zurückgelesen. Die installierte Companion-App
+wurde gestartet und hält wieder die serielle S3-Verbindung. Die für den
+15.11. geplante automatische Nacharbeit wurde deaktiviert; es läuft kein
+Recorder mehr.
+
+Installiert bleibt die ursprüngliche Mac-App **1.32.0**. Der universelle
+Standalone-App-Testbuild aus `36edce5` liegt separat vor und wurde nicht
+installiert; seine Versionsnummer ist ebenfalls unverändert 1.32.0. Die
+Entwicklungsfirmware aus `36edce5` bleibt auf dem S3, weiterhin mit
+Versionsnummer 2.23.0 und Protokollen 2/1. WLAN-Einstellungen wurden erhalten.
+Die vollständige Rücksicherung stammt von vor der WLAN-Einrichtung.
 
 Weiterhin offen sind:
 
