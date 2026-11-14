@@ -1,19 +1,22 @@
 /**
  * WiFi Time - optional WiFi/NTP support for standalone clock mode.
  *
- * Usage data remains USB-only. WiFi is used only to keep the device clock
- * accurate when the display has power but the Mac app is not connected.
+ * WiFi supplies NTP and explicitly enabled standalone plugin requests.
+ * Credentials are never exposed to plugin profiles.
  */
 
 #include "wifi_time.h"
 #include "config.h"
 #include "serial_receiver.h"
+#include "standalone_runtime.h"
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <WiFi.h>
 #include <time.h>
+#include <esp_sntp.h>
+#include <atomic>
 #include <stdlib.h>
 
 static const char *TZ_INFO = "CET-1CEST,M3.5.0,M10.5.0/3";
@@ -28,12 +31,20 @@ static char stored_password[65] = "";
 static bool has_credentials = false;
 static bool ntp_configured = false;
 static bool time_synced = false;
-static unsigned long last_connect_attempt = 0;
-
-static bool system_time_is_valid() {
-    time_t now = time(nullptr);
-    return now > CLOCK_VALID_EPOCH;  // post-2023
+// RAM-only provenance: a plausible RTC value is insufficient for TLS after boot.
+static std::atomic<bool> clock_observed{false};
+static void clock_sync_callback(struct timeval *tv) {
+    if (tv && tv->tv_sec > CLOCK_VALID_EPOCH) clock_observed.store(true);
 }
+
+void wifi_time_note_host_clock() {
+    if (time(nullptr) > CLOCK_VALID_EPOCH) clock_observed.store(true);
+}
+
+bool wifi_time_clock_trusted() {
+    return clock_observed.load() && time(nullptr) > CLOCK_VALID_EPOCH;
+}
+static unsigned long last_connect_attempt = 0;
 
 static void load_credentials() {
     prefs.begin(NVS_NAMESPACE, true);
@@ -96,6 +107,7 @@ static void ensure_ntp_started() {
 }
 
 void wifi_time_init() {
+    sntp_set_time_sync_notification_cb(clock_sync_callback);
     load_credentials();
 
     // v2.18.1: Funkmodul nur mit Zugangsdaten starten. Nach einem Flash sind
@@ -115,7 +127,7 @@ void wifi_time_tick() {
 
     if (WiFi.status() == WL_CONNECTED) {
         ensure_ntp_started();
-        if (!time_synced && system_time_is_valid()) {
+        if (!time_synced && wifi_time_clock_trusted()) {
             time_synced = true;
             struct tm local;
             time_t now = time(nullptr);
@@ -142,12 +154,12 @@ bool wifi_time_is_connected() {
 }
 
 bool wifi_time_is_synced() {
-    if (time_synced) return true;
-    time_synced = system_time_is_valid();
+    time_synced = wifi_time_clock_trusted();
     return time_synced;
 }
 
 void wifi_time_save_credentials(const char *ssid, const char *password) {
+    standalone_invalidate();
     if (ssid == nullptr) ssid = "";
     if (password == nullptr) password = "";
 
@@ -161,13 +173,14 @@ void wifi_time_save_credentials(const char *ssid, const char *password) {
     prefs.end();
 
     ntp_configured = false;
-    time_synced = system_time_is_valid();
+    time_synced = wifi_time_clock_trusted();
     if (has_credentials) {
         start_connect();
     }
 }
 
 void wifi_time_forget_credentials() {
+    standalone_invalidate();
     prefs.begin(NVS_NAMESPACE, false);
     prefs.remove("wifi_ssid");
     prefs.remove("wifi_pass");

@@ -29,6 +29,7 @@
 #include "ui_dashboard.h"
 #include "ui_settings.h"
 #include "wifi_time.h"
+#include "standalone_runtime.h"
 
 // ============================================================
 // Globals
@@ -261,6 +262,7 @@ void setup()
     // --- Serial receiver init ---
     serial_receiver_init();
     wifi_time_init();
+    standalone_init();
     update_boot_status(L(STR_USB_CONNECTED));
     delay(1000);
 
@@ -284,6 +286,7 @@ void loop()
     // Read serial data
     serial_receiver_tick();
     wifi_time_tick();
+    standalone_tick(serial_has_recent_host_frame());
 
     // C4: Perform any UI rebuild requested by the command parser here, OUTSIDE
     // the Serial RX loop, so the expensive full-screen recreate is not reentrant

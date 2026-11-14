@@ -1,242 +1,210 @@
 # Display plugins without a computer
 
-Implementation proposal for [issue #5](https://github.com/tobymarks/esp32-ai-monitor/issues/5),
-checked against the integrated plugin-format-4 code on 14 November 2026.
-**Not implemented:** current firmware fetches no plugin data over Wi-Fi. This
-document does not add a capability flag, enable network requests, or change
-the existing USB and standby-clock behavior.
+The development implementation for [issue #5](https://github.com/tobymarks/esp32-ai-monitor/issues/5)
+adds one explicitly selected, credential-free HTTPS display plugin per device.
+It is experimental software, **not a hardware-qualified release**. No version
+numbers or release artifacts have been changed. Existing AI usage still comes
+from USB; standalone plugins never receive account or Wi-Fi credentials.
 
-## What is already available
+## Using the feature
 
-- The companion validates manifests, resolves settings and display location,
-  performs HTTPS requests, evaluates bindings/lists, and renders scenes in
-  `companion-windows/crates/core/src/plugin.rs` and `crates/plugin-store`.
-  Both desktop applications use this Rust implementation.
-- `src/plugin_scene.cpp` validates and retains rendered scenes, not manifests:
-  at most eight slots, 24 nodes and 1,536 serialized bytes per scene. Scene
-  protocol 2 supports printable ASCII, German umlauts and the degree sign.
-- `src/wifi_time.cpp` already manages Wi-Fi and NTP. It deliberately starts
-  the radio only when credentials exist. Plugin sources must never receive
-  those credentials.
-- `src/serial_receiver.cpp` owns window assignments and host activity. Valid
-  data expires after five minutes; `standby` relinquishes host activity
-  immediately. `src/ui_dashboard.cpp` uses that activity to select the clock.
-  The firmware therefore needs an explicit display-owner abstraction before
-  standalone scenes can work reliably.
+Both companions have a separate **Use without computer** section on the Display
+page. Connect firmware advertising `standaloneProtocol: 1`, select an installed
+plugin, and review its source origin, location disclosure and effective refresh
+interval. Installation is an explicit action: normal plugin installation,
+updates and USB polling do not install an offline profile.
 
-The S3 warning in the original issue is historical. `board_persists_config()`
-returns true for the S3, and firmware 2.21.0 restored persistence using PSRAM
-XIP and IRAM-safe RGB handling. The [September hardware
-tests](../hardware-test/esp32s3-4848s040/README.md) recorded zero glitches during
-combined NVS writes and Wi-Fi scans. That result does **not** measure sustained
-HTTPS/TLS, filesystem writes and plugin rendering together. Espressif documents
-both the cache requirement and remaining PSRAM-bandwidth constraints in its
-[RGB LCD guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/lcd/rgb_lcd.html).
+If the filesystem is unused, **Set up storage** explicitly initializes it. Boot
+never formats storage. This setup may erase an unreadable filesystem; it does
+not change NVS, Wi-Fi credentials, partition offsets or OTA partitions. The
+companion explains this before the action. A mounted filesystem is never
+reformatted by setup. Then save the selected snapshot. Success requires device
+commit acknowledgement and matching digest/enabled-state readback.
 
-## First usable scope
+The snapshot contains the resolved location, settings, language, theme and one
+layout. Select the same plugin to compare the current export with the installed
+digest; changes require explicit resync. Device layout/theme/language changes
+stop the old profile until a matching snapshot is installed. Disable and remove
+are separate controls. Disconnected preparation is not reported as installation;
+older firmware has no standalone controls enabled.
 
-Start with **one explicitly selected, credential-free plugin per display**.
-Keep the normal eight-window USB configuration intact. After the companion
-relinquishes the device, show the selected plugin or a status page; reconnecting
-the companion restores the existing window configuration. The on-device
-settings remain reachable. Multiple offline plugins and offline intelligent
-switching are later extensions, not hidden promises of the first version.
+Configure Wi-Fi using the existing per-device Wi-Fi page. After a clean companion
+quit (`standby`) standalone takes over immediately. After a cable pull or app
+crash it takes over when the existing five-minute USB activity lease expires.
+Valid USB data or a valid `set_views` restores USB ownership immediately.
+`get_info`, readback and other diagnostic queries do not claim the display.
+The offline scene has separate storage and never overwrites any of the eight
+USB window assignments. Long-press settings remain available.
 
-The existing `.aimplugin` format remains the desktop package format. The shared
-Rust helper exports a smaller, separately versioned **device profile** after
-the same manifest/settings validation used for ordinary rendering. Export
-resolves the actual HTTPS URL, location, language, theme and screen layout;
-it excludes installation metadata, unused layouts and user settings that are
-no longer needed at runtime. The ESP32 receives no ZIP and runs no downloaded
-code. An existing format-1/2/3/4 package can qualify; its format number alone
-does not imply that it fits the embedded subset.
+## Supported plugin subset
 
-Initial exported operations:
+The existing `.aimplugin` remains the desktop format. Formats 1–4 can qualify
+according to operations, rather than format number. The shared Rust exporter
+validates the manifest/settings and produces a separate protocol-1 profile:
 
-- Bounded dotted-path lookup, including explicit array indices.
-- Text, integer, decimal1 and map bindings; fallback, suffix, scale and trim.
-- The same text substitution, visibility conditions and four scene primitives
-  as the desktop renderer.
-- Resolved setting/location bindings as constants. Location names retain the
-  scene protocol's character set; the source URL uses the existing
-  three-decimal coordinate formatting.
+- Dotted paths with explicit array indices, up to eight segments.
+- Text, integer, decimal1 and map bindings, fallback, suffix, scale and trim.
+- Text substitution and visibility conditions, including localization of maps
+  and fallbacks without changing condition comparisons.
+- Text, bar, rectangle and circle primitives and scene protocol 2's ASCII,
+  German umlaut and degree-sign alphabet.
+- Resolved setting/location bindings as constants; source location coordinates
+  use the same three-decimal URL formatting as ordinary host rendering.
 
-Profiles using list selection or intelligent attention rules are rejected for
-the initial embedded version with an explanation in the app; they continue
-to work over USB. Implementing array sorting/filtering and its 500-entry host
-contract is a later, separately budgeted step. Do not silently drop operations
-or render a different meaning on the device. The first real acceptance targets
-are small current-weather responses and a service-status endpoint.
+Lists and attention rules are rejected with an explanation; they remain usable
+through USB. There is no downloaded executable code, ZIP extraction on the
+board, authentication, custom CA import or automatic export of user plugins.
+Public source fixtures live in `tests/fixtures/standalone-weather` (small current
+Open-Meteo fields) and `tests/fixtures/standalone-status` (Statuspage-shaped data).
+Their responses are deterministic test inputs, not claims of live network tests.
 
-## Proposed limits, to be measured before enabling the capability
+The shared helper command is:
 
-These are implementation targets, not measured available heap or a claim that
-existing plugins satisfy them.
+```sh
+aimonitor-plugin-host export-standalone PACKAGE.aimplugin SETTINGS.json portrait \
+  --theme=dark --locale=en
+```
 
-| Resource | Initial target |
+Use `-` for default settings, `landscape`/`square` for the other layouts and the
+existing `--location=...` option for a location-dependent plugin. Output includes
+the exact profile string, SHA-256, identity, origin and effective interval.
+
+## Enforced budgets and HTTPS behavior
+
+| Resource | Limit |
 |---|---|
-| Active standalone profiles | 1 |
-| Serialized device profile | 8 KiB |
-| Source URL | 2,048 printable ASCII bytes, existing URL rules |
-| Source response | 8 KiB decoded body, at most 8 levels of JSON nesting |
-| Bindings | 16, at most 8 path segments each |
-| Scene | Existing 24 nodes / 1,536 bytes / 64-byte text limits |
-| Concurrent requests | 1 |
-| Refresh interval | At least 60 seconds, explicitly shown in the app |
-| Request deadline | 12 seconds total, including connection and body |
-| Failed-request retry | 60, 120, 240, 480, then 900 seconds with bounded jitter |
-| Completed-result queue | 1 scene/status result plus configuration generation |
+| Enabled standalone profiles | 1 |
+| Profile / decoded response | 8,192 bytes each |
+| Parsed JSON | 8 nesting levels; 28 KiB per budgeted document, including allocator headers |
+| Bindings / map entries | 16 / 32 per map |
+| Source URL | 2,048 printable ASCII bytes, HTTPS port 443, DNS hostname |
+| Scene | 24 nodes, 1,536 serialized bytes, 64 UTF-8 bytes per text |
+| Concurrent requests / completion queue | 1 / 1 |
+| Refresh interval | 60–86,400 seconds; export discloses the 60-second floor |
+| Network deadline | 12 seconds for async DNS, TLS, request and response |
+| Transfer chunk / staging lifetime | 1,024 bytes / 60 seconds of inactivity |
 
-Format 3/4 packages may request a 20-second interval on the desktop. The export
-preview must disclose the effective 60-second embedded minimum. If this makes
-the plugin unsuitable, leave it USB-only rather than claiming parity.
+One low-priority worker performs DNS, TLS, HTTP and JSON evaluation. It never
+calls LVGL. Generation checks invalidate results after USB takeover, profile
+changes, configuration changes and Wi-Fi resets. The main loop alone replaces
+the offline scene. Scheduling and age use wrap-safe monotonic time.
 
-The worker must bound actual bytes read, including chunked responses, rather
-than trusting `Content-Length`. Request `identity` encoding and reject
-unsupported compression. Reject incomplete JSON, trailing non-whitespace,
-excess nesting and allocation failures without replacing a good scene. Use a
-budgeted ArduinoJson allocator and release the response/document before
-starting another request. A small body does not by itself bound JSON heap:
-measure and cap parsed-node allocations too. TLS allocation, task stack,
-largest contiguous internal block and minimum free internal heap require
-measurement on both CYDs, not an estimate based on S3 PSRAM.
+TLS uses ESP-IDF's firmware-bundled public roots, peer verification and the
+original hostname for SNI and certificate checks. It never calls `setInsecure`.
+Arduino core 2's similarly named custom-bundle wrapper is deliberately bypassed;
+it does not initialize the IDF default roots. CA updates require updating the
+pinned SDK/firmware; local/corporate trust stores are not imported. A RAM-only
+NTP callback or successfully applied companion clock update is required before
+TLS. A plausible retained RTC value alone does not open the gate.
 
-Network/TLS/JSON work belongs in a low-priority worker. Only the main loop may
-call LVGL or replace scene-cache entries. A result carries the profile and
-ownership generation; the main loop drops it after any profile edit, removal,
-host takeover, layout change or Wi-Fi reset. Never hold a display lock while
-waiting for DNS, TLS or an HTTP body.
+DNS resolution currently uses IPv4. The streaming HTTP decoder accepts a 200 response with fixed-length, chunked
+or connection-close framing. It caps actual bytes and framing metadata, rejects
+redirects, compression, chunk extensions, conflicting framing and incomplete
+responses. No cookies
+or authorization headers are sent. Common secret-bearing query names, userinfo
+and fragments are rejected; opaque secrets cannot be inferred from arbitrary
+path names, so the product explicitly requires public credential-free sources.
+URLs and response bodies are not printed in diagnostics.
 
-## HTTPS and clock behavior
+Failures retry after 60, 120, 240, 480 and then 900 seconds plus bounded jitter.
+Before the first successful response, the display shows a waiting/error status.
+After a success it retains the previous scene and visibly marks stale data and
+its age. A configuration mismatch clears the incompatible scene. Readback gives
+identity/version/digest, enabled state, interval, state, last error and successful
+update age; no source bodies, settings or credentials.
 
-Use the same HTTPS-only URL policy as the desktop: no userinfo, fragment,
-redirect, cookie persistence, authentication headers or executable transform.
-URLs and profile files are not secret storage. Do not print full URLs or
-response bodies in device diagnostics. The desktop must describe the exact
-source origin and whether a stored location will be sent before export.
+## Transfer and persistence
 
-The desktop's operating-system root store cannot be copied implicitly to the
-device. Ship a maintained public CA bundle with firmware and verify the server
-chain, hostname and validity period. Endpoints relying on a corporate/local CA
-remain USB-only in this first version; do not fall back to insecure TLS. CA
-import, if added later, needs its own explicit per-device workflow. Espressif's
-[HTTP client documentation](https://docs.espressif.com/projects/esp-idf/en/v5.0/esp32/api-reference/protocols/esp_http_client.html)
-describes certificate bundles and streaming reads; bundle availability and
-the cancellation/deadline behavior must be verified on the project's Arduino
-core 2.x **and** 3.x builds.
+AIM1-framed commands are `standalone_status`, `standalone_setup`,
+`standalone_begin`, `standalone_chunk`, `standalone_commit`, `standalone_abort`,
+`standalone_enabled` and `standalone_remove`. Companions send UTF-8-safe chunks
+of at most 512 bytes, leaving room for JSON escaping below the 4,095-byte frame
+limit. ACKs correlate command, transaction and resulting offset. Firmware
+rejects gaps, changed duplicates, overflows, expired and conflicting transfers.
+SHA-256 checks transfer integrity, not publisher authenticity.
 
-After cold boot, wait for a usable UTC clock from NTP or the companion before
-TLS. The existing `CLOCK_VALID_EPOCH` check is only a plausibility floor, not
-proof of recent synchronization. Track the clock source and successful sync
-in RAM; show `Waiting for time` when none is available. Do not advance the
-clock from an unauthenticated HTTP `Date` header or disable certificate checks
-to bootstrap it. Clock changes must not alter scheduling or data age: those
-use wrap-safe monotonic timestamps.
+Two versioned records live in LittleFS on the existing `spiffs` partition
+(128 KiB on CYD, 3.375 MiB on S3). The record digest covers generation, enabled
+flag, length and profile. An explicit save writes the inactive record, flushes,
+adds its commit marker, closes, rereads and validates it before acknowledging.
+Boot selects the newest valid committed record. Removal writes a newer disabled
+tombstone so an older profile cannot reappear after reboot. No refresh result,
+scene, successful-update time or polling counter is written to flash.
 
-## Host and standalone ownership
+S3 configuration persistence has been available since 2.21 through PSRAM XIP
+and IRAM-safe RGB handling; old no-flash comments in the issue are obsolete.
+That earlier evidence does not qualify this new combined filesystem/TLS/display
+workload. Filesystem redundancy offers recovery from partial records, not a
+claim of immunity to filesystem corruption or hardware power-loss durability.
 
-Introduce a small, testable owner/state machine independent of the serial
-parser and LVGL:
+## Software validation and remaining hardware gates
 
-| Condition | Display behavior |
-|---|---|
-| No enabled profile | Existing USB/standby-clock behavior |
-| Boot with enabled valid profile | Load profile; show Wi-Fi/time/loading status |
-| Valid companion configuration/data arrives | USB owns display; invalidate standalone results |
-| Companion sends `standby` | Activate standalone immediately |
-| Companion disappears without `standby` | Activate after the existing five-minute host timeout |
-| Standalone request succeeds | Render validated scene and record successful-update time |
-| Request fails after a success | Keep prior scene; visibly mark stale state and age |
-| Request fails before any success | Show an explanatory status instead of an empty scene |
-| Companion reconnects during a request | USB wins; cancel request where possible and always discard its result |
-| Profile is disabled/removed | Cancel work, clear its cache and restore clock/USB behavior |
+Reproducible checks:
 
-`get_info` and diagnostic queries must not claim display ownership. Standalone
-refreshes must never update `last_host_frame_ms`, and stale plugin data must
-never be reported as fresh AI usage. The owner holds a separate offline
-selection; it must not overwrite the user's persisted USB window assignments.
-Unplug/replug, clean quit, app crashes, old companions and invalid/partial
-serial frames all belong in the state-machine tests.
+```sh
+cargo test --workspace --locked --manifest-path companion-windows/Cargo.toml
+bash scripts/test_display_owner_native.sh
+bash scripts/test_standalone_bounds_native.sh
+bash scripts/test_standalone_transfer_native.sh
+bash scripts/test_standalone_http_native.sh
+bash scripts/test_standalone_record_native.sh
+bash scripts/test_standalone_policy_native.sh
+bash scripts/test_standalone_contract.sh
+bash scripts/test_display_plugin_scene_contract.sh
+bash scripts/test_mac_view_editor.sh
+python3 tests/standalone_mac_connection.py
+```
 
-## Transfer, persistence and recovery
+The S3 custom-SDK build writes generated archives into PlatformIO's package
+cache. Serialize firmware builds on a machine, or set task-specific
+`PLATFORMIO_PACKAGES_DIR` and `IDF_COMPONENT_CACHE_PATH` directories when other
+projects are building concurrently. Concurrent builds can corrupt shared SDK
+archives; such linker failures do not establish a source-code defect.
 
-Advertise a new `standaloneProtocol: 1` capability only after the implementation
-and board-specific acceptance gates pass. Keep `sceneProtocol` separate. Old
-firmware simply lacks standalone capability; old companions continue to work
-with new firmware and do not automatically install or enable profiles.
+The contract suite compares actual Rust desktop scenes and the native firmware
+evaluator for both sources, all three layouts, both themes and languages,
+missing/null values, visibility, maps, Unicode trim, UTF-8 boundaries and scaled
+rounding. Malformed JSON/resource tests exercise the actual firmware parser,
+allocator and renderer. HTTP tests fragment inputs and exercise chunk framing,
+redirect/compression rejection and bounds. Transfer tests use the same staging
+class as firmware. Record fault tests exercise every truncation boundary and
+every-byte corruption against the production record codec, including disabled
+records and removal tombstones (with an injected deterministic hash; firmware
+uses SHA-256). Companion upload mocks cover framing, offset failures,
+abort behavior and digest mismatch. Worker policy checks cover deadline boundaries, cancellation, ownership, timer
+wraparound, retry saturation and jitter limits. The old scene/rendering checks
+remain intact.
 
-Use bounded, acknowledged begin/chunk/commit/abort commands over the existing
-AIM1 transport. Each frame stays below 4,095 bytes including its JSON envelope.
-The transfer contains a random transaction ID, byte length and SHA-256;
-sequence/offset validation rejects gaps, duplicates with changed bytes,
-oversize input and conflicting transactions. Expire abandoned staging state.
-Validate the entire profile and budgets again on the firmware before activation.
-Treat SHA-256 as integrity checking, not publisher authentication.
+Validation run on 14 November 2026:
 
-Do not place two 8 KiB profiles in the shared 20 KiB NVS partition: it also
-holds existing settings and Wi-Fi credentials. Prefer two versioned records
-in the existing filesystem partition, without changing partition offsets or
-OTA sizes. Inspect both board partition tables and available space first.
-Mount without automatic formatting; a mount failure must leave USB and NVS
-configuration usable. Initialization of unused storage is an explicit setup
-operation, never a side effect of boot or plugin refresh.
+- Rust workspace: 163 tests passed, including four companion upload mocks.
+- Host/firmware golden scenes: 408 comparisons passed with ASan/UBSan,
+  including original JSON number bytes and canonicalized source URLs.
+- Native bounds: 125 checks; HTTP framing: 137 checks; record recovery: 33,136
+  checks; worker deadline/cancellation/backoff: 100,046 checks. Transfer and
+  USB lease tests passed, including wraparound and changed duplicate chunks.
+- Existing scene contract: 15 native rendered scenes passed. Mac editor state:
+  31 checks passed. The committed standalone React harness passed eight scenarios;
+  the earlier temporary location harness also passed its eight scenarios.
+- Five Mac command/reconnect checks execute the production methods with a mock
+  transport, covering queued mutations and descriptor lifetime. All six website
+  screenshots render with the optional offline runtime disabled.
+- Frontend production build and Mac arm64/x86_64 typechecks passed. English and
+  German localization files passed validation.
+- `esp32dev`, `esp32dev-st7789` and `esp32s3-4848s040` firmware builds passed.
+  S3 required private SDK packages/component cache after shared-cache corruption
+  during concurrent builds. Its final application uses 1,825,935 flash bytes and
+  110,460 static RAM bytes. These are linker figures, **not runtime heap margins**.
 
-Write the inactive record on an explicit save, flush/close it, then read it
-back and validate length, digest, generation and schema before reporting
-success. At boot select the newest valid committed record; a truncated newer
-record cannot mask an older valid one. Test interruption at every write and
-commit boundary. A filesystem corruption may still make both records
-unavailable; handle this as `Profile unavailable`, not a boot loop. Do not
-claim transactional durability until the chosen filesystem passes the fault
-tests. No periodic source response, render cache or last-fetch time is written
-to flash.
+**No serial ports, physical boards, installed applications, private plugin
+settings, Wi-Fi credentials, preferences or keychain were accessed for this
+implementation.** The supplied S3 baseline was firmware 2.23.0 with scene protocol
+1 and no configured Wi-Fi. Physical protocol 2, CYD touch and Wi-Fi runtime
+validation remain unavailable. Builds and mocks cannot establish those results.
 
-The first version may save while the S3 RGB panel runs only under the current
-validated XIP/IRAM configuration and after combined HTTPS/display/write tests.
-For an older or alternate board configuration lacking that guarantee, disable
-profile persistence capability or implement an explicit boot-before-display
-maintenance mode. Merely delaying a write until "idle" does not make it safe.
-Load persisted profile metadata before scheduling network work; a successful
-profile parse must never turn a previously disabled feature on.
-
-## Companion flow
-
-Each device's Display page gets a separate `Use without computer` setting.
-The preview names the selected plugin, source origin, location disclosure,
-effective interval and any unsupported operation. The user saves a snapshot
-of this device's configuration; an installed plugin update or a location edit
-marks it out of date instead of silently changing the offline endpoint.
-An explicit resync updates it atomically. Theme/orientation/language changes
-also require re-export because the first profile contains one resolved scene
-template. While disconnected, the app may prepare changes but must not show
-them as installed. Readback reports profile identity/version/digest, enabled
-state, effective interval, error category and last-success age, never secrets.
-
-## Implementation sequence and completion gates
-
-1. **Export contract and parity harness:** shared Rust export command, strict
-   device-profile validator, bounded C++ evaluator runnable natively. Compare
-   its scenes with the existing Rust renderer for map/fallback/scale/trim,
-   missing values, rounding, UTF-8 boundaries, both themes and all layouts.
-   Unsupported manifests fail export without changing installed state.
-2. **Firmware runtime:** tested ownership state machine, bounded worker and
-   trusted HTTPS on all three firmware targets. Inject fake clock/network
-   outcomes for deterministic cancellation, backoff, byte-limit and stale-age
-   tests. Existing USB behavior remains the default.
-3. **Persistence and transfer:** explicit filesystem setup, bounded upload,
-   validation/readback and power-loss recovery. Preserve existing device/Wi-Fi
-   settings and partition layouts; malformed transfers cannot enable a profile.
-4. **Mac and Windows integration:** shared export via the existing helper/core,
-   per-device preview/save/remove/readback, capability gating and localized
-   errors. Verify old firmware and old-companion reconnection behavior.
-5. **Physical acceptance before release:** current weather and service status
-   from cold boot on wall power; no Wi-Fi, no NTP, bad/expired/wrong-host
-   certificates, 3xx, slow/chunked/oversize/invalid JSON responses; repeated
-   USB takeover during fetch; power cuts during install; 24-hour refresh and
-   touch run on ILI9341, ST7789 and S3. Record minimum internal heap, worker
-   stack margin, resets, request count and S3 frame-glitch deltas.
-
-Current result: architecture and acceptance work are specified; steps 1–5 are
-still implementation work. No standalone runtime, persistence path or device
-test is claimed by this document. A disconnected-clock feature is not a
-substitute for standalone plugin data.
+Before release, test all three boards from wall power with current weather and
+service status; absent Wi-Fi/NTP; expired/wrong-host certificates; slow, chunked,
+oversized and malformed responses; USB takeover during fetch; interrupted saves;
+and a 24-hour refresh/touch run. Measure minimum internal heap, largest free
+block, worker stack margin, resets and S3 frame glitches under simultaneous
+HTTPS and explicit filesystem saves. No such physical acceptance is claimed.

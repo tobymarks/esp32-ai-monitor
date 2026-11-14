@@ -421,6 +421,7 @@ mod tests {
             serial_transport: None,
             max_frame_bytes: None,
             scene_protocol: None,
+            standalone_protocol: None,
             wifi_configured: None,
             wifi_connected: None,
             time_synced: None,

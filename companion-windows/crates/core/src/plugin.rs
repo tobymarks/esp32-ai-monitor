@@ -346,7 +346,7 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
-fn valid_key(s: &str, max: usize) -> bool {
+pub(crate) fn valid_key(s: &str, max: usize) -> bool {
     !s.is_empty()
         && s.len() <= max
         && s.bytes().all(|c| {
@@ -359,7 +359,7 @@ const DISPLAY_EXTRA: [char; 8] = ['°', 'Ä', 'Ö', 'Ü', 'ß', 'ä', 'ö', 'ü'
 
 /// Text the display can show. `max` counts UTF-8 bytes like the firmware
 /// does, so an umlaut uses two.
-fn printable(s: &str, max: usize) -> bool {
+pub(crate) fn printable(s: &str, max: usize) -> bool {
     s.len() <= max && s.chars().all(|c| (' '..='~').contains(&c) || DISPLAY_EXTRA.contains(&c))
 }
 
@@ -1043,7 +1043,7 @@ fn semver_parts(value: &str) -> Option<[u32; 3]> {
 
 /// Validate both templates and resolved requests. Template placeholders are
 /// checked separately against numeric settings before a request is sent.
-fn validate_source_url(text: &str) -> Result<Url, String> {
+pub(crate) fn validate_source_url(text: &str) -> Result<Url, String> {
     if text.is_empty() || text.len() > 2048 || !text.bytes().all(|c| (0x21..=0x7e).contains(&c))
         || text.contains('\\')
     {
@@ -1088,7 +1088,7 @@ fn validate_setting(spec: &Setting, value: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn lookup<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+pub(crate) fn lookup<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.').try_fold(value, |current, part| {
         if let Ok(index) = part.parse::<usize>() {
             current.get(index)
@@ -1098,7 +1098,7 @@ fn lookup<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     })
 }
 
-fn binding_value(binding: &Binding, value: Option<&Value>) -> Option<String> {
+pub(crate) fn binding_value(binding: &Binding, value: Option<&Value>) -> Option<String> {
     let value = value?;
     let scale = binding.scale.unwrap_or(1.0);
     match binding.format {
@@ -1127,7 +1127,7 @@ fn number(node: &Value, key: &str) -> Result<i64, String> {
         .ok_or_else(|| format!("invalid node {key}"))
 }
 
-fn validate_template_node(
+pub(crate) fn validate_template_node(
     node: &Value,
     bindings: &HashSet<&str>,
     binding_specs: &[Binding],
@@ -1196,7 +1196,7 @@ pub(crate) fn validate_scene_for_tests(scene: &Value) -> Result<(), String> {
     nodes.iter().try_for_each(validate_wire_node)
 }
 
-fn validate_wire_node(node: &Value) -> Result<(), String> {
+pub(crate) fn validate_wire_node(node: &Value) -> Result<(), String> {
     let kind = node
         .get("type")
         .and_then(Value::as_str)

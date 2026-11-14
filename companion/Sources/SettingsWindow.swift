@@ -31,6 +31,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // Referenzen, die von aussen injiziert werden
     weak var monitor: UsageMonitor?
+    var standaloneDisplayView: StandaloneDisplayView?
 
     // Header
     var providerSegmented: NSSegmentedControl!
@@ -937,6 +938,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// Für Timer-Tick (Alter des letzten Updates und Uhrvorschau).
     private func refreshLiveLabels() {
+        standaloneDisplayView?.refreshContext()
         if viewsEditor?.isHiddenOrHasHiddenAncestor == false {
             viewsEditor?.refreshPreviewClock()
         }

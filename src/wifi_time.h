@@ -9,6 +9,9 @@ void wifi_time_tick();
 bool wifi_time_has_credentials();
 bool wifi_time_is_connected();
 bool wifi_time_is_synced();
+// True only after an observed NTP callback or a valid companion clock update.
+bool wifi_time_clock_trusted();
+void wifi_time_note_host_clock();
 
 void wifi_time_save_credentials(const char *ssid, const char *password);
 void wifi_time_forget_credentials();

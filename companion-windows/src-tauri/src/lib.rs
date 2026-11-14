@@ -5,6 +5,7 @@ mod claude_code;
 mod commands;
 mod flash;
 mod plugins;
+mod standalone;
 mod poll;
 mod registry;
 mod serial_service;
@@ -159,6 +160,8 @@ pub fn run() {
             commands::list_providers,
             commands::rescan_cli,
             commands::list_plugins,
+            standalone::standalone_preview,
+            standalone::standalone_action,
             claude_code::claude_code_status,
             claude_code::claude_code_set_hooks,
             commands::inspect_plugin,

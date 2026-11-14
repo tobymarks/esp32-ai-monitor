@@ -174,6 +174,7 @@ export type DisplayLanguage = "de" | "en";
 export type DisplayVariant = "ili9341" | "st7789" | "st7701";
 
 export interface DeviceInfo {
+  standaloneProtocol?: number | null;
   version: string;
   mac: string;
   display: DisplayVariant | null;
@@ -399,3 +400,16 @@ export function onFlashProgress(handler: (progress: FlashProgress) => void): Pro
 export function onUpdateProgress(handler: (progress: DownloadProgress) => void): Promise<UnlistenFn> {
   return listen<DownloadProgress>("update-progress", (event) => handler(event.payload));
 }
+
+export interface StandaloneExport {
+  profile: string; sha256: string; pluginId: string; name: string; version: string;
+  origin: string; sendsLocation: boolean; refreshSeconds: number;
+}
+export interface StandaloneStatus {
+  available: boolean; storageReady: boolean; enabled: boolean; profileId: string;
+  pluginVersion: string; digest: string; intervalSeconds: number; state: string;
+  lastSuccessAgeSeconds: number | null; experimental: boolean; error?: string | null;
+}
+export const standalonePreview = (mac: string, id: string) => invoke<StandaloneExport>("standalone_preview", { mac, id });
+export const standaloneAction = (mac: string, action: string, id?: string, expectedSha256?: string) =>
+  invoke<StandaloneStatus>("standalone_action", { mac, action, id, expectedSha256 });

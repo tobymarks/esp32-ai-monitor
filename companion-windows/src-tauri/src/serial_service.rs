@@ -61,6 +61,7 @@ const LATE_INFO_SLICE: Duration = Duration::from_millis(200);
 #[derive(Debug)]
 pub enum Job {
     SetManualPort(Option<String>),
+    Standalone { mac: String, action: String, id: Option<String>, expected_sha256: Option<String>, reply: Sender<Result<Value, String>> },
     /// Datenframe über den Debounce anfordern (neue Daten, Provider, Einstellungen).
     Resend,
     ConfigureViews,
@@ -202,7 +203,7 @@ fn notice_text(key: &str, language: Language) -> &'static str {
 }
 
 /// Systemerscheinungsbild für `ThemeSetting::System`; unbekannt gilt als hell.
-fn system_is_dark() -> bool {
+pub(crate) fn system_is_dark() -> bool {
     matches!(dark_light::detect(), Ok(dark_light::Mode::Dark))
 }
 
@@ -1127,6 +1128,10 @@ impl Service {
             self.smart.sync_revision(settings.smart_revision, settings.smart_manual, Instant::now());
         }
         match job {
+            Job::Standalone { mac, action, id, expected_sha256, reply } => {
+                let result = self.standalone_action(&mac, &action, id.as_deref(), expected_sha256.as_deref());
+                let _ = reply.send(result);
+            }
             Job::Wifi { action, reply } => {
                 let result = self.wifi_command(action);
                 let _ = reply.send(result);
@@ -1347,6 +1352,61 @@ impl Service {
             }
         }
         true
+    }
+
+    // A whole install is one serial-thread job: reconnect cannot redirect later chunks.
+    fn standalone_action(&mut self, mac: &str, action: &str, id: Option<&str>, expected: Option<&str>) -> Result<Value, String> {
+        let LinkState::Connected(info) = &self.state else { return Err("standalone.connect".into()); };
+        if info.mac != mac { return Err("standalone.deviceChanged".into()); }
+        if info.standalone_protocol != Some(1) { return Err("standalone.unsupported".into()); }
+        match action {
+            "status" => return self.standalone_request(json!({"cmd":"standalone_status"})),
+            "install" => {
+                let export = crate::standalone::preview(&self.app, mac, id.ok_or("standalone.select")?)?;
+                if expected != Some(export.sha256.as_str()) { return Err("standalone.changed".into()); }
+                return crate::standalone::upload(&export, |payload| self.standalone_request(payload));
+            }
+            "setup" | "remove" => { self.standalone_request(json!({"cmd":format!("standalone_{action}")}))?; }
+            "enable" | "disable" => { self.standalone_request(json!({"cmd":"standalone_enabled", "value":action == "enable"}))?; }
+            _ => return Err("standalone.invalid".into()),
+        }
+        self.standalone_request(json!({"cmd":"standalone_status"}))
+    }
+
+    fn standalone_request(&mut self, payload: Value) -> Result<Value, String> {
+        let line = serde_json::to_string(&payload).map_err(|_| "standalone.invalid")?;
+        let frame = aimonitor_core::protocol::encode_frame(&line, -1, true, 4095).map_err(|_| "standalone.invalid")?;
+        let mut view_events = Vec::new();
+        let result = (|| {
+            let link = self.link.as_mut().ok_or("standalone.connect")?;
+            let retry_until = Instant::now() + Duration::from_secs(15);
+            'attempt: loop {
+                link.drain();
+                link.write_all(&frame).map_err(|_| "standalone.connect")?;
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while let Some(line) = link.read_line(deadline) {
+                    if let Some(DeviceMessage::ViewState(view)) = DeviceMessage::parse_line(&line) {
+                        view_events.push(view);
+                        continue;
+                    }
+                    let Ok(value) = serde_json::from_str::<Value>(&line) else { continue; };
+                    if payload["cmd"] == "standalone_status" && value["type"] == "standalone_status" { return Ok(value); }
+                    if value["type"] != "standalone_ack" || value["command"] != payload["cmd"] { continue; }
+                    if payload.get("transaction").is_some() && value["transaction"] != payload["transaction"] { continue; }
+                    if value["ok"] != true {
+                        if value["error"] == "worker_busy" && Instant::now() < retry_until {
+                            std::thread::sleep(Duration::from_millis(200));
+                            continue 'attempt;
+                        }
+                        return Err(format!("standalone.error.{}", value["error"].as_str().unwrap_or("unknown")));
+                    }
+                    return Ok(value);
+                }
+                return Err("standalone.timeout".into());
+            }
+        })();
+        for view in view_events { self.apply_device_selection(view); }
+        result
     }
 
     fn wifi_command(&mut self, action: WifiAction) -> Result<Value, String> {

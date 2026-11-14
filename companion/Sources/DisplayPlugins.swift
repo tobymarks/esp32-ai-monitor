@@ -163,6 +163,13 @@ final class DisplayPlugins {
             if detail.contains("setting must be a URL") {
                 throw failure(L("plugins.settingUrl"))
             }
+            for key in [
+                "Standalone does not support lists; this plugin remains available over USB",
+                "Standalone does not support attention rules; this plugin remains available over USB",
+                "Standalone supports at most 16 bindings",
+                "standalone profile exceeds 8192 bytes",
+                "standalone sources must be resolved, public URLs without credentials"
+            ] where detail.contains(key) { throw failure(L(key)) }
             throw failure(detail.isEmpty ? "Plugin helper failed" : String(detail.prefix(200)))
         }
         guard bytes.count <= 64 * 1024,
@@ -532,5 +539,186 @@ final class DisplayPlugins {
             ["type": "text", "x": 50, "y": 300, "w": 900, "h": 180,
              "color": light ? 0x45566A : 11250603, "font": 16, "text": String(message.prefix(60))]
         ]]
+    }
+}
+
+/// A per-device, explicit snapshot. Opening Display never installs a plugin.
+final class StandaloneDisplayView: NSStackView {
+    weak var monitor: UsageMonitor?
+    private let picker = NSPopUpButton()
+    private let previewLabel = NSTextField(wrappingLabelWithString: "")
+    private let stateLabel = NSTextField(wrappingLabelWithString: "")
+    private let errorLabel = NSTextField(wrappingLabelWithString: "")
+    private let installButton = NSButton()
+    private let setupButton = NSButton()
+    private let refreshButton = NSButton()
+    private let enableButton = NSButton()
+    private let removeButton = NSButton()
+    private var context = ""
+    private var connectionKey = ""
+    private var revision = 0
+    private var busy = false
+    private var preview: [String: Any]?
+    private var status: [String: Any]?
+
+    init(monitor: UsageMonitor?) {
+        self.monitor = monitor
+        super.init(frame: .zero)
+        orientation = .vertical; alignment = .leading; spacing = 8
+        let title = NSTextField(labelWithString: L("standalone.title"))
+        title.font = NSFont.appFont(.headline)
+        addArrangedSubview(title)
+        for key in ["standalone.intro", "standalone.experimental"] {
+            let label = NSTextField(wrappingLabelWithString: L(key))
+            label.font = NSFont.appFont(.callout); label.textColor = .secondaryLabelColor
+            addArrangedSubview(label)
+        }
+        picker.target = self; picker.action = #selector(selected)
+        addArrangedSubview(picker)
+        [previewLabel, stateLabel, errorLabel].forEach {
+            $0.font = NSFont.appFont(.callout); addArrangedSubview($0)
+        }
+        errorLabel.textColor = .systemRed
+        let buttons: [(NSButton, String, String)] = [
+            (installButton, "standalone.install", "install"), (refreshButton, "standalone.refresh", "status"),
+            (enableButton, "standalone.disable", "disable"), (removeButton, "standalone.remove", "remove"),
+            (setupButton, "standalone.setup", "setup")]
+        for (button, key, action) in buttons {
+            button.title = L(key); button.identifier = NSUserInterfaceItemIdentifier(action)
+            button.bezelStyle = .rounded; button.target = self; button.action = #selector(standaloneAction(_:))
+        }
+        let firstRow = NSStackView(views: [installButton, refreshButton])
+        let secondRow = NSStackView(views: [enableButton, removeButton, setupButton])
+        firstRow.spacing = 8; secondRow.spacing = 8
+        addArrangedSubview(firstRow); addArrangedSubview(secondRow)
+        refreshContext()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private var supported: Bool {
+        monitor?.serialPort.isReadyForCommands == true && monitor?.serialPort.deviceStandaloneProtocol == 1
+    }
+    private var selectedID: String? { picker.selectedItem?.representedObject as? String }
+
+    func refreshContext() {
+        let profile = DeviceRegistry.shared.currentProfile()
+        let records = DisplayPlugins.shared.records
+        let state = ["mac": profile?.mac ?? "", "orientation": profile?.orientation ?? "",
+                     "theme": DisplayPlugins.resolvedTheme(), "language": profile?.language ?? "",
+                     "location": profile?.location?.argument ?? "",
+                     "plugins": records.keys.sorted().map { "\($0):\(records[$0]!.generation.uuidString)" }.joined(separator: ",")]
+        let key = String(data: (try? JSONSerialization.data(withJSONObject: state, options: .sortedKeys)) ?? Data(), encoding: .utf8) ?? ""
+        let linkKey = "\(profile?.mac ?? ""):\(monitor?.serialPort.connectionGeneration ?? -1):\(supported)"
+        let changed = key != context
+        let linkChanged = linkKey != connectionKey
+        if changed || linkChanged { revision += 1 }
+        if linkChanged { busy = false }
+        if changed {
+            context = key; preview = nil
+            let selected = selectedID
+            picker.removeAllItems(); picker.addItem(withTitle: L("standalone.select"))
+            for id in records.keys.sorted() {
+                picker.addItem(withTitle: records[id]?.info["name"] as? String ?? id)
+                picker.lastItem?.representedObject = id
+                if id == selected { picker.select(picker.lastItem) }
+            }
+        }
+        if linkChanged { connectionKey = linkKey; status = nil }
+        if (changed || linkChanged) && selectedID != nil { prepare() }
+        if linkChanged && supported { run("status") }
+        render()
+    }
+
+    @objc private func selected() { prepare() }
+
+    private func prepare() {
+        revision += 1; preview = nil; errorLabel.stringValue = ""
+        guard let id = selectedID, let record = DisplayPlugins.shared.records[id],
+              let profile = DeviceRegistry.shared.currentProfile() else { render(); return }
+        let generation = revision
+        let layout = profile.displayVariant == kDisplayVariantST7701 ? "square" : profile.orientation == "portrait" ? "portrait" : "landscape"
+        let theme = DisplayPlugins.resolvedTheme()
+        let settings = record.settings
+        let package = record.packageURL.path
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { () -> [String: Any] in
+                let temp = FileManager.default.temporaryDirectory.appendingPathComponent("aimonitor-standalone-\(UUID().uuidString).json")
+                defer { try? FileManager.default.removeItem(at: temp) }
+                try JSONSerialization.data(withJSONObject: settings).write(to: temp, options: .atomic)
+                var args = ["export-standalone", package, temp.path, layout,
+                            "--theme=\(theme)", "--locale=\(profile.language)"]
+                if let location = profile.location { args.append("--location=\(location.argument)") }
+                return try DisplayPlugins.helper(args)
+            }
+            DispatchQueue.main.async {
+                guard self.revision == generation else { return }
+                switch result {
+                case .success(let value): self.preview = value
+                case .failure(let error): self.errorLabel.stringValue = error.localizedDescription
+                }
+                self.render()
+            }
+        }
+    }
+
+    private func render() {
+        picker.isEnabled = !busy
+        installButton.isEnabled = supported && !busy && preview != nil && status?["storageReady"] as? Bool == true
+        refreshButton.isEnabled = supported && !busy
+        setupButton.isHidden = status == nil || status?["storageReady"] as? Bool == true
+        setupButton.isEnabled = supported && !busy
+        let hasProfile = !(status?["profileId"] as? String ?? "").isEmpty
+        enableButton.isEnabled = supported && !busy && hasProfile
+        removeButton.isEnabled = supported && !busy && hasProfile
+        let enabled = status?["enabled"] as? Bool == true
+        enableButton.title = L(enabled ? "standalone.disable" : "standalone.enable")
+        enableButton.identifier = NSUserInterfaceItemIdentifier(enabled ? "disable" : "enable")
+        if let preview {
+            previewLabel.stringValue = "\(preview["name"] as? String ?? "") · \(preview["origin"] as? String ?? "") · "
+                + L("standalone.interval", preview["refreshSeconds"] as? Int ?? 60) + "\n"
+                + L(preview["sendsLocation"] as? Bool == true ? "standalone.location" : "standalone.noLocation")
+        } else { previewLabel.stringValue = "" }
+        if !supported {
+            stateLabel.stringValue = L(monitor?.serialPort.isReadyForCommands == true ? "standalone.unsupported" : "standalone.connect")
+        } else if let status {
+            var text = L("standalone.device") + ": " + (status["profileId"] as? String ?? L("standalone.none"))
+                + " · " + L(enabled ? "standalone.enabled" : "standalone.disabled")
+                + " · " + stateText(status["state"] as? String ?? "disabled")
+            if let error = status["error"] as? String { text += " · " + stateText(error, prefix: "standalone.error.") }
+            if let age = status["lastSuccessAgeSeconds"] as? Int { text += " · " + L("standalone.age", age) }
+            if let digest = status["digest"] as? String, !digest.isEmpty {
+                text += "\nSHA-256: " + digest
+                if let preview, status["profileId"] as? String == preview["pluginId"] as? String,
+                   digest != preview["sha256"] as? String { text += "\n" + L("standalone.changed") }
+            }
+            if status["storageReady"] as? Bool != true { text += "\n" + L("standalone.setupHint") }
+            stateLabel.stringValue = text
+        }
+    }
+
+    private func stateText(_ code: String, prefix: String = "standalone.state.") -> String {
+        let key = prefix + code
+        let translated = L(key)
+        return translated == key ? L("standalone.failed") + " (" + code + ")" : translated
+    }
+
+    @objc private func standaloneAction(_ sender: NSButton) {
+        refreshContext()
+        guard let action = sender.identifier?.rawValue else { return }
+        run(action)
+    }
+    private func run(_ action: String) {
+        guard supported, !busy, action != "install" || preview != nil else { return }
+        let expectedConnection = connectionKey
+        busy = true; errorLabel.stringValue = ""; render()
+        monitor?.serialPort.performStandalone(action: action, export: preview) { result in
+            guard self.connectionKey == expectedConnection else { return }
+            self.busy = false
+            switch result {
+            case .success(let value): self.status = value
+            case .failure(let error): self.errorLabel.stringValue = error.localizedDescription
+            }
+            self.render()
+        }
     }
 }

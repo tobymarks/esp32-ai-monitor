@@ -263,6 +263,28 @@ fn run() -> Result<Value, String> {
             }
             settings_response(&package.manifest, &settings)
         }
+        "export-standalone" if args.len() == 5 => {
+            let settings = if args[3] == "-" {
+                package.manifest.default_settings()
+            } else {
+                let bytes = read_bounded(Path::new(&args[3]), 16 * 1024)?;
+                let saved = serde_json::from_slice::<Map<String, Value>>(&bytes)
+                    .map_err(|_| "invalid settings JSON")?;
+                let mut settings = package.manifest.default_settings();
+                settings.extend(saved);
+                settings
+            };
+            let layout = match args[4].as_str() {
+                "portrait" => SceneLayout::Portrait,
+                "landscape" => SceneLayout::Landscape,
+                "square" => SceneLayout::Square,
+                _ => return Err("invalid standalone orientation".into()),
+            };
+            let exported = aimonitor_core::standalone::export_profile(
+                &package.manifest, &settings, layout, theme, &locale, location,
+            )?;
+            serde_json::to_value(exported).map_err(|e| e.to_string())
+        }
         "render" if args.len() == 5 || args.len() == 6 => {
             let settings = if args[3] == "-" {
                 package.manifest.default_settings()

@@ -84,7 +84,7 @@ confirmation. See [Claude Code window](docs/claude-code-window.md).
 - Portrait plus left/right landscape layouts on the CYD; on the square S3 board the view follows the side the USB cable points to
 - Firmware flashing for the ILI9341 and ST7789 CYD variants and the ESP32-S3-4848S040
 - Optional menu bar quick menu for provider switching
-- Optional Wi-Fi on the display, used only to keep the standby clock accurate via NTP while the app is not connected
+- Optional Wi-Fi for the standby clock and one explicitly selected public display plugin without a computer ([experimental development implementation and hardware gates](docs/standalone-display-plugins.md))
 
 ### ChatGPT Header Badges
 
