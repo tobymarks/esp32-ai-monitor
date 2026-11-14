@@ -200,7 +200,15 @@ Validation run on 14 November 2026:
 settings, Wi-Fi credentials, preferences or keychain were accessed for this
 implementation.** The supplied S3 baseline was firmware 2.23.0 with scene protocol
 1 and no configured Wi-Fi. Physical protocol 2, CYD touch and Wi-Fi runtime
-validation remain unavailable. Builds and mocks cannot establish those results.
+validation were unavailable during that implementation phase. Builds and mocks
+cannot establish those results.
+
+A subsequent [S3 hardware test on 14 November 2026](../hardware-test/esp32s3-4848s040/standalone-2026-11-14.md)
+flashed commit `36edce5` after a verified full backup. It confirmed protocol-2
+scene acceptance, profile transfer and rejection, persistence across commanded
+reboots, removal, and USB ownership transitions without Wi-Fi. Actual panel
+readability remains unconfirmed; Wi-Fi/TLS, interrupted writes, touch and
+sustained operation are still hardware gates.
 
 Before release, test all three boards from wall power with current weather and
 service status; absent Wi-Fi/NTP; expired/wrong-host certificates; slow, chunked,

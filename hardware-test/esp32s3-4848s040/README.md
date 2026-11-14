@@ -2,6 +2,10 @@
 
 Eigenständiges PlatformIO-Projekt, um das 4"-Board (ST7701S, 480×480, GT911) vor der eigentlichen Firmware-Anbindung zu prüfen. Es ist nicht Teil des Release-Builds.
 
+Die spätere [Standalone-Teilabnahme vom 14.11.2026](standalone-2026-11-14.md)
+prüft die eigentliche Entwicklungsfirmware aus PR #30 auf diesem Board und
+trennt bestätigte Geräteergebnisse von noch offenen WLAN- und Sichtprüfungen.
+
 ## Flashen
 
 ```bash
