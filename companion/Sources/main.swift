@@ -4387,6 +4387,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ? L("flash.confirm.cyd")
             : L(detectedByChip ? "flash.confirm.chip" : "flash.confirm.reported",
                 displayVariantName(variant))
+        alert.informativeText += "\n\n" + L("flash.hint.reset")
         alert.alertStyle = .informational
         alert.addButton(withTitle: L("flash.action.plain"))
         alert.addButton(withTitle: L("common.cancel"))
@@ -4425,7 +4426,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let shortPort = (port as NSString).lastPathComponent
         let info = "ESP32 \(shortPort) — Firmware \(version)"
         let preflight = flashPreflight(port: port)
-        let warning = preflight.canStart ? nil : L("flash.hint.ready")
+        let warning = preflight.canStart
+            ? L("flash.hint.reset")
+            : L("flash.hint.reset") + "\n\n" + L("flash.hint.ready")
 
         FlashDialogController.presentModal(info: info,
                                            defaultVariant: defaultVariant,
@@ -4463,7 +4466,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             FlashDialogController.presentModal(info: info,
                                                defaultVariant: variant,
                                                preflightItems: [L("flash.local.format"), L("flash.hint.cable")],
-                                               warning: nil,
+                                               warning: L("flash.hint.reset"),
                                                canStart: fw.resolveEsptool() != nil,
                                                s3Available: true) { [weak self] chosenVariant in
                 guard let chosenVariant = chosenVariant else { return }

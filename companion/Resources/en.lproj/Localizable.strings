@@ -129,6 +129,7 @@
 "flash.err.toolstart.detail" = "The app normally ships with the flashing tool. Reinstall the app or use the DMG download from the current release.";
 "flash.failed.title" = "Flash failed";
 "flash.hint.cable" = "Note: don't disconnect the USB cable while flashing.";
+"flash.hint.reset" = "Flashing resets the device settings and saved Wi-Fi credentials. Set up Wi-Fi again afterward.";
 "flash.hint.ready" = "Flashing is only possible once USB, the firmware files and the flashing tool are ready.";
 "flash.ok.info" = "Firmware flashed successfully!";
 "flash.other.variant" = "Flash the other display variant …";

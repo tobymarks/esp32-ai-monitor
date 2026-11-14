@@ -452,6 +452,7 @@ export default function Updates({ t, connection, settings, onSettings }: Props) 
             </p>
           )}
           <p className="muted">{localPath ? `${localPath.split(/[\\/]/).pop()} · ${t("flash.local.format")}` : t("flashdlg.info", { port: shortPort || "—", version: fw?.latestVersion ?? fw?.deviceVersion ?? "?" })}</p>
+          {!flash ? <p className="notice-warn">{t("flash.hint.reset")}</p> : null}
 
           {!flash && confirm && (
             <>

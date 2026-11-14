@@ -233,6 +233,7 @@
   "flash.err.running": "Es läuft bereits ein Flash-Vorgang.",
   "flash.failed.title": "Flash fehlgeschlagen",
   "flash.hint.cable": "Hinweis: USB-Kabel während des Flashens nicht trennen.",
+  "flash.hint.reset": "Beim Flashen werden die Geräteeinstellungen und gespeicherten WLAN-Zugangsdaten zurückgesetzt. Richte das WLAN danach erneut ein.",
   "flash.hint.ready": "Flashen ist erst möglich, wenn USB, Firmware-Dateien und Flash-Werkzeug bereit sind.",
   "flash.ok.detail": "Das Display verbindet sich neu und zeigt kurz ein Testbild, danach wieder die echten Daten.",
   "flash.ok.info": "Firmware erfolgreich geflasht!",

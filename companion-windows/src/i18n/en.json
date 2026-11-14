@@ -233,6 +233,7 @@
   "flash.err.running": "A flash is already in progress.",
   "flash.failed.title": "Flash failed",
   "flash.hint.cable": "Note: don't disconnect the USB cable while flashing.",
+  "flash.hint.reset": "Flashing resets the device settings and saved Wi-Fi credentials. Set up Wi-Fi again afterward.",
   "flash.hint.ready": "Flashing is only possible once USB, the firmware files and the flashing tool are ready.",
   "flash.ok.detail": "The display reconnects and briefly shows a test image, then the real data again.",
   "flash.ok.info": "Firmware flashed successfully!",

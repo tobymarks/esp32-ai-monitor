@@ -129,6 +129,7 @@
 "flash.err.toolstart.detail" = "Die App bringt das Flash-Werkzeug normalerweise mit. App neu installieren oder den DMG-Download aus dem aktuellen Release nutzen.";
 "flash.failed.title" = "Flash fehlgeschlagen";
 "flash.hint.cable" = "Hinweis: USB-Kabel während des Flashens nicht trennen.";
+"flash.hint.reset" = "Beim Flashen werden die Geräteeinstellungen und gespeicherten WLAN-Zugangsdaten zurückgesetzt. Richte das WLAN danach erneut ein.";
 "flash.hint.ready" = "Flashen ist erst möglich, wenn USB, Firmware-Dateien und Flash-Werkzeug bereit sind.";
 "flash.ok.info" = "Firmware erfolgreich geflasht!";
 "flash.other.variant" = "Andere Display-Variante flashen …";

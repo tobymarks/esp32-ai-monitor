@@ -1252,7 +1252,7 @@ final class FlashDialogController: NSWindowController {
         self.warning = warning
         self.canStart = canStart
         self.s3Available = s3Available
-        let rect = NSRect(x: 0, y: 0, width: 520, height: 410)
+        let rect = NSRect(x: 0, y: 0, width: 520, height: warning == nil ? 410 : 490)
         let mask: NSWindow.StyleMask = [.titled, .closable]
         let window = NSWindow(contentRect: rect, styleMask: mask,
                               backing: .buffered, defer: false)
