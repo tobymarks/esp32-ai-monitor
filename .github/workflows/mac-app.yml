@@ -2,7 +2,7 @@ name: Mac App Build
 
 # Trigger nur auf App-Tags (app-v1.x.x), damit der macos-Runner nicht bei jedem
 # Commit Zeit verbrennt. Manuell per `gh workflow run mac-app.yml` oder
-# UI-Dispatch startbar — dann wird ohne Release-Upload nur das Bundle gebaut.
+# UI-Dispatch startbar — ohne upload_to_release wird nur das Bundle gebaut.
 on:
   push:
     tags:
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       upload_to_release:
-        description: 'Upload ZIP+DMG zum vorhandenen Release (Tag manuell angeben)'
+        description: 'ZIP+DMG veröffentlichen (vorhandenen Release-Tag angeben)'
         required: false
         default: 'false'
       tag:
@@ -42,19 +42,60 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # Die App-Version steht an drei manuell gepflegten Stellen. Bei einem
-      # app-v* / app-beta-v*-Tag muessen alle drei zum Tag passen, sonst meldet
-      # der In-App-Updater eine andere Version als ausgeliefert wird.
-      - name: Verify app version matches tag
-        if: startsWith(github.ref, 'refs/tags/app-v') || startsWith(github.ref, 'refs/tags/app-beta-v')
+      # Manueller Upload darf nur exakt den Commit des angegebenen App-Tags
+      # bauen. Die Eingaben kommen ueber env statt als Shell-Quelltext an.
+      - name: Resolve release target
+        env:
+          INPUT_UPLOAD_TO_RELEASE: ${{ github.event.inputs.upload_to_release }}
+          INPUT_RELEASE_TAG: ${{ github.event.inputs.tag }}
         run: |
-          REF="${GITHUB_REF#refs/tags/}"
+          set -euo pipefail
+          PUBLISH=false
+          TAG=""
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/app-* ]]; then
+            PUBLISH=true
+            TAG="${GITHUB_REF#refs/tags/}"
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            case "$INPUT_UPLOAD_TO_RELEASE" in
+              true) PUBLISH=true; TAG="$INPUT_RELEASE_TAG" ;;
+              false|'') ;;
+              *) echo "::error::upload_to_release muss true oder false sein"; exit 1 ;;
+            esac
+          fi
+          echo "RELEASE_UPLOAD=$PUBLISH" >> "$GITHUB_ENV"
+          if [[ "$PUBLISH" != true ]]; then
+            echo "Build ohne Release-Upload."
+            exit 0
+          fi
+          if [[ ! "$TAG" =~ ^app-v[0-9]+\.[0-9]+\.[0-9]+$ &&
+                ! "$TAG" =~ ^app-beta-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Ein gueltiger app-v* oder app-beta-v* Release-Tag ist erforderlich"
+            exit 1
+          fi
+          git fetch --no-tags origin "refs/tags/$TAG"
+          TAG_COMMIT=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
+          BUILD_COMMIT=$(git rev-parse HEAD)
+          if [[ "$TAG_COMMIT" != "$BUILD_COMMIT" ]]; then
+            echo "::error::Release-Tag $TAG zeigt auf $TAG_COMMIT, gebaut wird $BUILD_COMMIT. Workflow auf dem Release-Tag starten."
+            exit 1
+          fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Release-Ziel: $TAG ($BUILD_COMMIT)"
+
+      # Die App-Version steht an drei manuell gepflegten Stellen. Bei einem
+      # Release-Upload muessen alle zum Tag passen, auch beim manuellen Start.
+      - name: Verify app version matches tag
+        if: env.RELEASE_UPLOAD == 'true'
+        run: |
+          set -euo pipefail
+          REF="$RELEASE_TAG"
           if [[ "$REF" == app-beta-v* ]]; then TAG="${REF#app-beta-v}"; else TAG="${REF#app-v}"; fi
           CODE=$(grep 'let kAppVersion' companion/Sources/main.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
           BUILDSH=$(grep '^APP_VERSION=' companion/build.sh | head -1 | sed 's/.*"\(.*\)".*/\1/')
           PLIST=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' companion/Resources/Info.plist)
+          PLIST_BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' companion/Resources/Info.plist)
           fail=0
-          for pair in "kAppVersion:$CODE" "build.sh:$BUILDSH" "Info.plist:$PLIST"; do
+          for pair in "kAppVersion:$CODE" "build.sh:$BUILDSH" "CFBundleShortVersionString:$PLIST" "CFBundleVersion:$PLIST_BUILD"; do
             name="${pair%%:*}"; val="${pair#*:}"
             if [ "$val" != "$TAG" ]; then
               echo "::error::Tag $REF passt nicht zu $name '$val' (erwartet Version $TAG)"
@@ -206,6 +247,22 @@ jobs:
         working-directory: companion
         run: ls -lah build/
 
+      # Strikt VOR jeder Release-Erstellung und jedem Release-Upload pruefen.
+      # Ein normaler manueller Build ohne Upload darf weiterhin ad-hoc sein.
+      - name: Verify signed and notarized release assets
+        if: env.RELEASE_UPLOAD == 'true'
+        run: |
+          set -euo pipefail
+          APP="companion/build/AI Monitor.app"
+          DMG="companion/build/AIMonitor.dmg"
+          test -s companion/build/AIMonitor.zip
+          test -s "$DMG"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
+          xcrun stapler validate "$DMG"
+          spctl -a -t execute -vv "$APP"
+          spctl -a -t open --context context:primary-signature -vv "$DMG"
+
       - name: Upload ZIP artifact
         uses: actions/upload-artifact@v7
         with:
@@ -230,11 +287,12 @@ jobs:
       # Signing-Secrets hinterlegt sind, liefert CI dieselbe Qualitaet; der
       # Guard erzwang nur noch unnoetige lokale Builds und ist entfallen.
       - name: Attach assets to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/app-v') || startsWith(github.ref, 'refs/tags/app-beta-v')
+        if: env.RELEASE_UPLOAD == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          set -euo pipefail
+          TAG="$RELEASE_TAG"
           # Release anlegen, falls es noch nicht existiert. Beta-Tags
           # (app-beta-v*) werden als prerelease markiert, damit der In-App-
           # Updater sie ausschliesslich im Beta-Kanal anbietet.
@@ -242,10 +300,10 @@ jobs:
           # unveraendert — hier werden dann nur die Assets angehaengt.
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             if [[ "$TAG" == app-beta-v* ]]; then
-              gh release create "$TAG" --prerelease --title "$TAG" \
+              gh release create "$TAG" --verify-tag --prerelease --title "$TAG" \
                 --notes "Automatisierter Beta-Build (signiert und notarisiert)."
             else
-              gh release create "$TAG" --title "$TAG" --generate-notes
+              gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
             fi
           fi
           echo "Uploading notarized CI build to $TAG."
@@ -253,9 +311,3 @@ jobs:
             companion/build/AIMonitor.zip \
             companion/build/AIMonitor.dmg \
             --clobber
-
-          # Gegenprobe: Was hochgeladen wurde, muss Gatekeeper passieren.
-          # Faengt ab, dass ein unbemerkt ad-hoc signierter Build als Release
-          # herausgeht, falls die Signing-Secrets einmal fehlen.
-          spctl -a -t open --context context:primary-signature -vv \
-            companion/build/AIMonitor.dmg

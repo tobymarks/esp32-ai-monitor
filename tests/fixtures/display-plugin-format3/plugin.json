@@ -1,0 +1,332 @@
+{
+  "formatVersion": 3,
+  "id": "org.aimonitor.fixture-format3",
+  "name": "Flüge Fixture",
+  "version": "1.0.0",
+  "author": "AI Monitor tests",
+  "description": "Synthetic location, lists and UTF-8 contract fixture.",
+  "viewLabel": "Flüge",
+  "minSceneProtocol": 1,
+  "requires": [
+    "location"
+  ],
+  "source": {
+    "url": "https://example.org/aircraft?lat={location.latitude}&lon={location.longitude}",
+    "intervalSeconds": 20
+  },
+  "settings": [],
+  "lists": [
+    {
+      "name": "flights",
+      "path": "ac",
+      "sortBy": "dst",
+      "limit": 2,
+      "where": [
+        {
+          "path": "flight",
+          "operator": "exists"
+        },
+        {
+          "path": "alt_baro",
+          "operator": "notEquals",
+          "value": "ground"
+        },
+        {
+          "path": "gs",
+          "operator": "atLeast",
+          "value": 40
+        }
+      ]
+    }
+  ],
+  "bindings": [
+    {
+      "name": "location",
+      "path": "location.name",
+      "format": "text",
+      "fallback": "Kein Ort"
+    },
+    {
+      "name": "count",
+      "path": "lists.flights.count",
+      "format": "integer",
+      "fallback": "0"
+    },
+    {
+      "name": "first",
+      "path": "lists.flights.items.0.flight",
+      "format": "text",
+      "trim": true,
+      "fallback": "Keine Flüge"
+    },
+    {
+      "name": "height",
+      "path": "lists.flights.items.0.alt_baro",
+      "format": "integer",
+      "scale": 0.3048,
+      "suffix": " m",
+      "fallback": "-- m"
+    },
+    {
+      "name": "second",
+      "path": "lists.flights.items.1.flight",
+      "format": "text",
+      "trim": true,
+      "fallback": ""
+    },
+    {
+      "name": "temperature",
+      "path": "temperature",
+      "format": "decimal1",
+      "suffix": " °C",
+      "fallback": "-- °C"
+    }
+  ],
+  "attentionRules": [
+    {
+      "id": "overhead",
+      "path": "lists.flights.count",
+      "operator": "atLeast",
+      "value": 1
+    }
+  ],
+  "scenes": {
+    "portrait": {
+      "background": 1580575,
+      "nodes": [
+        {
+          "type": "text",
+          "x": 50,
+          "y": 30,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "FLÜGE {{location}}"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 170,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{count}} Flüge"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 310,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{first}}: {{height}}"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 450,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{second}}",
+          "visibleWhen": {
+            "binding": "second",
+            "notEquals": ""
+          }
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 590,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "ÄÖÜ äöü ß"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 730,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{temperature}}"
+        },
+        {
+          "type": "bar",
+          "x": 50,
+          "y": 900,
+          "w": 900,
+          "h": 30,
+          "color": 8680559,
+          "trackColor": 3717119,
+          "valueBinding": "count"
+        }
+      ]
+    },
+    "landscape": {
+      "background": 1580575,
+      "nodes": [
+        {
+          "type": "text",
+          "x": 50,
+          "y": 30,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "FLÜGE {{location}}"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 170,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{count}} Flüge"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 310,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{first}}: {{height}}"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 450,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{second}}",
+          "visibleWhen": {
+            "binding": "second",
+            "notEquals": ""
+          }
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 590,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "ÄÖÜ äöü ß"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 730,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 20,
+          "text": "{{temperature}}"
+        },
+        {
+          "type": "bar",
+          "x": 50,
+          "y": 900,
+          "w": 900,
+          "h": 30,
+          "color": 8680559,
+          "trackColor": 3717119,
+          "valueBinding": "count"
+        }
+      ]
+    },
+    "square": {
+      "background": 1580575,
+      "nodes": [
+        {
+          "type": "text",
+          "x": 50,
+          "y": 30,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 24,
+          "text": "FLÜGE {{location}}"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 170,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 24,
+          "text": "{{count}} Flüge"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 310,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 24,
+          "text": "{{first}}: {{height}}"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 450,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 24,
+          "text": "{{second}}",
+          "visibleWhen": {
+            "binding": "second",
+            "notEquals": ""
+          }
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 590,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 24,
+          "text": "ÄÖÜ äöü ß"
+        },
+        {
+          "type": "text",
+          "x": 50,
+          "y": 730,
+          "w": 900,
+          "h": 110,
+          "color": 16777215,
+          "font": 24,
+          "text": "{{temperature}}"
+        },
+        {
+          "type": "bar",
+          "x": 50,
+          "y": 900,
+          "w": 900,
+          "h": 30,
+          "color": 8680559,
+          "trackColor": 3717119,
+          "valueBinding": "count"
+        }
+      ]
+    }
+  }
+}

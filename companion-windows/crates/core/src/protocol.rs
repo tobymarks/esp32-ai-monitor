@@ -231,6 +231,8 @@ pub struct DeviceInfo {
     pub serial_transport: Option<String>,
     pub max_frame_bytes: Option<usize>,
     pub scene_protocol: Option<u32>,
+    #[serde(default)]
+    pub standalone_protocol: Option<u32>,
     pub wifi_configured: Option<bool>,
     pub wifi_connected: Option<bool>,
     pub time_synced: Option<bool>,
@@ -292,6 +294,8 @@ impl DeviceInfo {
                 .get("sceneProtocol")
                 .and_then(Value::as_u64)
                 .map(|n| n as u32),
+            standalone_protocol: v.get("standaloneProtocol").and_then(Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok()),
             wifi_configured: v.get("wifiConfigured").and_then(Value::as_bool),
             wifi_connected: v.get("wifiConnected").and_then(Value::as_bool),
             time_synced: v.get("timeSynced").and_then(Value::as_bool),

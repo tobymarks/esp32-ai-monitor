@@ -31,7 +31,7 @@ import Darwin
 // MARK: - Configuration
 // ============================================================
 
-let kAppVersion = "1.32.0"
+let kAppVersion = "1.33.0"
 let kSerialBaudRate: speed_t = 115200
 let kSerialScanInterval: TimeInterval = 3
 /// Legacy-Suite aus v1.x (<= 1.11.1). Wird ab v1.12.0 einmalig migriert und dann
@@ -253,6 +253,33 @@ private let kDeviceAutoAnimals: [(String, DeviceAutoGenus)] = [
     ("Nashorn",          .neutr),
 ]
 
+/// Standort eines Displays. Plugins mit `requires: ["location"]` erhalten ihn
+/// für Abruf-URL und Bindings; er verlässt die App nur über deren Datenquelle.
+struct DeviceLocation: Codable, Equatable {
+    /// Anzeigename wie „München“; leer bei reinen Koordinaten.
+    var name: String
+    var latitude: Double
+    var longitude: Double
+
+    var isValid: Bool {
+        latitude.isFinite && longitude.isFinite && abs(latitude) <= 90 && abs(longitude) <= 180
+            && name.count <= 80
+    }
+
+    /// Wert für `--location=` des Plugin-Helfers; zugleich Schlüssel dafür,
+    /// zu welchem Standort abgerufene Szenen gehören.
+    var argument: String {
+        let object: [String: Any] = ["name": name, "latitude": latitude, "longitude": longitude]
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    var summary: String {
+        let coordinates = String(format: "%.3f, %.3f", latitude, longitude)
+        return name.isEmpty ? coordinates : "\(name) (\(coordinates))"
+    }
+}
+
 /// Per-Device-Settings. Jedes am USB verbundene ESP32 hat genau ein Profil,
 /// adressiert über die MAC-Adresse (ab FW v2.10.0 im `get_info`-Response).
 /// Geräte mit älterer Firmware werden unter `kLegacyDeviceMAC` geführt — beim
@@ -281,6 +308,9 @@ struct DeviceProfile: Codable {
     var lastSeenAt: Date?
     /// Zuletzt vom Gerät gemeldete Firmware-Version ohne fuehrendes "v".
     var firmwareVersion: String?
+    /// Standort des Displays; `nil`, solange keiner hinterlegt ist. Neue
+    /// Geräte erben ihn bewusst nicht vom zuletzt aktiven Profil.
+    var location: DeviceLocation? = nil
 
     static func defaultFor(mac: String, friendlyName: String,
                            theme: String = "system",
@@ -1924,6 +1954,7 @@ class SerialPortManager {
     var deviceSerialTransport: String?
     var deviceMaxFrameBytes: Int?
     var deviceSceneProtocol: Int?
+    var deviceStandaloneProtocol: Int?
     /// Vom Geraet ausgelesener Display-Controller (`panel`, ab FW 2.23.0).
     /// Anders als `display` beschreibt er die Hardware, nicht die Firmware.
     var devicePanel: String?
@@ -2102,10 +2133,12 @@ class SerialPortManager {
         let flags = fcntl(fd, F_GETFL)
         _ = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK)
 
+        ioLock.lock()
         fileDescriptor = fd
         connectedPort = port
         portLost = false
         state = .probing
+        ioLock.unlock()
         NSLog("[Serial] Connected to %@ at 115200 baud (state=probing)", port)
 
         let newline: [UInt8] = [0x0A]
@@ -2149,6 +2182,7 @@ class SerialPortManager {
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     self.deviceMaxFrameBytes = json["maxFrameBytes"] as? Int
                     self.deviceSceneProtocol = json["sceneProtocol"] as? Int
+                    self.deviceStandaloneProtocol = json["standaloneProtocol"] as? Int
                     self.devicePanel = Self.reportedPanel(in: json)
                     Settings.shared.installedFirmwareVersion = "v\(version)"
                     NSLog("[Serial] ESP32 firmware: v%@ (state=connected)", version)
@@ -2236,6 +2270,7 @@ class SerialPortManager {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 self.deviceMaxFrameBytes = json["maxFrameBytes"] as? Int
                 self.deviceSceneProtocol = json["sceneProtocol"] as? Int
+                    self.deviceStandaloneProtocol = json["standaloneProtocol"] as? Int
                 self.devicePanel = Self.reportedPanel(in: json)
                 Settings.shared.installedFirmwareVersion = "v\(version)"
                 let reportedMAC = (json["mac"] as? String)?
@@ -2286,6 +2321,10 @@ class SerialPortManager {
     }
 
     func disconnect() {
+        // A queued standalone command must never follow this descriptor onto
+        // another device. Publication, invalidation and command I/O share a lock.
+        ioLock.lock()
+        defer { ioLock.unlock() }
         // close() hebt das TIOCEXCL-Lock aus `connect(to:)` auf.
         if fileDescriptor >= 0 { Darwin.close(fileDescriptor); fileDescriptor = -1 }
         connectedPort = nil
@@ -2294,6 +2333,7 @@ class SerialPortManager {
         deviceSerialTransport = nil
         deviceMaxFrameBytes = nil
         deviceSceneProtocol = nil
+        deviceStandaloneProtocol = nil
         devicePanel = nil
         lastDisconnectAt = Date()
         connectionGeneration &+= 1
@@ -2488,24 +2528,29 @@ class SerialPortManager {
 
     private func performJSONCommandSync(_ payload: [String: Any],
                                         acceptedTypes: Set<String>,
-                                        timeout: TimeInterval) -> [String: Any]? {
+                                        timeout: TimeInterval,
+                                        framed: Bool = false,
+                                        expectedGeneration: Int? = nil) -> [String: Any]? {
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        guard fileDescriptor >= 0 else { return nil }
+        if let expectedGeneration {
+            guard connectionGeneration == expectedGeneration, isReadyForCommands,
+                  deviceStandaloneProtocol == 1, !portLost else { return nil }
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               var jsonString = String(data: data, encoding: .utf8) else {
             return nil
         }
         jsonString.append("\n")
-        guard let wireData = jsonString.data(using: .utf8) else { return nil }
+        guard let wireData = framed ? encodeJSONForTransport(String(jsonString.dropLast()), frameId: nil) : jsonString.data(using: .utf8) else { return nil }
 
-        ioLock.lock()
-        defer { ioLock.unlock() }
-
-        guard fileDescriptor >= 0 else { return nil }
         drainInput()
         let writeResult = writeAllLocked(wireData)
         guard writeResult == wireData.count else { return nil }
 
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline && fileDescriptor >= 0 {
+        while Date() < deadline && fileDescriptor >= 0 && !portLost {
             let remaining = deadline.timeIntervalSinceNow
             if remaining <= 0 { break }
             guard let line = readLine(timeout: min(remaining, 1.0)) else { continue }
@@ -2517,9 +2562,84 @@ class SerialPortManager {
                   acceptedTypes.contains(type) else {
                 continue
             }
+            if framed && type == "standalone_ack" {
+                guard json["command"] as? String == payload["cmd"] as? String else { continue }
+                if let transaction = payload["transaction"] as? String,
+                   json["transaction"] as? String != transaction { continue }
+            }
             return json
         }
         return nil
+    }
+
+    /// Bounded snapshot upload. No settings are installed until commit readback agrees.
+    func performStandalone(action: String, export: [String: Any]? = nil,
+                           completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        let generation = connectionGeneration
+        DispatchQueue.global(qos: .userInitiated).async {
+            func failure(_ key: String) -> NSError {
+                let translated = L(key)
+                let message = translated == key ? L("standalone.failed") + " (" + key.replacingOccurrences(of: "standalone.error.", with: "") + ")" : translated
+                return NSError(domain: "Standalone", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+            }
+            func request(_ payload: [String: Any]) throws -> [String: Any] {
+                let deadline = ProcessInfo.processInfo.systemUptime + 15
+                while true {
+                    guard self.connectionGeneration == generation, self.isReadyForCommands,
+                          self.deviceStandaloneProtocol == 1 else { throw failure("standalone.connect") }
+                    let type = payload["cmd"] as? String == "standalone_status" ? "standalone_status" : "standalone_ack"
+                    guard let response = self.performJSONCommandSync(payload, acceptedTypes: [type], timeout: 10,
+                                                                     framed: true, expectedGeneration: generation) else {
+                        throw failure("standalone.timeout")
+                    }
+                    if type == "standalone_ack", response["ok"] as? Bool != true {
+                        if response["error"] as? String == "worker_busy", ProcessInfo.processInfo.systemUptime < deadline {
+                            Thread.sleep(forTimeInterval: 0.2)
+                            continue
+                        }
+                        throw failure("standalone.error." + (response["error"] as? String ?? "unknown"))
+                    }
+                    return response
+                }
+            }
+            let result = Result { () -> [String: Any] in
+                switch action {
+                case "install":
+                    guard let export, let profile = export["profile"] as? String,
+                          let hash = export["sha256"] as? String,
+                          !profile.isEmpty, profile.utf8.count <= 8192 else { throw failure("standalone.invalid") }
+                    let transaction = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+                    do {
+                        _ = try request(["cmd": "standalone_begin", "transaction": transaction, "bytes": profile.utf8.count, "sha256": hash])
+                        let bytes = Array(profile.utf8)
+                        var offset = 0
+                        while offset < bytes.count {
+                            var end = min(offset + 512, bytes.count)
+                            while end < bytes.count && bytes[end] & 0xC0 == 0x80 { end -= 1 }
+                            let chunk = String(decoding: bytes[offset..<end], as: UTF8.self)
+                            let ack = try request(["cmd": "standalone_chunk", "transaction": transaction, "offset": offset, "data": chunk])
+                            guard ack["offset"] as? Int == end else { throw failure("standalone.invalidAck") }
+                            offset = end
+                        }
+                        _ = try request(["cmd": "standalone_commit", "transaction": transaction])
+                        let status = try request(["cmd": "standalone_status"])
+                        guard status["digest"] as? String == hash, status["enabled"] as? Bool == true else {
+                            throw failure("standalone.readback")
+                        }
+                        return status
+                    } catch {
+                        _ = try? request(["cmd": "standalone_abort", "transaction": transaction])
+                        throw error
+                    }
+                case "status": break
+                case "setup", "remove": _ = try request(["cmd": "standalone_" + action])
+                case "enable", "disable": _ = try request(["cmd": "standalone_enabled", "value": action == "enable"])
+                default: throw failure("standalone.invalid")
+                }
+                return try request(["cmd": "standalone_status"])
+            }
+            DispatchQueue.main.async { completion(result) }
+        }
     }
 
     func readLine(timeout: TimeInterval = 2.0) -> String? {
@@ -2624,6 +2744,7 @@ class UsageMonitor {
     /// Nach jedem Connect: gemeldetes Panel und laufende Firmware-Variante.
     var onPanelReported: ((_ panel: String?, _ firmwareVariant: String?) -> Void)?
     private var heartbeatTimer: Timer?
+    private var pluginRefreshTimer: Timer?
     /// Ausstehender, gebuendelter Usage-/Notice-Frame (siehe scheduleUsageSend).
     private var pendingUsageSend: DispatchWorkItem?
     private var nextFrameId = 1
@@ -2882,10 +3003,12 @@ class UsageMonitor {
         } else {
             layout = "landscape"
         }
-        let scene = id == ClaudeCodeWindow.viewID
+        let rendered = id == ClaudeCodeWindow.viewID
             ? ClaudeCodeWindow.shared.scene(layout: layout, language: Settings.shared.language,
                                             theme: DisplayPlugins.resolvedTheme())
             : DisplayPlugins.shared.scene(for: id, layout: layout, language: Settings.shared.language)
+        let scene = DisplayPlugins.sceneForDevice(rendered,
+                                                  sceneProtocol: serialPort.deviceSceneProtocol ?? 1)
         let envelope: [String: Any] = [
             "schemaVersion": 2,
             "frameId": frameId,
@@ -3014,11 +3137,20 @@ class UsageMonitor {
             guard let self = self else { return }
             self.sendUsageToESP32()
         }
+
+        // Plugins dürfen ab Format 3 alle 20 Sekunden abrufen; der Heartbeat
+        // allein käme nur einmal pro Minute vorbei. Fällig ist ein Abruf erst
+        // nach dem Intervall des jeweiligen Plugins.
+        pluginRefreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            DisplayPlugins.shared.refresh(views: Settings.shared.displayViews)
+        }
     }
 
     func stop() {
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
+        pluginRefreshTimer?.invalidate()
+        pluginRefreshTimer = nil
         viewEventTimer?.invalidate()
         viewEventTimer = nil
         codexBar.stop()
@@ -4255,6 +4387,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ? L("flash.confirm.cyd")
             : L(detectedByChip ? "flash.confirm.chip" : "flash.confirm.reported",
                 displayVariantName(variant))
+        alert.informativeText += "\n\n" + L("flash.hint.reset")
         alert.alertStyle = .informational
         alert.addButton(withTitle: L("flash.action.plain"))
         alert.addButton(withTitle: L("common.cancel"))
@@ -4293,7 +4426,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let shortPort = (port as NSString).lastPathComponent
         let info = "ESP32 \(shortPort) — Firmware \(version)"
         let preflight = flashPreflight(port: port)
-        let warning = preflight.canStart ? nil : L("flash.hint.ready")
+        let warning = preflight.canStart
+            ? L("flash.hint.reset")
+            : L("flash.hint.reset") + "\n\n" + L("flash.hint.ready")
 
         FlashDialogController.presentModal(info: info,
                                            defaultVariant: defaultVariant,
@@ -4331,7 +4466,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             FlashDialogController.presentModal(info: info,
                                                defaultVariant: variant,
                                                preflightItems: [L("flash.local.format"), L("flash.hint.cable")],
-                                               warning: nil,
+                                               warning: L("flash.hint.reset"),
                                                canStart: fw.resolveEsptool() != nil,
                                                s3Available: true) { [weak self] chosenVariant in
                 guard let chosenVariant = chosenVariant else { return }

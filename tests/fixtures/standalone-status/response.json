@@ -1,0 +1,12 @@
+{
+  "page": {
+    "name": "  GitHub  "
+  },
+  "status": {
+    "indicator": "none",
+    "description": " All Systems Operational "
+  },
+  "metric": {
+    "percent": 80
+  }
+}

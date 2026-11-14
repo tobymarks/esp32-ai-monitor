@@ -83,7 +83,7 @@ export interface ProviderInfo {
 export interface PluginSettingSpec {
   key: string;
   label: string;
-  kind: "number" | "text";
+  kind: "number" | "text" | "url";
   default: string | number;
   min: number | null;
   max: number | null;
@@ -99,6 +99,8 @@ export interface PluginPreview {
   sourceOrigin: string;
   sha256: string;
   signed: boolean;
+  /** Das Plugin sendet den Standort des Displays an `sourceOrigin`. */
+  requiresLocation: boolean;
   settingsSpec: PluginSettingSpec[];
   localizations?: Record<string, Record<string, string>>;
 }
@@ -172,6 +174,7 @@ export type DisplayLanguage = "de" | "en";
 export type DisplayVariant = "ili9341" | "st7789" | "st7701";
 
 export interface DeviceInfo {
+  standaloneProtocol?: number | null;
   version: string;
   mac: string;
   display: DisplayVariant | null;
@@ -192,6 +195,18 @@ export interface DeviceInfo {
   heap: number | null;
 }
 
+/** Standort eines Displays; `name` darf leer sein (nur Koordinaten). */
+export interface DeviceLocation {
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+/** Treffer der Ortssuche; `detail` nennt Region und Land. */
+export interface Place extends DeviceLocation {
+  detail: string;
+}
+
 export interface DeviceProfile {
   mac: string;
   friendlyName: string;
@@ -202,6 +217,7 @@ export interface DeviceProfile {
   displayVariant: DisplayVariant | null;
   lastSeenAt: string | null;
   firmwareVersion: string | null;
+  location: DeviceLocation | null;
 }
 
 /** Felder bleiben snake_case, so serialisiert aimonitor_serial::FrameReceipt. */
@@ -256,6 +272,9 @@ export const getDevices = () => invoke<DeviceProfile[]>("get_devices");
 export const renameDevice = (mac: string, name: string) => invoke<DeviceProfile>("rename_device", { mac, name });
 export const updateProfile = (mac: string, theme: ThemeSetting, orientation: Orientation, language: DisplayLanguage) =>
   invoke<DeviceProfile>("update_profile", { mac, theme, orientation, language });
+export const setDeviceLocation = (mac: string, location: DeviceLocation | null) =>
+  invoke<DeviceProfile>("set_device_location", { mac, location });
+export const searchPlaces = (query: string, language: string) => invoke<Place[]>("search_places", { query, language });
 export const setBrightness = (value: number, persist: boolean) => invoke<void>("set_brightness", { value, persist });
 export const getTimezones = () => invoke<TimeZoneOption[]>("get_timezones");
 export const setTimezone = (timezone: string) => invoke<void>("set_timezone", { timezone });
@@ -381,3 +400,16 @@ export function onFlashProgress(handler: (progress: FlashProgress) => void): Pro
 export function onUpdateProgress(handler: (progress: DownloadProgress) => void): Promise<UnlistenFn> {
   return listen<DownloadProgress>("update-progress", (event) => handler(event.payload));
 }
+
+export interface StandaloneExport {
+  profile: string; sha256: string; pluginId: string; name: string; version: string;
+  origin: string; sendsLocation: boolean; refreshSeconds: number;
+}
+export interface StandaloneStatus {
+  available: boolean; storageReady: boolean; enabled: boolean; profileId: string;
+  pluginVersion: string; digest: string; intervalSeconds: number; state: string;
+  lastSuccessAgeSeconds: number | null; experimental: boolean; error?: string | null;
+}
+export const standalonePreview = (mac: string, id: string) => invoke<StandaloneExport>("standalone_preview", { mac, id });
+export const standaloneAction = (mac: string, action: string, id?: string, expectedSha256?: string) =>
+  invoke<StandaloneStatus>("standalone_action", { mac, action, id, expectedSha256 });

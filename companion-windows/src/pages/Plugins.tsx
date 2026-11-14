@@ -11,10 +11,12 @@ interface Props {
   t: Translate;
   locale: string;
   plugins: PluginInfo[];
+  /** Für das verbundene (sonst zuletzt bekannte) Display ist ein Standort hinterlegt. */
+  hasLocation: boolean;
   onRefresh: () => void;
 }
 
-function PluginSettings({ t, locale, plugin, onRefresh }: { t: Translate; locale: string; plugin: PluginInfo; onRefresh: () => void }) {
+function PluginSettings({ t, locale, plugin, hasLocation, onRefresh }: { t: Translate; locale: string; plugin: PluginInfo; hasLocation: boolean; onRefresh: () => void }) {
   const [values, setValues] = useState(plugin.settings);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +27,13 @@ function PluginSettings({ t, locale, plugin, onRefresh }: { t: Translate; locale
     setBusy(true);
     setError(null);
     try {
-      await configurePlugin(plugin.id, values);
+      const normalized = { ...values };
+      for (const spec of plugin.settingsSpec) {
+        const value = normalized[spec.key];
+        if (spec.kind === "url" && typeof value === "string") normalized[spec.key] = value.trim();
+      }
+      const updated = await configurePlugin(plugin.id, normalized);
+      setValues(updated.settings);
       onRefresh();
     } catch (e) {
       setError(pluginError(e, t));
@@ -52,12 +60,18 @@ function PluginSettings({ t, locale, plugin, onRefresh }: { t: Translate; locale
         <button type="button" className="btn" disabled={busy} onClick={remove}>{t("plugins.remove")}</button>
       </div>
       <p className="muted small">{t("plugins.by", { author: plugin.author })} · {plugin.sourceOrigin} · {t("plugins.unsigned")}</p>
+      {plugin.requiresLocation && (
+        <p className="muted small">{t("plugins.location", { origin: plugin.sourceOrigin })}{!hasLocation && ` ${t("plugins.location.missing")}`}</p>
+      )}
       {plugin.attribution && <p className="muted small">{pluginText(plugin, locale, plugin.attribution)}</p>}
       <div className="plugin-settings">
         {plugin.settingsSpec.map((spec) => (
           <label key={spec.key} className="field-row">
             <span className="field-label">{pluginText(plugin, locale, spec.label)}</span>
-            <input className="input" type={spec.kind === "number" ? "number" : "text"}
+            <input className="input" type={spec.kind === "number" ? "number" : spec.kind === "url" ? "url" : "text"}
+              style={spec.kind === "url" ? { flex: 1, minWidth: 0 } : undefined}
+              maxLength={spec.kind === "url" ? 2048 : undefined}
+              spellCheck={spec.kind === "url" ? false : undefined}
               min={spec.min ?? undefined} max={spec.max ?? undefined}
               step={spec.kind === "number" ? "any" : undefined}
               value={values[spec.key] ?? ""} disabled={busy}
@@ -69,7 +83,9 @@ function PluginSettings({ t, locale, plugin, onRefresh }: { t: Translate; locale
         ))}
       </div>
       <div className="field-row">
-        <button type="button" className="btn btn-primary" onClick={save} disabled={busy}>{t("plugins.save")}</button>
+        {plugin.settingsSpec.length > 0 && (
+          <button type="button" className="btn btn-primary" onClick={save} disabled={busy}>{t("plugins.save")}</button>
+        )}
         <span className="muted small">{plugin.lastError
           ? t("plugins.error", { message: plugin.lastError })
           : plugin.fetchedAt ? t("plugins.updated", { time: new Date(plugin.fetchedAt).toLocaleString() })
@@ -80,7 +96,7 @@ function PluginSettings({ t, locale, plugin, onRefresh }: { t: Translate; locale
   );
 }
 
-export default function Plugins({ t, locale, plugins, onRefresh }: Props) {
+export default function Plugins({ t, locale, plugins, hasLocation, onRefresh }: Props) {
   const [source, setSource] = useState("");
   const [candidate, setCandidate] = useState<PluginPreview | null>(null);
   const [busy, setBusy] = useState(false);
@@ -134,6 +150,7 @@ export default function Plugins({ t, locale, plugins, onRefresh }: Props) {
             <p>{pluginText(candidate, locale, candidate.description)}</p>
             <p className="muted small">{t("plugins.by", { author: candidate.author })}</p>
             <p>{t("plugins.permission", { origin: candidate.sourceOrigin })}</p>
+            {candidate.requiresLocation && <p>{t("plugins.location", { origin: candidate.sourceOrigin })}</p>}
             <p className="muted small">{t("plugins.unsigned")} · SHA-256 {candidate.sha256.slice(0, 16)}…</p>
             {candidate.attribution && <p className="muted small">{pluginText(candidate, locale, candidate.attribution)}</p>}
             <button type="button" className="btn btn-primary" onClick={install} disabled={busy}>{t("common.install")}</button>
@@ -143,7 +160,7 @@ export default function Plugins({ t, locale, plugins, onRefresh }: Props) {
       </div>
       <h2>{t("plugins.installed")}</h2>
       {plugins.length === 0 && <p className="muted">{t("plugins.none")}</p>}
-      {plugins.map((plugin) => <PluginSettings key={plugin.id} t={t} locale={locale} plugin={plugin} onRefresh={onRefresh} />)}
+      {plugins.map((plugin) => <PluginSettings key={plugin.id} t={t} locale={locale} plugin={plugin} hasLocation={hasLocation} onRefresh={onRefresh} />)}
     </section>
   );
 }

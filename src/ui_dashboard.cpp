@@ -32,6 +32,7 @@
 #include "localization.h"
 #include "serial_receiver.h"
 #include "wifi_time.h"
+#include "standalone_runtime.h"
 
 #include <lvgl.h>
 #include <ArduinoJson.h>
@@ -153,7 +154,7 @@ static int16_t header_h_px          = 36;
 static int16_t header_side_reserve  = 52;   // WLAN/Status links, Uhr rechts
 static int16_t status_icon_y        = 11;
 static int16_t status_dot_x         = 30;
-static const lv_font_t *pill_font   = &lv_font_montserrat_12;
+static const lv_font_t *pill_font   = &font_ui_12;
 
 // Header status icon (connection indicator)
 static lv_obj_t *lbl_wifi_status   = nullptr;
@@ -181,6 +182,7 @@ static lv_obj_t *clock_overlay      = nullptr;
 static lv_obj_t *clock_time         = nullptr;
 static lv_obj_t *clock_date         = nullptr;
 static lv_obj_t *plugin_overlay     = nullptr;
+static lv_obj_t *plugin_offline_status = nullptr;
 static uint8_t plugin_rendered_view = 0xFF;
 static uint32_t plugin_rendered_revision = 0;
 static bool long_press_handled = false;
@@ -249,38 +251,76 @@ static const lv_font_t *clock_font() {
     return &font_standby_clock_76;
 }
 
-static void update_plugin_view() {
-    uint8_t index = serial_active_view();
-    const PluginSceneSlot *slot = plugin_scene_get(index);
-    if (plugin_overlay && index == plugin_rendered_view && slot
-        && slot->revision == plugin_rendered_revision) return;
+static const char *offline_status_text() {
+    const char *state = standalone_status();
+    bool de = g_language == LANG_DE;
+    if (!strcmp(state, "waiting_wifi")) return de ? "WLAN verbinden" : "Waiting for Wi-Fi";
+    if (!strcmp(state, "waiting_time")) return de ? "Warte auf Uhrzeit" : "Waiting for time";
+    if (!strcmp(state, "storage_unavailable")) return de ? "Profil nicht verfuegbar" : "Profile unavailable";
+    if (!strcmp(state, "configuration_changed")) return de ? "Profil erneut speichern" : "Resync display profile";
+    if (!strcmp(state, "loading")) return de ? "Lade Plugin ..." : "Loading plugin ...";
+    if (!strcmp(state, "tls_error")) return de ? "HTTPS-Verbindung fehlgeschlagen" : "HTTPS connection failed";
+    if (!strcmp(state, "http_error")) return de ? "Quelle nicht erreichbar" : "Source unavailable";
+    if (!strcmp(state, "response_too_large")) return de ? "Antwort zu gross" : "Response too large";
+    if (!strcmp(state, "response_invalid") || !strcmp(state, "render_error")) return de ? "Ungueltige Quelldaten" : "Invalid source data";
+    if (!strcmp(state, "request_timeout")) return de ? "Zeitlimit der Anfrage erreicht" : "Request timed out";
+    if (!strcmp(state, "dns_error") || !strcmp(state, "dns_pending")) return de ? "Quelle nicht erreichbar" : "Source unavailable";
+    if (!strncmp(state, "json_", 5) || !strncmp(state, "binding_", 8) || !strncmp(state, "render_", 7)) return de ? "Ungueltige Quelldaten" : "Invalid source data";
+    if (!strcmp(state, "resource_limit")) return de ? "Speicherlimit erreicht" : "Memory limit reached";
+    return de ? "Warte auf Aktualisierung" : "Waiting for update";
+}
 
-    if (plugin_overlay) lv_obj_delete(plugin_overlay);
-    plugin_overlay = lv_obj_create(scr_dashboard);
-    lv_obj_remove_style_all(plugin_overlay);
-    lv_obj_set_size(plugin_overlay, SCREEN_WIDTH, SCREEN_HEIGHT);
-    lv_obj_set_style_bg_color(plugin_overlay, UI_COLOR_BG, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(plugin_overlay, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_add_flag(plugin_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(plugin_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(plugin_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
-    lv_obj_add_event_cb(plugin_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
-    lv_obj_add_event_cb(plugin_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
-    plugin_rendered_view = index;
-    plugin_rendered_revision = slot ? slot->revision : 0;
-
-    if (!slot || !slot->ready) {
-        lv_obj_t *waiting = lv_label_create(plugin_overlay);
-        lv_label_set_text(waiting, "Loading plugin view...");
-        lv_obj_set_style_text_color(waiting, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-        lv_obj_set_style_text_font(waiting, &lv_font_montserrat_16, LV_PART_MAIN);
-        lv_obj_center(waiting);
-        return;
+static void update_plugin_view(bool offline = false) {
+    uint8_t index = offline ? 0xFE : serial_active_view();
+    const PluginSceneSlot *slot = offline ? standalone_scene() : plugin_scene_get(index);
+    bool ready = slot && slot->ready;
+    if (!(plugin_overlay && index == plugin_rendered_view && slot
+          && slot->revision == plugin_rendered_revision)) {
+        if (plugin_overlay) lv_obj_delete(plugin_overlay);
+        plugin_offline_status = nullptr;
+        plugin_overlay = lv_obj_create(scr_dashboard);
+        lv_obj_remove_style_all(plugin_overlay);
+        lv_obj_set_size(plugin_overlay, SCREEN_WIDTH, SCREEN_HEIGHT);
+        lv_obj_set_style_bg_color(plugin_overlay, UI_COLOR_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(plugin_overlay, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_add_flag(plugin_overlay, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(plugin_overlay, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(plugin_overlay, on_press_start, LV_EVENT_PRESSED, nullptr);
+        lv_obj_add_event_cb(plugin_overlay, on_tap_release, LV_EVENT_RELEASED, nullptr);
+        lv_obj_add_event_cb(plugin_overlay, on_long_press, LV_EVENT_LONG_PRESSED, nullptr);
+        plugin_rendered_view = index;
+        plugin_rendered_revision = slot ? slot->revision : 0;
+        if (ready) {
+            JsonDocument doc;
+            if (!deserializeJson(doc, slot->json))
+                plugin_scene_draw(plugin_overlay, doc.as<JsonObjectConst>(), SCREEN_WIDTH, SCREEN_HEIGHT);
+        }
+        if (offline || !ready) {
+            plugin_offline_status = lv_label_create(plugin_overlay);
+            lv_obj_set_width(plugin_offline_status, SCREEN_WIDTH - 12);
+            lv_obj_set_style_text_align(plugin_offline_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(plugin_offline_status, UI_COLOR_TEXT, LV_PART_MAIN);
+            lv_obj_set_style_text_font(plugin_offline_status, &font_ui_14, LV_PART_MAIN);
+            lv_obj_set_style_bg_color(plugin_offline_status, UI_COLOR_BG, LV_PART_MAIN);
+            lv_obj_set_style_bg_opa(plugin_offline_status, LV_OPA_COVER, LV_PART_MAIN);
+            lv_label_set_text(plugin_offline_status, g_language == LANG_DE ? "Lade Plugin ..." : "Loading plugin ...");
+        }
     }
-
-    JsonDocument doc;
-    if (deserializeJson(doc, slot->json)) return; // validated at receive time
-    plugin_scene_draw(plugin_overlay, doc.as<JsonObjectConst>(), SCREEN_WIDTH, SCREEN_HEIGHT);
+    if (offline && plugin_offline_status) {
+        if (ready && !standalone_stale()) {
+            lv_obj_add_flag(plugin_offline_status, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(plugin_offline_status, LV_OBJ_FLAG_HIDDEN);
+            char label[160];
+            if (ready) {
+                snprintf(label, sizeof(label), "%s (%lu min)\n%s",
+                         g_language == LANG_DE ? "Veraltet" : "Stale",
+                         (unsigned long)(standalone_success_age_seconds() / 60), offline_status_text());
+            } else snprintf(label, sizeof(label), "%s", offline_status_text());
+            lv_label_set_text(plugin_offline_status, label);
+            lv_obj_align(plugin_offline_status, ready ? LV_ALIGN_BOTTOM_MID : LV_ALIGN_CENTER, 0, ready ? -4 : 0);
+        }
+    } else if (!ready && plugin_offline_status) lv_obj_center(plugin_offline_status);
 }
 
 static void update_clock_view() {
@@ -305,7 +345,7 @@ static void update_clock_view() {
         lv_obj_set_width(clock_date, SCREEN_WIDTH);
         lv_obj_set_style_text_align(clock_date, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_set_style_text_color(clock_date, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-        lv_obj_set_style_text_font(clock_date, square_layout ? &lv_font_montserrat_36 : &lv_font_montserrat_20,
+        lv_obj_set_style_text_font(clock_date, square_layout ? &font_ui_36 : &font_ui_20,
                                    LV_PART_MAIN);
         lv_obj_align(clock_date, LV_ALIGN_CENTER, 0, square_layout ? 80 : 55);
     }
@@ -394,7 +434,7 @@ static void show_standby_overlay() {
     standby_wifi = lv_label_create(standby_overlay);
     lv_label_set_text(standby_wifi, LV_SYMBOL_DUMMY);
     lv_obj_set_style_text_color(standby_wifi, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(standby_wifi, square_layout ? &lv_font_montserrat_20 : &lv_font_montserrat_14,
+    lv_obj_set_style_text_font(standby_wifi, square_layout ? &font_ui_20 : &font_ui_14,
                                LV_PART_MAIN);
     lv_obj_set_pos(standby_wifi, 8, status_icon_y);
 
@@ -581,7 +621,7 @@ static int16_t create_usage_block(
     *out_title_lbl = lv_label_create(parent);
     lv_label_set_text(*out_title_lbl, title);
     lv_obj_set_style_text_color(*out_title_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_title_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_title_lbl, &font_ui_14, LV_PART_MAIN);
     lv_obj_set_pos(*out_title_lbl, 0, y_start);
     lv_obj_set_width(*out_title_lbl, sw);
     lv_obj_set_style_text_align(*out_title_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -589,7 +629,7 @@ static int16_t create_usage_block(
     *out_pct_lbl = lv_label_create(parent);
     lv_label_set_text(*out_pct_lbl, "--%");
     lv_obj_set_style_text_color(*out_pct_lbl, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_pct_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_pct_lbl, &font_ui_48, LV_PART_MAIN);
     lv_obj_set_pos(*out_pct_lbl, 0, y_start + 18);
     lv_obj_set_width(*out_pct_lbl, sw);
     lv_obj_set_style_text_align(*out_pct_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -612,7 +652,7 @@ static int16_t create_usage_block(
     snprintf(reset_buf, sizeof(reset_buf), L(STR_RESETS_IN), "--");
     lv_label_set_text(*out_reset_lbl, reset_buf);
     lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_lbl, &font_ui_12, LV_PART_MAIN);
     lv_obj_set_pos(*out_reset_lbl, 0, y_start + 94);
     lv_obj_set_width(*out_reset_lbl, sw);
     lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -653,7 +693,7 @@ static void create_arc_block(
     *out_title_lbl = lv_label_create(parent);
     lv_label_set_text(*out_title_lbl, title);
     lv_obj_set_style_text_color(*out_title_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_title_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_title_lbl, &font_ui_14, LV_PART_MAIN);
     lv_obj_set_width(*out_title_lbl, cell_w);
     lv_obj_set_pos(*out_title_lbl, cx - cell_w / 2, title_y);
     lv_obj_set_style_text_align(*out_title_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -680,7 +720,7 @@ static void create_arc_block(
     *out_pct_lbl = lv_label_create(parent);
     lv_label_set_text(*out_pct_lbl, "--%");
     lv_obj_set_style_text_color(*out_pct_lbl, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_pct_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_pct_lbl, &font_ui_24, LV_PART_MAIN);
     int16_t pct_w = arc_diameter - 34;
     if (pct_w < 72) pct_w = 72;
     lv_obj_set_width(*out_pct_lbl, pct_w);
@@ -693,7 +733,7 @@ static void create_arc_block(
     *out_reset_lbl = lv_label_create(parent);
     lv_label_set_text(*out_reset_lbl, "--");
     lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_lbl, &font_ui_12, LV_PART_MAIN);
     lv_obj_set_width(*out_reset_lbl, cell_w);
     lv_obj_set_pos(*out_reset_lbl, cx - cell_w / 2, reset_y);
     lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -740,7 +780,7 @@ static void create_big_ring(
     *out_title_lbl = lv_label_create(parent);
     lv_label_set_text(*out_title_lbl, title);
     lv_obj_set_style_text_color(*out_title_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_title_lbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_title_lbl, &font_ui_20, LV_PART_MAIN);
     lv_obj_set_width(*out_title_lbl, inner_w);
     lv_obj_set_style_text_align(*out_title_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(*out_title_lbl, LV_LABEL_LONG_DOT);
@@ -749,7 +789,7 @@ static void create_big_ring(
     *out_pct_lbl = lv_label_create(parent);
     lv_label_set_text(*out_pct_lbl, "--%");
     lv_obj_set_style_text_color(*out_pct_lbl, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_pct_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_pct_lbl, &font_ui_48, LV_PART_MAIN);
     lv_obj_set_width(*out_pct_lbl, inner_w);
     lv_obj_set_style_text_align(*out_pct_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(*out_pct_lbl, LV_LABEL_LONG_CLIP);
@@ -758,7 +798,7 @@ static void create_big_ring(
     *out_reset_lbl = lv_label_create(parent);
     lv_label_set_text(*out_reset_lbl, "--");
     lv_obj_set_style_text_color(*out_reset_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_reset_lbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_lbl, &font_ui_20, LV_PART_MAIN);
     lv_obj_set_width(*out_reset_lbl, inner_w);
     lv_obj_set_style_text_align(*out_reset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(*out_reset_lbl, LV_LABEL_LONG_DOT);
@@ -767,7 +807,7 @@ static void create_big_ring(
     *out_reset_abs_lbl = lv_label_create(parent);
     lv_label_set_text(*out_reset_abs_lbl, "");
     lv_obj_set_style_text_color(*out_reset_abs_lbl, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(*out_reset_abs_lbl, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(*out_reset_abs_lbl, &font_ui_16, LV_PART_MAIN);
     lv_obj_set_width(*out_reset_abs_lbl, diameter + 80);
     lv_obj_set_style_text_align(*out_reset_abs_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(*out_reset_abs_lbl, LV_LABEL_LONG_DOT);
@@ -780,13 +820,13 @@ static void create_session_strip(lv_obj_t *parent, int16_t x, int16_t y, int16_t
     lbl_session_title = lv_label_create(parent);
     lv_label_set_text(lbl_session_title, L(STR_SESSION));
     lv_obj_set_style_text_color(lbl_session_title, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_session_title, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_session_title, &font_ui_20, LV_PART_MAIN);
     lv_obj_set_pos(lbl_session_title, x, y + 10);
 
     lbl_session_pct = lv_label_create(parent);
     lv_label_set_text(lbl_session_pct, "--%");
     lv_obj_set_style_text_color(lbl_session_pct, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_session_pct, &lv_font_montserrat_36, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_session_pct, &font_ui_36, LV_PART_MAIN);
     lv_obj_set_width(lbl_session_pct, w / 2);
     lv_obj_set_style_text_align(lbl_session_pct, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     lv_obj_set_pos(lbl_session_pct, x + w / 2, y);
@@ -807,7 +847,7 @@ static void create_session_strip(lv_obj_t *parent, int16_t x, int16_t y, int16_t
     lbl_session_reset = lv_label_create(parent);
     lv_label_set_text(lbl_session_reset, "--");
     lv_obj_set_style_text_color(lbl_session_reset, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_session_reset, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_session_reset, &font_ui_16, LV_PART_MAIN);
     lv_obj_set_width(lbl_session_reset, w / 2);
     lv_label_set_long_mode(lbl_session_reset, LV_LABEL_LONG_DOT);
     lv_obj_set_pos(lbl_session_reset, x, y + 76);
@@ -815,7 +855,7 @@ static void create_session_strip(lv_obj_t *parent, int16_t x, int16_t y, int16_t
     lbl_session_reset_abs = lv_label_create(parent);
     lv_label_set_text(lbl_session_reset_abs, "");
     lv_obj_set_style_text_color(lbl_session_reset_abs, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_session_reset_abs, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_session_reset_abs, &font_ui_16, LV_PART_MAIN);
     lv_obj_set_width(lbl_session_reset_abs, w / 2);
     lv_obj_set_style_text_align(lbl_session_reset_abs, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     lv_label_set_long_mode(lbl_session_reset_abs, LV_LABEL_LONG_DOT);
@@ -838,8 +878,8 @@ static void create_antigravity_row(
     const int16_t meta_y = compact ? 33 : 40;
     const int16_t bar_h = 8;
     const int16_t bar_w = row_w - (pad * 2);
-    const lv_font_t *title_font = &lv_font_montserrat_14;
-    const lv_font_t *meta_font  = &lv_font_montserrat_12;
+    const lv_font_t *title_font = &font_ui_14;
+    const lv_font_t *meta_font  = &font_ui_12;
 
     ag_title[idx] = lv_label_create(parent);
     lv_label_set_text(ag_title[idx], ag_default_title(idx));
@@ -909,11 +949,11 @@ static void create_square_hero(lv_obj_t *parent, int16_t header_h) {
     lv_obj_set_style_arc_opa(hero.arc, LV_OPA_COVER, LV_PART_INDICATOR);
     pace_tick_create_ring(hero.tick, g, ring_x + d / 2, ring_y + d / 2, d / 2, ring_w);
 
-    hero.title = create_square_label(g, &lv_font_montserrat_20, UI_COLOR_TEXT_SEC, 0, 0, d - 64);
+    hero.title = create_square_label(g, &font_ui_20, UI_COLOR_TEXT_SEC, 0, 0, d - 64);
     lv_obj_set_style_text_align(hero.title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align_to(hero.title, hero.arc, LV_ALIGN_CENTER, 0, -44);
 
-    hero.pct = create_square_label(g, &lv_font_montserrat_48, UI_COLOR_TEXT, 0, 0, d - 50);
+    hero.pct = create_square_label(g, &font_ui_48, UI_COLOR_TEXT, 0, 0, d - 50);
     lv_label_set_long_mode(hero.pct, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(hero.pct, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align_to(hero.pct, hero.arc, LV_ALIGN_CENTER, 0, 10);
@@ -921,11 +961,11 @@ static void create_square_hero(lv_obj_t *parent, int16_t header_h) {
     // Rechte Spalte: Reset und Tempo
     const int16_t col_x = ring_x + d + 24;
     const int16_t col_w = sw - col_x - 12;
-    hero.reset_caption = create_square_label(g, &lv_font_montserrat_16, UI_COLOR_TEXT_SEC,
+    hero.reset_caption = create_square_label(g, &font_ui_16, UI_COLOR_TEXT_SEC,
                                              col_x, ring_y + 22, col_w);
-    hero.reset = create_square_label(g, &lv_font_montserrat_24, UI_COLOR_TEXT,
+    hero.reset = create_square_label(g, &font_ui_24, UI_COLOR_TEXT,
                                      col_x, ring_y + 44, col_w);
-    hero.reset_abs = create_square_label(g, &lv_font_montserrat_16, UI_COLOR_TEXT_SEC,
+    hero.reset_abs = create_square_label(g, &font_ui_16, UI_COLOR_TEXT_SEC,
                                          col_x, ring_y + 78, col_w);
 
     hero.pace_dot = lv_obj_create(g);
@@ -935,9 +975,9 @@ static void create_square_hero(lv_obj_t *parent, int16_t header_h) {
     lv_obj_set_style_radius(hero.pace_dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(hero.pace_dot, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(hero.pace_dot, UI_COLOR_SUCCESS, LV_PART_MAIN);
-    hero.pace_lbl = create_square_label(g, &lv_font_montserrat_20, UI_COLOR_TEXT,
+    hero.pace_lbl = create_square_label(g, &font_ui_20, UI_COLOR_TEXT,
                                         col_x + 20, ring_y + 122, col_w - 20);
-    hero.pace_detail = create_square_label(g, &lv_font_montserrat_14, UI_COLOR_TEXT_SEC,
+    hero.pace_detail = create_square_label(g, &font_ui_14, UI_COLOR_TEXT_SEC,
                                            col_x, ring_y + 152, col_w);
 
     // Zwei Kacheln fuer die uebrigen Limits
@@ -956,21 +996,21 @@ static void create_square_hero(lv_obj_t *parent, int16_t header_h) {
         lv_obj_set_style_radius(tile, 16, LV_PART_MAIN);
         lv_obj_clear_flag(tile, LV_OBJ_FLAG_CLICKABLE);
 
-        hero.tile_title[t] = create_square_label(g, &lv_font_montserrat_20, UI_COLOR_TEXT_SEC,
+        hero.tile_title[t] = create_square_label(g, &font_ui_20, UI_COLOR_TEXT_SEC,
                                                  x + 16, tile_y + 14, inner_w);
-        hero.tile_pct[t] = create_square_label(g, &lv_font_montserrat_48, UI_COLOR_TEXT,
+        hero.tile_pct[t] = create_square_label(g, &font_ui_48, UI_COLOR_TEXT,
                                                x + 16, tile_y + 40, 0);
         hero.tile_bar[t] = create_square_bar(g, x + 16, tile_y + 104, inner_w, 14);
         pace_tick_create_bar(hero.tile_tick[t], g, x + 16, tile_y + 104, inner_w, 14);
-        hero.tile_reset[t] = create_square_label(g, &lv_font_montserrat_16, UI_COLOR_TEXT_SEC,
+        hero.tile_reset[t] = create_square_label(g, &font_ui_16, UI_COLOR_TEXT_SEC,
                                                  x + 16, tile_y + 130, inner_w);
 
         // Info-Kachel bei nur einem Limit: Wert und Erlaeuterung, kein Balken
-        hero.info_value[t] = create_square_label(g, &lv_font_montserrat_36, UI_COLOR_TEXT,
+        hero.info_value[t] = create_square_label(g, &font_ui_36, UI_COLOR_TEXT,
                                                  x + 16, tile_y + 50, inner_w);
-        hero.info_value_mid = tile_y + 50 + lv_font_get_line_height(&lv_font_montserrat_36) / 2;
+        hero.info_value_mid = tile_y + 50 + lv_font_get_line_height(&font_ui_36) / 2;
         lv_label_set_long_mode(hero.info_value[t], LV_LABEL_LONG_CLIP);
-        hero.info_caption[t] = create_square_label(g, &lv_font_montserrat_16, UI_COLOR_TEXT_SEC,
+        hero.info_caption[t] = create_square_label(g, &font_ui_16, UI_COLOR_TEXT_SEC,
                                                    x + 16, tile_y + 110, inner_w);
     }
 }
@@ -1000,11 +1040,11 @@ static void create_square_rows(lv_obj_t *parent, int16_t header_h) {
             lv_obj_set_style_bg_opa(line, LV_OPA_COVER, LV_PART_MAIN);
         }
 
-        ag_title[i] = create_square_label(g, &lv_font_montserrat_24, UI_COLOR_TEXT, x, y, w - pct_w);
+        ag_title[i] = create_square_label(g, &font_ui_24, UI_COLOR_TEXT, x, y, w - pct_w);
         lv_label_set_text(ag_title[i], ag_default_title(i));
-        ag_reset[i] = create_square_label(g, &lv_font_montserrat_16, UI_COLOR_TEXT_SEC,
+        ag_reset[i] = create_square_label(g, &font_ui_16, UI_COLOR_TEXT_SEC,
                                           x, y + 34, w - pct_w);
-        ag_pct[i] = create_square_label(g, &lv_font_montserrat_48, UI_COLOR_TEXT,
+        ag_pct[i] = create_square_label(g, &font_ui_48, UI_COLOR_TEXT,
                                         x + w - pct_w, y - 2, pct_w);
         lv_label_set_long_mode(ag_pct[i], LV_LABEL_LONG_CLIP);
         lv_obj_set_style_text_align(ag_pct[i], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
@@ -1123,8 +1163,8 @@ static void layout_header_center(const MonitorState &state) {
     const char *label = state.provider_label[0] != '\0' ? state.provider_label : "CLAUDE";
     lv_label_set_text(lbl_provider, label);
     // Quadratisch eine Stufe groesser als auf den CYDs.
-    const lv_font_t *font_big   = square_layout ? &lv_font_montserrat_24 : &lv_font_montserrat_20;
-    const lv_font_t *font_small = square_layout ? &lv_font_montserrat_20 : &lv_font_montserrat_16;
+    const lv_font_t *font_big   = square_layout ? &font_ui_24 : &font_ui_20;
+    const lv_font_t *font_small = square_layout ? &font_ui_20 : &font_ui_16;
     const lv_font_t *font = (strlen(label) > 8) ? font_small : font_big;
 
     char credits_txt[12] = "";
@@ -1203,12 +1243,12 @@ void ui_dashboard_create() {
 
     // ---- Header: 36 px auf den CYDs, 52 px auf dem quadratischen Panel ----
     const int16_t header_h = square_layout ? 52 : 36;
-    const lv_font_t *icon_font = square_layout ? &lv_font_montserrat_20 : &lv_font_montserrat_14;
+    const lv_font_t *icon_font = square_layout ? &font_ui_20 : &font_ui_14;
     header_h_px         = header_h;
     header_side_reserve = square_layout ? 80 : 52;
     status_icon_y       = square_layout ? (header_h - lv_font_get_line_height(icon_font)) / 2 : 11;
     status_dot_x        = square_layout ? 42 : 30;
-    pill_font           = square_layout ? &lv_font_montserrat_14 : &lv_font_montserrat_12;
+    pill_font           = square_layout ? &font_ui_14 : &font_ui_12;
 
     lv_obj_t *header = lv_obj_create(scr_dashboard);
     lv_obj_set_size(header, sw, header_h);
@@ -1234,7 +1274,7 @@ void ui_dashboard_create() {
     lbl_provider = lv_label_create(header);
     lv_label_set_text(lbl_provider, "CLAUDE");
     lv_obj_set_style_text_color(lbl_provider, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_provider, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_provider, &font_ui_20, LV_PART_MAIN);
     lv_obj_align(lbl_provider, LV_ALIGN_TOP_MID, 0, 8);   // Position setzt layout_header_center()
 
     pill_credits       = create_header_pill(header, UI_COLOR_SUCCESS);
@@ -1420,7 +1460,7 @@ void ui_dashboard_create() {
     lv_obj_t *splash_title = lv_label_create(splash_overlay);
     lv_label_set_text(splash_title, L(STR_AI_MONITOR));
     lv_obj_set_style_text_color(splash_title, UI_COLOR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(splash_title, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_font(splash_title, &font_ui_24, LV_PART_MAIN);
     lv_obj_align(splash_title, LV_ALIGN_CENTER, 0, -40);
 
     // Spinner
@@ -1437,7 +1477,7 @@ void ui_dashboard_create() {
     lv_obj_t *splash_status = lv_label_create(splash_overlay);
     lv_label_set_text(splash_status, L(STR_CONNECTING));
     lv_obj_set_style_text_color(splash_status, UI_COLOR_TEXT_SEC, LV_PART_MAIN);
-    lv_obj_set_style_text_font(splash_status, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(splash_status, &font_ui_14, LV_PART_MAIN);
     lv_obj_align(splash_status, LV_ALIGN_CENTER, 0, 50);
 
     Serial.println("[UI] Dashboard screen created (Vibe-TV-Style)");
@@ -1470,8 +1510,8 @@ static uint8_t hero_row_index(const UsageData &u) {
 // bleiben auf derselben Mittellinie.
 static void set_info_value(lv_obj_t *lbl, const char *text, lv_color_t color) {
     const int16_t w = lv_obj_get_width(lbl);
-    const lv_font_t *font = text_width(text, &lv_font_montserrat_36) <= w
-        ? &lv_font_montserrat_36 : &lv_font_montserrat_24;
+    const lv_font_t *font = text_width(text, &font_ui_36) <= w
+        ? &font_ui_36 : &font_ui_24;
     lv_obj_set_style_text_font(lbl, font, LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, color, LV_PART_MAIN);
     lv_obj_set_y(lbl, hero.info_value_mid - lv_font_get_line_height(font) / 2);
@@ -1627,18 +1667,23 @@ void ui_dashboard_update(const MonitorState &state) {
     memcpy(&last_state, &state, sizeof(MonitorState));
     state_stored = true;
 
-    if (serial_is_plugin_view()) {
+    if (standalone_active() || serial_is_plugin_view()) {
+        if (clock_overlay) {
+            lv_obj_delete(clock_overlay);
+            clock_overlay = clock_time = clock_date = nullptr;
+        }
         if (splash_overlay) {
             lv_obj_delete(splash_overlay);
             splash_overlay = splash_spinner = nullptr;
         }
         hide_standby_overlay();
-        update_plugin_view();
+        update_plugin_view(standalone_active());
         return;
     }
     if (plugin_overlay) {
         lv_obj_delete(plugin_overlay);
         plugin_overlay = nullptr;
+        plugin_offline_status = nullptr;
         plugin_rendered_view = 0xFF;
     }
 
@@ -2027,6 +2072,7 @@ void ui_dashboard_recreate() {
         clock_time         = nullptr;
         clock_date         = nullptr;
         plugin_overlay     = nullptr;
+        plugin_offline_status = nullptr;
         plugin_rendered_view = 0xFF;
         plugin_rendered_revision = 0;
     }

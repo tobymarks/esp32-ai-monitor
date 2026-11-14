@@ -29,6 +29,7 @@
 #include "ui_dashboard.h"
 #include "ui_settings.h"
 #include "wifi_time.h"
+#include "standalone_runtime.h"
 
 // ============================================================
 // Globals
@@ -153,19 +154,19 @@ static void draw_boot_screen(void)
     lv_obj_t *title = lv_label_create(boot_screen);
     lv_label_set_text(title, APP_NAME);
     lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, &font_ui_20, LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, -30);
 
     boot_status = lv_label_create(boot_screen);
     lv_label_set_text(boot_status, L(STR_INITIALIZING));
     lv_obj_set_style_text_color(boot_status, lv_palette_main(LV_PALETTE_GREY), LV_PART_MAIN);
-    lv_obj_set_style_text_font(boot_status, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(boot_status, &font_ui_14, LV_PART_MAIN);
     lv_obj_align(boot_status, LV_ALIGN_CENTER, 0, 10);
 
     lv_obj_t *version = lv_label_create(boot_screen);
     lv_label_set_text(version, "v" APP_VERSION);
     lv_obj_set_style_text_color(version, lv_palette_main(LV_PALETTE_GREY), LV_PART_MAIN);
-    lv_obj_set_style_text_font(version, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(version, &font_ui_12, LV_PART_MAIN);
     lv_obj_align(version, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
 
     lv_screen_load(boot_screen);
@@ -261,6 +262,7 @@ void setup()
     // --- Serial receiver init ---
     serial_receiver_init();
     wifi_time_init();
+    standalone_init();
     update_boot_status(L(STR_USB_CONNECTED));
     delay(1000);
 
@@ -284,6 +286,7 @@ void loop()
     // Read serial data
     serial_receiver_tick();
     wifi_time_tick();
+    standalone_tick(serial_has_recent_host_frame());
 
     // C4: Perform any UI rebuild requested by the command parser here, OUTSIDE
     // the Serial RX loop, so the expensive full-screen recreate is not reentrant

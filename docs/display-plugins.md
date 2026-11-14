@@ -54,9 +54,12 @@ URL share one validator. GitHub users can link to a release asset; arbitrary
 repository URLs are not implicitly executed or built.
 
 The initial transform is declarative and network-only. Each plugin can request
-one JSON response from an explicit HTTPS URL, use numeric settings in that URL,
+one JSON response from an explicit HTTPS URL, use numeric settings in that URL (format 4 also allows a user-configured HTTPS URL),
 select JSON fields, format text values, and choose scene nodes by conditions.
-It does not yet combine multiple APIs, handle OAuth, load images, or run custom
+A plugin can also ask for the location stored for the connected display instead
+of defining its own coordinates; the companion then shows that the location is
+sent to the plugin's source. It can filter, sort, and limit an array in the response and scale numbers
+between units. It does not yet combine multiple APIs, handle OAuth, load images, or run custom
 code. A future executable-plugin API needs a process or runtime
 isolation design and a separate trust decision. Schema validation alone does
 not make executable code safe.
@@ -91,3 +94,13 @@ switching; a live plugin's success, offline, and stale states; old-firmware beha
 firmware builds for all three board environments; host builds and relevant tests; and a
 real CYD hardware run. Record any verification that cannot run in the current
 environment explicitly rather than treating a compiler pass as device proof.
+
+## Format 4 data-source configuration
+
+Format 4 adds an explicit `source.urlSetting` referencing a `kind: "url"`
+setting, as an alternative to the fixed `source.url`. Both companions share
+validation and HTTPS certificate checks against platform trust. The existing
+scene protocol, package budgets, refresh interval, and bindings remain intact.
+Formats 1, 2, and 3 remain supported. This branch builds on the upstream
+location, list, and umlaut changes (#23/#24/#25).
+See [authoring](display-plugin-authoring.md#configurable-data-urls-format-4).

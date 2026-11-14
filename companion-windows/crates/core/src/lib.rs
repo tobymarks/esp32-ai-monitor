@@ -35,6 +35,7 @@ pub mod runner;
 pub mod semver;
 pub mod source;
 pub mod status;
+pub mod standalone;
 
 pub use device::{DeviceProfile, DeviceRegistry};
 pub use model::{Credits, Entry, ExtraWindow, ResetCredits, Window};

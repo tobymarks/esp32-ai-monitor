@@ -13,6 +13,7 @@ use crate::window;
 use aimonitor_core::protocol::{
     DisplayVariant, Language as DisplayLanguage, Orientation, ThemeSetting,
 };
+use aimonitor_core::device::Location;
 use aimonitor_core::{DeviceProfile, Provider, Snapshot};
 use aimonitor_serial::PortCandidate;
 use chrono::Utc;
@@ -399,6 +400,48 @@ pub fn rename_device(app: AppHandle, mac: String, name: String) -> Result<Device
     };
     serial_service::send(&app, Job::RefreshProfile);
     Ok(profile)
+}
+
+/// Standort eines Displays setzen oder mit `None` entfernen. Plugins, die
+/// einen Standort anfordern, rufen ihre Daten danach neu ab.
+#[tauri::command]
+pub fn set_device_location(
+    app: AppHandle,
+    mac: String,
+    location: Option<Location>,
+) -> Result<DeviceProfile, String> {
+    let location = match location {
+        Some(mut place) => {
+            place.name = place.name.trim().to_string();
+            if !place.is_valid() {
+                return Err("disp.location.err.invalid".into());
+            }
+            Some(place)
+        }
+        None => None,
+    };
+    let profile = {
+        let state = app.state::<AppState>();
+        let mut registry = state.registry.lock().unwrap();
+        let profile = registry
+            .profile_mut(&mac)
+            .ok_or_else(|| "disp.profile.none".to_string())?;
+        profile.location = location;
+        let profile = profile.clone();
+        registry::save(&app, &registry);
+        profile
+    };
+    serial_service::send(&app, Job::RefreshProfile);
+    poll::refresh_plugins(&app);
+    Ok(profile)
+}
+
+/// Ortssuche für den Standort (Open-Meteo-Geocoding, ohne Schlüssel).
+#[tauri::command]
+pub async fn search_places(query: String, language: String) -> Result<Vec<plugins::Place>, String> {
+    tauri::async_runtime::spawn_blocking(move || plugins::search_places(&query, &language))
+        .await
+        .map_err(|_| "search worker failed".to_string())?
 }
 
 /// Theme, Orientierung und Sprache eines Profils setzen. Ist das Gerät

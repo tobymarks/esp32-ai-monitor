@@ -7,13 +7,23 @@ static PluginSceneSlot scenes[PLUGIN_SCENE_SLOTS] = {};
 static constexpr size_t TOTAL_SCENE_BYTES = PLUGIN_SCENE_SLOTS * (PLUGIN_SCENE_MAX_BYTES + 1);
 static size_t scene_bytes_used = 0;
 
-static bool is_ascii_text(const char *value, size_t max_len) {
+// Scene protocol 2: printable ASCII plus the characters the UI fonts carry
+// beyond it, as UTF-8: the degree sign and the German umlauts. max_len counts
+// bytes, so each of them uses two.
+static bool is_scene_text(const char *value, size_t max_len) {
     if (!value) return false;
     size_t length = strlen(value);
     if (length > max_len) return false;
     for (size_t i = 0; i < length; ++i) {
         unsigned char c = (unsigned char)value[i];
-        if (c < 0x20 || c > 0x7E) return false;
+        if (c >= 0x20 && c <= 0x7E) continue;
+        unsigned char next = (unsigned char)value[i + 1];
+        bool known = (c == 0xC2 && next == 0xB0)                       // °
+            || (c == 0xC3 && (next == 0x84 || next == 0x96 || next == 0x9C   // Ä Ö Ü
+                || next == 0x9F                                        // ß
+                || next == 0xA4 || next == 0xB6 || next == 0xBC));     // ä ö ü
+        if (!known) return false;
+        ++i;
     }
     return true;
 }
@@ -36,7 +46,7 @@ static bool valid_node(JsonObjectConst node) {
     if (!is_color(node["color"])) return false;
 
     if (strcmp(type, "text") == 0) {
-        if (!is_ascii_text(node["text"], 64)) return false;
+        if (!is_scene_text(node["text"], 64)) return false;
         int font = node["font"] | 14;
         if (font != 12 && font != 14 && font != 16 && font != 20
             && font != 24 && font != 36 && font != 48) return false;

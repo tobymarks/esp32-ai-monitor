@@ -136,6 +136,8 @@ p { margin: 0 0 12px; }
 .select, .input { min-height: 28px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font: inherit; }
 .select { min-width: 220px; }
 .input { min-width: 220px; user-select: text; cursor: text; }
+.input-coordinate { min-width: 0; width: 110px; }
+.place-results { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: -4px 0 12px 124px; }
 .select:disabled, .input:disabled, .slider:disabled, .segmented button:disabled { opacity: .5; }
 .slider { width: 240px; accent-color: var(--primary); }
 .slider-value { min-width: 44px; text-align: right; font-size: var(--fs-sm); }
